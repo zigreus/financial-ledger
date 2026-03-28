@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { getTransactions, getPaymentMethods, getBudgetCategories, getAvailableMonths } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
 const CATEGORY_COLORS = {
@@ -23,8 +23,8 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const [showFilters, setShowFilters] = useState(false);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
-  const paymentMethods = useMemo(() => getPaymentMethods(db), [db]);
-  const budgetCategories = useMemo(() => getBudgetCategories(db), [db]);
+  const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
+  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
 
   const transactions = useMemo(
     () => getTransactions(db, filters),
@@ -69,11 +69,11 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
             </select>
             <select value={filters.payment_method} onChange={e => setFilter('payment_method', e.target.value)}>
               <option value="">전체 결제수단</option>
-              {paymentMethods.map(m => <option key={m} value={m}>{m}</option>)}
+              {paymentMethods.map(m => <option key={m.id} value={m.name}>{m.name}{m.is_hidden ? ' (숨김)' : ''}</option>)}
             </select>
             <select value={filters.budget_category} onChange={e => setFilter('budget_category', e.target.value)}>
               <option value="">전체 카테고리</option>
-              {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              {budgetCategories.map(c => <option key={c.id} value={c.name}>{c.name}{c.is_hidden ? ' (숨김)' : ''}</option>)}
             </select>
             {hasFilters && (
               <button className="btn-clear-filter" onClick={clearFilters}>초기화</button>

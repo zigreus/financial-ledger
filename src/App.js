@@ -7,6 +7,8 @@ import Header from './components/Header';
 import TransactionList from './components/TransactionList';
 import TransactionForm from './components/TransactionForm';
 import SummaryView from './components/SummaryView';
+import SettingsView from './components/SettingsView';
+import ImportModal from './components/ImportModal';
 
 import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction } from './services/dbManager';
 import { readDbFromOneDrive, writeDbToOneDrive } from './services/oneDriveService';
@@ -20,8 +22,9 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary'
+  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'settings'
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
 
   // 로그인 후 DB 자동 로드
@@ -107,6 +110,12 @@ function App() {
     setEditingTx(null);
   };
 
+  const handleImport = useCallback(() => {
+    setDirty(true);
+    setDb(prev => prev);
+    setShowImport(false);
+  }, []);
+
   if (!isAuthenticated) return <LoginPage />;
 
   if (!db) {
@@ -161,6 +170,12 @@ function App() {
         {activeTab === 'summary' && (
           <SummaryView db={db} />
         )}
+        {activeTab === 'settings' && (
+          <SettingsView
+            db={db}
+            onChanged={() => { setDirty(true); setDb(prev => prev); }}
+          />
+        )}
       </main>
 
       {/* 하단 네비게이션 */}
@@ -172,15 +187,26 @@ function App() {
           <span className="nav-icon">📋</span>
           <span className="nav-label">거래내역</span>
         </button>
-        <button className="nav-item nav-add" onClick={openAdd}>
-          <span className="nav-icon-add">+</span>
-        </button>
         <button
           className={activeTab === 'summary' ? 'nav-item active' : 'nav-item'}
           onClick={() => setActiveTab('summary')}
         >
           <span className="nav-icon">📊</span>
           <span className="nav-label">요약</span>
+        </button>
+        <button className="nav-item nav-add" onClick={openAdd}>
+          <span className="nav-icon-add">+</span>
+        </button>
+        <button className="nav-item" onClick={() => setShowImport(true)}>
+          <span className="nav-icon">📥</span>
+          <span className="nav-label">가져오기</span>
+        </button>
+        <button
+          className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}
+          onClick={() => setActiveTab('settings')}
+        >
+          <span className="nav-icon">⚙️</span>
+          <span className="nav-label">설정</span>
         </button>
       </nav>
 
@@ -191,6 +217,15 @@ function App() {
           editingTx={editingTx}
           onSave={editingTx ? handleUpdate : handleAdd}
           onCancel={closeForm}
+        />
+      )}
+
+      {/* CSV 가져오기 모달 */}
+      {showImport && (
+        <ImportModal
+          db={db}
+          onImport={handleImport}
+          onClose={() => setShowImport(false)}
         />
       )}
     </div>

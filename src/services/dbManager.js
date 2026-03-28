@@ -68,6 +68,15 @@ export function createDatabase(SQL, existingData = null) {
   const db = existingData ? new SQL.Database(existingData) : new SQL.Database();
   db.run(SCHEMA);
 
+  // is_hidden 컬럼 마이그레이션 (있으면 무시)
+  ['payment_methods', 'budget_categories', 'sub_categories'].forEach(table => {
+    try {
+      db.run(`ALTER TABLE ${table} ADD COLUMN is_hidden INTEGER DEFAULT 0`);
+    } catch (e) {
+      // 이미 존재하면 무시
+    }
+  });
+
   // 기본 데이터는 테이블이 비어있을 때만 삽입
   const pmCount = db.exec('SELECT COUNT(*) FROM payment_methods')[0]?.values[0][0] || 0;
   if (pmCount === 0) {
@@ -172,19 +181,19 @@ export function deleteTransaction(db, id) {
 // ── 마스터 데이터 ──────────────────────────────────────────────
 
 export function getPaymentMethods(db) {
-  const result = db.exec('SELECT name FROM payment_methods ORDER BY sort_order, name');
+  const result = db.exec('SELECT name FROM payment_methods WHERE is_hidden = 0 ORDER BY sort_order, name');
   return result.length ? result[0].values.map(r => r[0]) : [];
 }
 
 export function getBudgetCategories(db) {
-  const result = db.exec('SELECT name FROM budget_categories ORDER BY sort_order, name');
+  const result = db.exec('SELECT name FROM budget_categories WHERE is_hidden = 0 ORDER BY sort_order, name');
   return result.length ? result[0].values.map(r => r[0]) : [];
 }
 
 export function getSubCategories(db, budgetCategory) {
   if (!budgetCategory) return [];
   const result = db.exec(
-    'SELECT name FROM sub_categories WHERE budget_category = ? ORDER BY sort_order, name',
+    'SELECT name FROM sub_categories WHERE budget_category = ? AND is_hidden = 0 ORDER BY sort_order, name',
     [budgetCategory]
   );
   return result.length ? result[0].values.map(r => r[0]) : [];
@@ -252,4 +261,91 @@ export function getPaymentMethodSummary(db, month) {
     columns.forEach((col, i) => { obj[col] = row[i]; });
     return obj;
   });
+}
+
+// ── 마스터 데이터 편집 (설정용) ──────────────────────────
+
+export function getAllPaymentMethods(db) {
+  const result = db.exec('SELECT id, name, sort_order, is_hidden FROM payment_methods ORDER BY sort_order, name');
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getAllBudgetCategories(db) {
+  const result = db.exec('SELECT id, name, sort_order, is_hidden FROM budget_categories ORDER BY sort_order, name');
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getAllSubCategories(db, budgetCategory = null) {
+  if (budgetCategory) {
+    const result = db.exec(
+      'SELECT id, budget_category, name, sort_order, is_hidden FROM sub_categories WHERE budget_category = ? ORDER BY sort_order, name',
+      [budgetCategory]
+    );
+    if (!result.length) return [];
+    const { columns, values } = result[0];
+    return values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+  } else {
+    const result = db.exec('SELECT id, budget_category, name, sort_order, is_hidden FROM sub_categories ORDER BY budget_category, sort_order, name');
+    if (!result.length) return [];
+    const { columns, values } = result[0];
+    return values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+  }
+}
+
+export function setMasterItemHidden(db, table, id, isHidden) {
+  const allowed = ['payment_methods', 'budget_categories', 'sub_categories'];
+  if (!allowed.includes(table)) throw new Error('Invalid table name');
+  db.run(`UPDATE ${table} SET is_hidden = ? WHERE id = ?`, [isHidden ? 1 : 0, id]);
+}
+
+export function addPaymentMethod(db, name) {
+  if (!name || !name.trim()) throw new Error('Name is required');
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) as max FROM payment_methods');
+  const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
+  db.run('INSERT INTO payment_methods (name, sort_order, is_hidden) VALUES (?, ?, 0)', [name.trim(), nextSort]);
+}
+
+export function addBudgetCategory(db, name) {
+  if (!name || !name.trim()) throw new Error('Name is required');
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) as max FROM budget_categories');
+  const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
+  db.run('INSERT INTO budget_categories (name, sort_order, is_hidden) VALUES (?, ?, 0)', [name.trim(), nextSort]);
+}
+
+export function addSubCategory(db, budgetCategory, name) {
+  if (!budgetCategory || !name || !name.trim()) throw new Error('Both category and name are required');
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) as max FROM sub_categories WHERE budget_category = ?', [budgetCategory]);
+  const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
+  db.run('INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [budgetCategory, name.trim(), nextSort]);
+}
+
+export function bulkInsertTransactions(db, txList) {
+  db.run('BEGIN');
+  try {
+    txList.forEach(tx => addTransaction(db, tx));
+    db.run('COMMIT');
+  } catch (e) {
+    db.run('ROLLBACK');
+    throw e;
+  }
 }

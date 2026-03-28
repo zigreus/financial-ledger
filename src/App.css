@@ -658,3 +658,158 @@ body {
   border-radius: 50%;
   margin-right: 6px;
 }
+
+/* ── 설정 화면 ─────────────────────────────────────────── */
+.settings-page {
+  padding-bottom: 16px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  background: var(--surface);
+}
+
+.tab {
+  flex: 1;
+  padding: 12px 0;
+  text-align: center;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color .2s, border-color .2s;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.settings-section {
+  padding: 16px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-item-hidden .settings-item-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.settings-item-name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.settings-add-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 0;
+  margin-top: 8px;
+}
+
+.settings-add-row input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--bg);
+  outline: none;
+  font-family: inherit;
+}
+
+.settings-add-row input:focus {
+  border-color: var(--primary);
+  background: var(--surface);
+}
+
+.settings-filter {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-filter select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--bg);
+  font-family: inherit;
+}
+
+.btn-outline {
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+
+.btn-outline:hover {
+  border-color: var(--primary);
+  background: var(--bg);
+}
+
+/* ── 임포트 모달 ────────────────────────────────────────── */
+.import-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0;
+}
+
+.import-preview-table th,
+.import-preview-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.import-preview-table th {
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.import-preview-table td {
+  font-size: 12px;
+}
+
+.import-info {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.import-info strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── 하단 네비게이션 5개 대응 ─────────────────────────── */
+.nav-label {
+  font-size: 10px;
+  margin-top: 2px;
+}
