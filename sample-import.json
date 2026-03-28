@@ -1,0 +1,22 @@
+[
+  {
+    "payment_method": "삼성카드",
+    "date": "2023-03-21",
+    "budget_category": "차량교통비",
+    "sub_category": "대충교통",
+    "detail": "",
+    "amount": 800,
+    "discount_amount": 0,
+    "discount_note": ""
+  },
+  {
+    "payment_method": "삼성카드",
+    "date": "2023-04-28",
+    "budget_category": "식비",
+    "sub_category": "편의점",
+    "detail": "편의점",
+    "amount": 850,
+    "discount_amount": 0,
+    "discount_note": ""
+  }
+]
