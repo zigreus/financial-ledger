@@ -8,71 +8,89 @@ function ImportModal({ db, onImport, onClose }) {
   const [error, setError] = useState('');
 
   // CSV 파싱 로직
+  // 엑셀 구조: A(이용일) | B(결제수단/카드명) | C(카테고리) | D(세부카테고리) | E(금액) | F(할인/수익) | G(비고)
   const parseCSV = (text) => {
     const lines = text.split('\n').map(line => line.trim()).filter(line => line);
     const rows = [];
     let skipped = 0;
     let currentPaymentMethod = null;
 
-    for (const line of lines) {
+    // 알려진 결제수단 목록 (이것이 B열에 나오면 카드 그룹 헤더로 인식)
+    const knownPaymentMethods = ['현금', '삼성카드', '신한카드', '하나카드', 'KB국민카드', '롯데카드', '카카오페이', '네이버페이', '토스페이'];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const cells = line.split(',').map(cell => cell.trim());
-      if (cells.length < 4) {
+
+      if (cells.length < 3) {
         skipped++;
         continue;
       }
 
-      const aCell = cells[0];
-      const bCell = cells[1];
-      const cCell = cells[2];
-      const dCell = cells[3];
-      const eCell = cells[4];
-      const fCell = cells[5];
-      const gCell = cells[6];
+      const aCell = cells[0];  // 이용일 또는 비움
+      const bCell = cells[1];  // 결제수단/카드명 또는 결제수단 반복
+      const cCell = cells[2];  // 카테고리
+      const dCell = cells[3];  // 세부카테고리
+      const eCell = cells[4];  // 금액
+      const fCell = cells[5];  // 할인/수익
+      const gCell = cells[6];  // 비고
 
-      // A열에 날짜 패턴 (YYMMDD 뒤에 요일이나 다른 텍스트가 있을 수 있음) → 카드 그룹 헤더
-      if (/^\d{6}/.test(aCell)) {
-        currentPaymentMethod = cCell;
+      // B열이 알려진 결제수단 이름이고 A열이 비어있으면 → 카드 그룹 헤더
+      if (knownPaymentMethods.includes(bCell) && !aCell) {
+        currentPaymentMethod = bCell;
         continue;
       }
 
-      // B열에 날짜 패턴 (YYMMDD 뒤에 다른 텍스트가 있을 수 있음) → 거래 내역
-      if (/^\d{6}/.test(bCell)) {
+      // A열에 날짜 패턴 (YYYY-MM-DD 또는 YYMMDD) → 거래 내역
+      if (/^\d{4}-\d{2}-\d{2}|^\d{6}/.test(aCell)) {
         if (!currentPaymentMethod) {
           skipped++;
           continue;
         }
 
         try {
-          // 날짜 변환: 260301 → 2026-03-01, 220101 (土) → 2022-01-01
-          const dateMatch = bCell.match(/^(\d{2})(\d{2})(\d{2})/);
-          if (!dateMatch) {
-            skipped++;
-            continue;
-          }
-          const yy = parseInt(dateMatch[1], 10);
-          const mm = dateMatch[2];
-          const dd = dateMatch[3];
-          const year = 2000 + yy;
-          const date = `${year}-${mm}-${dd}`;
+          let date = aCell;
 
-          // 금액: 쉼표 제거
-          const amount = parseInt(dCell.replace(/,/g, ''), 10);
-          const discountStr = eCell ? eCell.replace(/,/g, '') : '0';
-          const discountAmount = parseInt(discountStr, 10) || 0;
+          // YYMMDD 형식을 YYYY-MM-DD로 변환
+          if (/^\d{6}$/.test(aCell)) {
+            const match = aCell.match(/^(\d{2})(\d{2})(\d{2})/);
+            if (match) {
+              const yy = parseInt(match[1], 10);
+              const mm = match[2];
+              const dd = match[3];
+              const year = 2000 + yy;
+              date = `${year}-${mm}-${dd}`;
+            } else {
+              skipped++;
+              continue;
+            }
+          }
+
+          // 금액 추출: 쉼표 제거, "원" 제거
+          const amountStr = eCell.replace(/,/g, '').replace(/원/g, '').trim();
+          const amount = parseInt(amountStr, 10);
 
           if (isNaN(amount) || amount <= 0) {
             skipped++;
             continue;
           }
 
-          const category = fCell || '기타';
+          // 할인/수익 추출: 쉼표 제거, "-" 또는 "원" 제거
+          let discountAmount = 0;
+          if (fCell && fCell !== '-') {
+            const discountStr = fCell.replace(/,/g, '').replace(/원/g, '').replace(/-/g, '').trim();
+            discountAmount = parseInt(discountStr, 10) || 0;
+          }
+
+          // 카테고리가 없으면 기타
+          const category = cCell || '기타';
 
           rows.push({
             payment_method: currentPaymentMethod,
             date,
             budget_category: category,
-            sub_category: '',
-            detail: cCell,
+            sub_category: dCell || '',
+            detail: '',
             amount,
             discount_amount: discountAmount,
             discount_note: gCell || '',
@@ -84,7 +102,9 @@ function ImportModal({ db, onImport, onClose }) {
       }
 
       // 인식하지 못한 행
-      skipped++;
+      if (aCell || bCell || cCell) {  // 최소 하나라도 값이 있으면 건너뜸
+        skipped++;
+      }
     }
 
     return { rows, skipped };
