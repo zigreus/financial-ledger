@@ -7,109 +7,6 @@ function ImportModal({ db, onImport, onClose }) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
 
-  // CSV 파싱 로직
-  // 엑셀 구조: A(이용일) | B(결제수단/카드명) | C(카테고리) | D(세부카테고리) | E(금액) | F(할인/수익) | G(비고)
-  const parseCSV = (text) => {
-    const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-    const rows = [];
-    let skipped = 0;
-    let currentPaymentMethod = null;
-
-    // 알려진 결제수단 목록 (이것이 B열에 나오면 카드 그룹 헤더로 인식)
-    const knownPaymentMethods = ['현금', '삼성카드', '신한카드', '하나카드', 'KB국민카드', '롯데카드', '카카오페이', '네이버페이', '토스페이'];
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const cells = line.split(',').map(cell => cell.trim());
-
-      if (cells.length < 3) {
-        skipped++;
-        continue;
-      }
-
-      const aCell = cells[0];  // 이용일 또는 비움
-      const bCell = cells[1];  // 결제수단/카드명 또는 결제수단 반복
-      const cCell = cells[2];  // 카테고리
-      const dCell = cells[3];  // 세부카테고리
-      const eCell = cells[4];  // 금액
-      const fCell = cells[5];  // 할인/수익
-      const gCell = cells[6];  // 비고
-
-      // B열이 알려진 결제수단 이름이고 A열이 비어있으면 → 카드 그룹 헤더
-      if (knownPaymentMethods.includes(bCell) && !aCell) {
-        currentPaymentMethod = bCell;
-        continue;
-      }
-
-      // A열에 날짜 패턴 (YYYY-MM-DD 또는 YYMMDD) → 거래 내역
-      if (/^\d{4}-\d{2}-\d{2}|^\d{6}/.test(aCell)) {
-        if (!currentPaymentMethod) {
-          skipped++;
-          continue;
-        }
-
-        try {
-          let date = aCell;
-
-          // YYMMDD 형식을 YYYY-MM-DD로 변환
-          if (/^\d{6}$/.test(aCell)) {
-            const match = aCell.match(/^(\d{2})(\d{2})(\d{2})/);
-            if (match) {
-              const yy = parseInt(match[1], 10);
-              const mm = match[2];
-              const dd = match[3];
-              const year = 2000 + yy;
-              date = `${year}-${mm}-${dd}`;
-            } else {
-              skipped++;
-              continue;
-            }
-          }
-
-          // 금액 추출: 쉼표 제거, "원" 제거
-          const amountStr = eCell.replace(/,/g, '').replace(/원/g, '').trim();
-          const amount = parseInt(amountStr, 10);
-
-          if (isNaN(amount) || amount <= 0) {
-            skipped++;
-            continue;
-          }
-
-          // 할인/수익 추출: 쉼표 제거, "-" 또는 "원" 제거
-          let discountAmount = 0;
-          if (fCell && fCell !== '-') {
-            const discountStr = fCell.replace(/,/g, '').replace(/원/g, '').replace(/-/g, '').trim();
-            discountAmount = parseInt(discountStr, 10) || 0;
-          }
-
-          // 카테고리가 없으면 기타
-          const category = cCell || '기타';
-
-          rows.push({
-            payment_method: currentPaymentMethod,
-            date,
-            budget_category: category,
-            sub_category: dCell || '',
-            detail: '',
-            amount,
-            discount_amount: discountAmount,
-            discount_note: gCell || '',
-          });
-        } catch (e) {
-          skipped++;
-        }
-        continue;
-      }
-
-      // 인식하지 못한 행
-      if (aCell || bCell || cCell) {  // 최소 하나라도 값이 있으면 건너뜸
-        skipped++;
-      }
-    }
-
-    return { rows, skipped };
-  };
-
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -123,13 +20,47 @@ function ImportModal({ db, onImport, onClose }) {
           return;
         }
 
-        const result = parseCSV(text);
-        if (result.rows.length === 0) {
-          setError('인식 가능한 거래 데이터가 없습니다. CSV 형식을 확인해주세요.');
+        let rows = [];
+        let skipped = 0;
+
+        // 파일 확장자로 JSON 또는 CSV 판별
+        if (file.name.endsWith('.json')) {
+          // JSON 파싱
+          const data = JSON.parse(text);
+          if (!Array.isArray(data)) {
+            setError('JSON은 배열 형식이어야 합니다.');
+            return;
+          }
+          rows = data.filter(item => {
+            // 필수 필드 검증
+            if (!item.payment_method || !item.date || !item.budget_category || item.amount === undefined) {
+              skipped++;
+              return false;
+            }
+            // 기본값 채우기
+            return true;
+          }).map(item => ({
+            payment_method: item.payment_method,
+            date: item.date,
+            budget_category: item.budget_category,
+            sub_category: item.sub_category || '',
+            detail: item.detail || '',
+            amount: parseInt(item.amount, 10),
+            discount_amount: parseInt(item.discount_amount || 0, 10),
+            discount_note: item.discount_note || '',
+          }));
+        } else {
+          // CSV 파싱은 생략 (JSON만 사용하기로 함)
+          setError('JSON 파일을 업로드해주세요.');
           return;
         }
 
-        setParsed(result);
+        if (rows.length === 0) {
+          setError('인식 가능한 거래 데이터가 없습니다. JSON 형식을 확인해주세요.');
+          return;
+        }
+
+        setParsed({ rows, skipped });
         setError('');
         setStep('preview');
       } catch (err) {
@@ -163,12 +94,12 @@ function ImportModal({ db, onImport, onClose }) {
         {step === 'upload' && (
           <form className="tx-form" onSubmit={e => e.preventDefault()}>
             <p className="import-info">
-              엑셀을 <strong>CSV (쉼표로 구분)</strong>로 저장하여 업로드하세요.<br />
+              <strong>JSON 파일</strong>을 업로드하세요.<br />
               자동으로 파싱되어 거래 내역에 추가됩니다.
             </p>
             <input
               type="file"
-              accept=".csv"
+              accept=".json"
               onChange={handleFileChange}
               style={{
                 padding: '12px',
