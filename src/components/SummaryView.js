@@ -44,11 +44,18 @@ function BarChart({ data, maxValue, color, formatLabel }) {
 
 function SummaryView({ db }) {
   const [tab, setTab] = useState('monthly'); // 'monthly' | 'category' | 'payment'
-  const [selectedMonth, setSelectedMonth] = useState('');
+  const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [filterType, setFilterType] = useState('month'); // 'month' | 'year' | 'range'
   const [selectedYear, setSelectedYear] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
+  const currentMonth = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const years = useMemo(() => getAvailableYears(db), [db]);
@@ -81,7 +88,7 @@ function SummaryView({ db }) {
 
   return (
     <div className="summary-page">
-      {/* 탭 */}
+      {/* 메인 탭 */}
       <div className="summary-tabs">
         <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => setTab('monthly')}>월별 추이</button>
         <button className={tab === 'category' ? 'tab active' : 'tab'} onClick={() => setTab('category')}>카테고리</button>
@@ -96,7 +103,7 @@ function SummaryView({ db }) {
               className={`filter-type-btn ${filterType === 'month' ? 'active' : ''}`}
               onClick={() => {
                 setFilterType('month');
-                setSelectedMonth('');
+                setSelectedMonth(currentMonth);
               }}
             >
               월별
@@ -168,41 +175,56 @@ function SummaryView({ db }) {
       {/* 월별 추이 탭 */}
       {tab === 'monthly' && (
         <div className="summary-section">
+          {/* 서브탭 */}
+          <div className="summary-sub-tabs">
+            <button
+              className={monthlySubTab === 'list' ? 'sub-tab active' : 'sub-tab'}
+              onClick={() => setMonthlySubTab('list')}
+            >
+              목록
+            </button>
+            <button
+              className={monthlySubTab === 'chart' ? 'sub-tab active' : 'sub-tab'}
+              onClick={() => setMonthlySubTab('chart')}
+            >
+              그래프
+            </button>
+          </div>
+
           {monthlyTotals.length === 0 ? (
             <p className="empty-state">데이터가 없습니다.</p>
+          ) : monthlySubTab === 'chart' ? (
+            <BarChart
+              data={[...monthlyTotals].reverse().map(r => ({ label: r.month, value: r.total }))}
+              maxValue={Math.max(...monthlyTotals.map(r => r.total))}
+              color="#45B7D1"
+              formatLabel={v => `${formatAmount(v)}원`}
+            />
           ) : (
-            <>
-              <BarChart
-                data={monthlyTotals.map(r => ({ label: r.month, value: r.total }))}
-                maxValue={Math.max(...monthlyTotals.map(r => r.total))}
-                color="#45B7D1"
-                formatLabel={v => `${formatAmount(v)}원`}
-              />
-              <table className="summary-table">
-                <thead>
-                  <tr>
-                    <th>월</th>
-                    <th>건수</th>
-                    <th>지출</th>
-                    <th>할인</th>
-                    <th>총액</th>
+            <table className="summary-table">
+              <thead>
+                <tr>
+                  <th>월</th>
+                  <th>건수</th>
+                  <th>지출</th>
+                  <th>할인</th>
+                  <th>총액</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyTotals.map(r => (
+                  <tr key={r.month}>
+                    <td>{r.month}</td>
+                    <td>{r.cnt}</td>
+                    <td className="amount-cell">{formatAmount(r.total)}원</td>
+                    <td className="discount-cell">
+                      {r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}
+                    </td>
+                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {monthlyTotals.map(r => (
-                    <tr key={r.month}>
-                      <td>{r.month}</td>
-                      <td>{r.cnt}</td>
-                      <td className="amount-cell">{formatAmount(r.total)}원</td>
-                      <td className="discount-cell">
-                        {r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}
-                      </td>
-                      <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

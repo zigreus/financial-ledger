@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getCategoryColor } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
@@ -26,6 +26,8 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const [selectedForDelete, setSelectedForDelete] = useState(new Set());
   const [selectedDetail, setSelectedDetail] = useState(null);
 
+  const currentMonthRef = useRef(null);
+
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
@@ -45,15 +47,25 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const groupedTransactions = useMemo(() => {
     const groups = {};
     transactions.forEach(tx => {
-      const month = tx.date.substring(0, 7); // YYYY-MM 추출
+      const month = tx.date.substring(0, 7);
       if (!groups[month]) groups[month] = [];
       groups[month].push(tx);
     });
     return groups;
   }, [transactions]);
 
-  // 확장된 월들 (기본값으로 현재 월은 열려있음)
+  // 확장된 월들 (현재 월만 기본으로 열림)
   const [expandedMonths, setExpandedMonths] = useState(new Set([currentMonth]));
+
+  // 마운트 시 현재 월로 스크롤
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (currentMonthRef.current) {
+        currentMonthRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, []);
 
   const toggleMonth = (month) => {
     const newExpanded = new Set(expandedMonths);
@@ -92,25 +104,51 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
 
   return (
     <div className="list-page">
-      {/* 필터 바 */}
+      {/* 필터 바 + 요약 정보 통합 */}
       <div className="filter-bar">
         <div className="filter-top">
-          <input
-            className="filter-search"
-            type="text"
-            placeholder="🔍 검색 (세부내역, 카테고리…)"
-            value={filters.search}
-            onChange={e => setFilter('search', e.target.value)}
-          />
-          <button
-            className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
-            onClick={() => setShowFilters(v => !v)}
-          >
-            필터 {hasFilters ? '●' : ''}
-          </button>
+          {deleteMode ? (
+            <>
+              <span className="filter-summary-info">{selectedForDelete.size}개 선택됨</span>
+              <button
+                className="btn-filter-sm btn-filter-cancel"
+                onClick={() => { setDeleteMode(false); setSelectedForDelete(new Set()); }}
+              >
+                취소
+              </button>
+              {selectedForDelete.size > 0 && (
+                <button className="btn-filter-sm btn-filter-danger" onClick={handleBulkDelete}>
+                  삭제
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <input
+                className="filter-search"
+                type="text"
+                placeholder="🔍 검색 (세부내역, 카테고리…)"
+                value={filters.search}
+                onChange={e => setFilter('search', e.target.value)}
+              />
+              <span className="filter-summary-info">
+                {transactions.length}건 · {formatAmount(totalAmount)}원
+                {totalDiscount > 0 && ` · 할인 -${formatAmount(totalDiscount)}원`}
+              </span>
+              <button
+                className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
+                onClick={() => setShowFilters(v => !v)}
+              >
+                필터 {hasFilters ? '●' : ''}
+              </button>
+              <button className="btn-filter-sm" onClick={() => setDeleteMode(true)}>
+                삭제
+              </button>
+            </>
+          )}
         </div>
 
-        {showFilters && (
+        {showFilters && !deleteMode && (
           <div className="filter-panel">
             <select value={filters.month} onChange={e => setFilter('month', e.target.value)}>
               <option value="">전체 월</option>
@@ -131,51 +169,6 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
         )}
       </div>
 
-      {/* 요약 바 & 삭제 모드 */}
-      <div className="summary-bar">
-        {deleteMode ? (
-          <>
-            <span className="summary-count">
-              {selectedForDelete.size}개 선택
-            </span>
-            <button
-              className="btn-outline"
-              onClick={() => {
-                setDeleteMode(false);
-                setSelectedForDelete(new Set());
-              }}
-              style={{ marginLeft: 'auto' }}
-            >
-              취소
-            </button>
-            {selectedForDelete.size > 0 && (
-              <button
-                className="btn-danger"
-                onClick={handleBulkDelete}
-                style={{ marginLeft: '8px' }}
-              >
-                삭제
-              </button>
-            )}
-          </>
-        ) : (
-          <>
-            <span className="summary-count">{transactions.length}건</span>
-            <span className="summary-total">{formatAmount(totalAmount)}원</span>
-            {totalDiscount > 0 && (
-              <span className="summary-discount">할인 -{formatAmount(totalDiscount)}원</span>
-            )}
-            <button
-              className="btn-outline"
-              onClick={() => setDeleteMode(true)}
-              style={{ marginLeft: 'auto' }}
-            >
-              삭제
-            </button>
-          </>
-        )}
-      </div>
-
       {/* 거래 목록 */}
       {transactions.length === 0 ? (
         <div className="empty-state">
@@ -185,7 +178,11 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
       ) : (
         <div className="tx-list">
           {Object.keys(groupedTransactions).sort().reverse().map(month => (
-            <div key={month} className="month-group">
+            <div
+              key={month}
+              className="month-group"
+              ref={month === currentMonth ? currentMonthRef : null}
+            >
               <div
                 className="month-header"
                 onClick={() => toggleMonth(month)}

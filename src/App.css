@@ -234,7 +234,9 @@ body {
 
 .filter-top {
   display: flex;
+  align-items: center;
   gap: 8px;
+  min-height: 38px;
 }
 
 .filter-search {
@@ -286,19 +288,34 @@ body {
   cursor: pointer;
 }
 
-/* ── 요약 바 ─────────────────────────────────────────────── */
-.summary-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
+/* ── 필터 내 요약 정보 ───────────────────────────────────── */
+.filter-summary-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 4px;
 }
-.summary-count { color: var(--text-muted); }
-.summary-total { font-weight: 700; font-size: 15px; margin-left: auto; }
-.summary-discount { color: var(--success); font-size: 12px; }
+
+.btn-filter-sm {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-filter-cancel {
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+.btn-filter-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: none;
+}
 
 /* ── 거래 목록 ───────────────────────────────────────────── */
 .tx-list {
@@ -307,6 +324,7 @@ body {
 
 .month-group {
   border-bottom: 1px solid var(--border);
+  scroll-margin-top: calc(var(--header-h) + 58px);
 }
 
 .month-header {
@@ -719,7 +737,35 @@ body {
 }
 .discount-tag { color: var(--success); }
 
-.summary-section { padding: 16px; }
+.summary-section { padding: 0 16px 16px; }
+
+/* ── 월별 추이 서브탭 ────────────────────────────────────── */
+.summary-sub-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin: 0 -16px 16px;
+  padding: 0 16px;
+}
+
+.sub-tab {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color .2s, border-color .2s;
+}
+.sub-tab:hover { color: var(--text); }
+.sub-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
 
 .bar-chart { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
 .bar-row { display: flex; align-items: center; gap: 8px; }
