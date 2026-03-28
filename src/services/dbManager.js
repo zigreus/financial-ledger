@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS payment_methods (
 CREATE TABLE IF NOT EXISTS budget_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  sort_order INTEGER DEFAULT 0
+  sort_order INTEGER DEFAULT 0,
+  color TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sub_categories (
@@ -76,6 +77,13 @@ export function createDatabase(SQL, existingData = null) {
       // 이미 존재하면 무시
     }
   });
+
+  // color 컬럼 마이그레이션 (있으면 무시)
+  try {
+    db.run(`ALTER TABLE budget_categories ADD COLUMN color TEXT DEFAULT ''`);
+  } catch (e) {
+    // 이미 존재하면 무시
+  }
 
   // 기본 데이터는 테이블이 비어있을 때만 삽입
   const pmCount = db.exec('SELECT COUNT(*) FROM payment_methods')[0]?.values[0][0] || 0;
@@ -340,7 +348,7 @@ export function getAllPaymentMethods(db) {
 }
 
 export function getAllBudgetCategories(db) {
-  const result = db.exec('SELECT id, name, sort_order, is_hidden FROM budget_categories ORDER BY sort_order, name');
+  const result = db.exec('SELECT id, name, sort_order, is_hidden, color FROM budget_categories ORDER BY sort_order, name');
   if (!result.length) return [];
   const { columns, values } = result[0];
   return values.map(row => {
@@ -449,4 +457,14 @@ export function cleanupHiddenPaymentMethods(db) {
       db.run('DELETE FROM payment_methods WHERE id = ?', [id]);
     }
   });
+}
+
+export function setCategoryColor(db, categoryId, color) {
+  db.run('UPDATE budget_categories SET color = ? WHERE id = ?', [color, categoryId]);
+}
+
+export function getCategoryColor(db, categoryName) {
+  const result = db.exec('SELECT color FROM budget_categories WHERE name = ?', [categoryName]);
+  if (!result.length) return '';
+  return result[0].values[0][0] || '';
 }

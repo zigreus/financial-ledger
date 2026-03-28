@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, setMasterItemHidden, addPaymentMethod, addBudgetCategory, addSubCategory, cleanupHiddenPaymentMethods } from '../services/dbManager';
+import { getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, setMasterItemHidden, addPaymentMethod, addBudgetCategory, addSubCategory, cleanupHiddenPaymentMethods, setCategoryColor } from '../services/dbManager';
 
 function SettingsView({ db, onChanged }) {
   const [activeSection, setActiveSection] = useState('payment');
@@ -58,6 +58,7 @@ function SettingsView({ db, onChanged }) {
   };
 
   const currentItems = useMemo(() => {
+    if (activeSection === 'colors') return budgetCategories;
     const items = activeSection === 'payment' ? paymentMethods : activeSection === 'category' ? budgetCategories : subCategories;
     return [...items].sort((a, b) => {
       if (a.is_hidden !== b.is_hidden) {
@@ -89,6 +90,12 @@ function SettingsView({ db, onChanged }) {
         >
           세부카테고리
         </button>
+        <button
+          className={activeSection === 'colors' ? 'tab active' : 'tab'}
+          onClick={() => { setActiveSection('colors'); setSelectedCategory(''); setAddingName(''); setError(''); }}
+        >
+          색상
+        </button>
       </div>
 
       {/* 세부카테고리 섹션의 카테고리 선택 */}
@@ -103,11 +110,41 @@ function SettingsView({ db, onChanged }) {
         </div>
       )}
 
-      {/* 항목 목록 */}
+      {/* 항목 목록 / 색상 설정 */}
       <div className="settings-section">
         {error && <div className="error-msg" style={{ marginBottom: '12px' }}>{error}</div>}
 
-        {currentItems.length === 0 ? (
+        {activeSection === 'colors' ? (
+          <>
+            {budgetCategories.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 16px' }}>
+                카테고리가 없습니다.
+              </div>
+            ) : (
+              budgetCategories.map(cat => (
+                <div key={cat.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: '15px', fontWeight: '500' }}>{cat.name}</span>
+                  <input
+                    type="color"
+                    value={cat.color || '#AAB7B8'}
+                    onChange={(e) => {
+                      try {
+                        setCategoryColor(db, cat.id, e.target.value);
+                        onChanged();
+                        setError('');
+                      } catch (err) {
+                        setError(err.message);
+                      }
+                    }}
+                    style={{ width: '50px', height: '40px', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                  />
+                </div>
+              ))
+            )}
+          </>
+        ) : (
+          <>
+            {currentItems.length === 0 ? (
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 16px' }}>
             항목이 없습니다.
           </div>
@@ -129,23 +166,25 @@ function SettingsView({ db, onChanged }) {
           ))
         )}
 
-        {/* 추가 입력 행 */}
-        {activeSection !== 'sub' || selectedCategory ? (
-          <div className="settings-add-row">
-            <input
-              type="text"
-              value={addingName}
-              onChange={e => setAddingName(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                activeSection === 'payment' ? '새 결제수단...' :
-                activeSection === 'category' ? '새 카테고리...' :
-                '새 세부카테고리...'
-              }
-            />
-            <button className="btn-primary" onClick={handleAddItem}>+ 추가</button>
-          </div>
-        ) : null}
+            {/* 추가 입력 행 */}
+            {activeSection !== 'sub' || selectedCategory ? (
+              <div className="settings-add-row">
+                <input
+                  type="text"
+                  value={addingName}
+                  onChange={e => setAddingName(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    activeSection === 'payment' ? '새 결제수단...' :
+                    activeSection === 'category' ? '새 카테고리...' :
+                    '새 세부카테고리...'
+                  }
+                />
+                <button className="btn-primary" onClick={handleAddItem}>+ 추가</button>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );

@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getCategoryColor } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
-const CATEGORY_COLORS = {
+const DEFAULT_CATEGORY_COLORS = {
   '식비': '#FF6B6B',
   '쇼핑': '#4ECDC4',
   '차량교통비': '#45B7D1',
@@ -14,13 +14,17 @@ const CATEGORY_COLORS = {
   '기타': '#AAB7B8',
 };
 
-function categoryColor(cat) {
-  return CATEGORY_COLORS[cat] || '#AAB7B8';
+function categoryColor(db, cat) {
+  const customColor = getCategoryColor(db, cat);
+  return customColor || DEFAULT_CATEGORY_COLORS[cat] || '#AAB7B8';
 }
 
 function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState(new Set());
+  const [selectedDetail, setSelectedDetail] = useState(null);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
@@ -69,7 +73,22 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const clearFilters = () => setFilters({ month: '', payment_method: '', budget_category: '', search: '' });
   const hasFilters = Object.values(filters).some(v => v !== '');
 
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const toggleSelectForDelete = (txId) => {
+    const newSet = new Set(selectedForDelete);
+    if (newSet.has(txId)) {
+      newSet.delete(txId);
+    } else {
+      newSet.add(txId);
+    }
+    setSelectedForDelete(newSet);
+  };
+
+  const handleBulkDelete = () => {
+    if (!window.confirm(`${selectedForDelete.size}개의 거래를 삭제하시겠습니까?`)) return;
+    selectedForDelete.forEach(id => onDelete(id));
+    setSelectedForDelete(new Set());
+    setDeleteMode(false);
+  };
 
   return (
     <div className="list-page">
@@ -112,12 +131,48 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
         )}
       </div>
 
-      {/* 요약 바 */}
+      {/* 요약 바 & 삭제 모드 */}
       <div className="summary-bar">
-        <span className="summary-count">{transactions.length}건</span>
-        <span className="summary-total">{formatAmount(totalAmount)}원</span>
-        {totalDiscount > 0 && (
-          <span className="summary-discount">할인 -{formatAmount(totalDiscount)}원</span>
+        {deleteMode ? (
+          <>
+            <span className="summary-count">
+              {selectedForDelete.size}개 선택
+            </span>
+            <button
+              className="btn-outline"
+              onClick={() => {
+                setDeleteMode(false);
+                setSelectedForDelete(new Set());
+              }}
+              style={{ marginLeft: 'auto' }}
+            >
+              취소
+            </button>
+            {selectedForDelete.size > 0 && (
+              <button
+                className="btn-danger"
+                onClick={handleBulkDelete}
+                style={{ marginLeft: '8px' }}
+              >
+                삭제
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="summary-count">{transactions.length}건</span>
+            <span className="summary-total">{formatAmount(totalAmount)}원</span>
+            {totalDiscount > 0 && (
+              <span className="summary-discount">할인 -{formatAmount(totalDiscount)}원</span>
+            )}
+            <button
+              className="btn-outline"
+              onClick={() => setDeleteMode(true)}
+              style={{ marginLeft: 'auto' }}
+            >
+              삭제
+            </button>
+          </>
         )}
       </div>
 
@@ -151,10 +206,29 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
               {expandedMonths.has(month) && (
                 <ul className="tx-list-items">
                   {groupedTransactions[month].map(tx => (
-                    <li key={tx.id} className="tx-item">
+                    <li
+                      key={tx.id}
+                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''}`}
+                      onClick={() => {
+                        if (deleteMode) {
+                          toggleSelectForDelete(tx.id);
+                        } else {
+                          setSelectedDetail(tx);
+                        }
+                      }}
+                    >
+                      {deleteMode && (
+                        <input
+                          type="checkbox"
+                          className="tx-checkbox"
+                          checked={selectedForDelete.has(tx.id)}
+                          onChange={() => toggleSelectForDelete(tx.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      )}
                       <div
                         className="tx-category-bar"
-                        style={{ backgroundColor: categoryColor(tx.budget_category) }}
+                        style={{ backgroundColor: categoryColor(db, tx.budget_category) }}
                       />
                       <div className="tx-body">
                         <div className="tx-row1">
@@ -164,7 +238,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                         <div className="tx-row2">
                           <span
                             className="tx-badge"
-                            style={{ backgroundColor: categoryColor(tx.budget_category) + '33', color: categoryColor(tx.budget_category) }}
+                            style={{ backgroundColor: categoryColor(db, tx.budget_category) + '33', color: categoryColor(db, tx.budget_category) }}
                           >
                             {tx.budget_category}
                           </span>
@@ -179,10 +253,6 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                           </div>
                         )}
                       </div>
-                      <div className="tx-actions">
-                        <button className="btn-icon" onClick={() => onEdit(tx)} title="수정">✏️</button>
-                        <button className="btn-icon btn-delete" onClick={() => setConfirmDelete(tx)} title="삭제">🗑️</button>
-                      </div>
                     </li>
                   ))}
                 </ul>
@@ -192,22 +262,68 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
         </div>
       )}
 
-      {/* 삭제 확인 다이얼로그 */}
-      {confirmDelete && (
-        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
+      {/* 세부내역 모달 */}
+      {selectedDetail && (
+        <div className="modal-overlay" onClick={() => setSelectedDetail(null)}>
           <div className="modal-content modal-small" onClick={e => e.stopPropagation()}>
-            <h3>거래 삭제</h3>
-            <p>
-              <strong>{confirmDelete.date}</strong> / {confirmDelete.budget_category}<br />
-              <strong>{formatAmount(confirmDelete.amount)}원</strong>을 삭제하시겠습니까?
-            </p>
-            <div className="form-actions">
-              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>취소</button>
-              <button
-                className="btn-danger"
-                onClick={() => { onDelete(confirmDelete.id); setConfirmDelete(null); }}
-              >
-                삭제
+            <div className="modal-header">
+              <h3>거래 세부내역</h3>
+              <button className="modal-close" onClick={() => setSelectedDetail(null)}>✕</button>
+            </div>
+            <div style={{ padding: '16px 20px' }}>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>날짜</div>
+                <div style={{ fontSize: '16px', fontWeight: '600' }}>{selectedDetail.date}</div>
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>카테고리</div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span
+                    style={{
+                      width: '12px',
+                      height: '12px',
+                      borderRadius: '50%',
+                      backgroundColor: categoryColor(db, selectedDetail.budget_category)
+                    }}
+                  />
+                  <span style={{ fontSize: '15px' }}>{selectedDetail.budget_category}</span>
+                  {selectedDetail.sub_category && (
+                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                      / {selectedDetail.sub_category}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>결제수단</div>
+                <div style={{ fontSize: '15px' }}>{selectedDetail.payment_method}</div>
+              </div>
+              {selectedDetail.detail && (
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>세부내역</div>
+                  <div style={{ fontSize: '15px' }}>{selectedDetail.detail}</div>
+                </div>
+              )}
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>금액</div>
+                <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--primary)' }}>
+                  {formatAmount(selectedDetail.amount)}원
+                </div>
+              </div>
+              {selectedDetail.discount_amount > 0 && (
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>할인</div>
+                  <div style={{ fontSize: '15px', color: 'var(--success)' }}>
+                    -{formatAmount(selectedDetail.discount_amount)}원
+                    {selectedDetail.discount_note && ` (${selectedDetail.discount_note})`}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="form-actions" style={{ padding: '0 20px 20px' }}>
+              <button className="btn-secondary" onClick={() => setSelectedDetail(null)}>닫기</button>
+              <button className="btn-primary" onClick={() => { onEdit(selectedDetail); setSelectedDetail(null); }}>
+                수정
               </button>
             </div>
           </div>
