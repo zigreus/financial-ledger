@@ -29,21 +29,21 @@ function ImportModal({ db, onImport, onClose }) {
       const fCell = cells[5];
       const gCell = cells[6];
 
-      // A열에 날짜 패턴 (YYMMDD) → 카드 그룹 헤더
-      if (/^\d{6}$/.test(aCell)) {
+      // A열에 날짜 패턴 (YYMMDD 뒤에 요일이나 다른 텍스트가 있을 수 있음) → 카드 그룹 헤더
+      if (/^\d{6}/.test(aCell)) {
         currentPaymentMethod = cCell;
         continue;
       }
 
-      // B열에 날짜 패턴 (YYMMDD 또는 YYMMDD (요일)) → 거래 내역
-      if (/^\d{6}\s*(\([日月火水木金土]\))?$/.test(bCell)) {
+      // B열에 날짜 패턴 (YYMMDD 뒤에 다른 텍스트가 있을 수 있음) → 거래 내역
+      if (/^\d{6}/.test(bCell)) {
         if (!currentPaymentMethod) {
           skipped++;
           continue;
         }
 
         try {
-          // 날짜 변환: 260301 → 2026-03-01
+          // 날짜 변환: 260301 → 2026-03-01, 220101 (土) → 2022-01-01
           const dateMatch = bCell.match(/^(\d{2})(\d{2})(\d{2})/);
           if (!dateMatch) {
             skipped++;
