@@ -2,6 +2,9 @@ import React, { useState, useMemo } from 'react';
 import {
   getMonthlySummary, getMonthlyTotals,
   getPaymentMethodSummary, getAvailableMonths,
+  getYearlySummary, getYearlyPaymentMethodSummary,
+  getRangeSummary, getRangePaymentMethodSummary,
+  getAvailableYears,
 } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
@@ -42,11 +45,36 @@ function BarChart({ data, maxValue, color, formatLabel }) {
 function SummaryView({ db }) {
   const [tab, setTab] = useState('monthly'); // 'monthly' | 'category' | 'payment'
   const [selectedMonth, setSelectedMonth] = useState('');
+  const [filterType, setFilterType] = useState('month'); // 'month' | 'year' | 'range'
+  const [selectedYear, setSelectedYear] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
+  const years = useMemo(() => getAvailableYears(db), [db]);
   const monthlyTotals = useMemo(() => getMonthlyTotals(db), [db]);
-  const categorySummary = useMemo(() => getMonthlySummary(db, selectedMonth), [db, selectedMonth]);
-  const paymentSummary = useMemo(() => getPaymentMethodSummary(db, selectedMonth), [db, selectedMonth]);
+
+  const categorySummary = useMemo(() => {
+    if (filterType === 'month') {
+      return getMonthlySummary(db, selectedMonth);
+    } else if (filterType === 'year') {
+      return selectedYear ? getYearlySummary(db, selectedYear) : [];
+    } else if (filterType === 'range') {
+      return dateFrom && dateTo ? getRangeSummary(db, dateFrom, dateTo) : [];
+    }
+    return [];
+  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+
+  const paymentSummary = useMemo(() => {
+    if (filterType === 'month') {
+      return getPaymentMethodSummary(db, selectedMonth);
+    } else if (filterType === 'year') {
+      return selectedYear ? getYearlyPaymentMethodSummary(db, selectedYear) : [];
+    } else if (filterType === 'range') {
+      return dateFrom && dateTo ? getRangePaymentMethodSummary(db, dateFrom, dateTo) : [];
+    }
+    return [];
+  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const totalSpend = useMemo(() => categorySummary.reduce((s, r) => s + r.total, 0), [categorySummary]);
   const totalDiscount = useMemo(() => categorySummary.reduce((s, r) => s + (r.discount || 0), 0), [categorySummary]);
@@ -60,14 +88,73 @@ function SummaryView({ db }) {
         <button className={tab === 'payment' ? 'tab active' : 'tab'} onClick={() => setTab('payment')}>결제수단</button>
       </div>
 
-      {/* 월 필터 (카테고리/결제수단 탭에서만) */}
+      {/* 필터 (카테고리/결제수단 탭에서만) */}
       {(tab === 'category' || tab === 'payment') && (
-        <div className="summary-month-filter">
-          <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-            <option value="">전체 기간</option>
-            {months.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-          {selectedMonth && (
+        <div className="summary-filter">
+          <div className="filter-type-buttons">
+            <button
+              className={`filter-type-btn ${filterType === 'month' ? 'active' : ''}`}
+              onClick={() => {
+                setFilterType('month');
+                setSelectedMonth('');
+              }}
+            >
+              월별
+            </button>
+            <button
+              className={`filter-type-btn ${filterType === 'year' ? 'active' : ''}`}
+              onClick={() => {
+                setFilterType('year');
+                setSelectedYear('');
+              }}
+            >
+              연도별
+            </button>
+            <button
+              className={`filter-type-btn ${filterType === 'range' ? 'active' : ''}`}
+              onClick={() => {
+                setFilterType('range');
+                setDateFrom('');
+                setDateTo('');
+              }}
+            >
+              기간별
+            </button>
+          </div>
+
+          <div className="filter-inputs">
+            {filterType === 'month' && (
+              <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                <option value="">전체 기간</option>
+                {months.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+            {filterType === 'year' && (
+              <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
+                <option value="">연도 선택</option>
+                {years.map(y => <option key={y} value={y}>{y}년</option>)}
+              </select>
+            )}
+            {filterType === 'range' && (
+              <div className="date-range-inputs">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  placeholder="시작일"
+                />
+                <span className="date-separator">~</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => setDateTo(e.target.value)}
+                  placeholder="종료일"
+                />
+              </div>
+            )}
+          </div>
+
+          {((filterType === 'month' && selectedMonth) || (filterType === 'year' && selectedYear) || (filterType === 'range' && dateFrom && dateTo)) && (
             <div className="summary-total-row">
               <span>합계: <strong>{formatAmount(totalSpend)}원</strong></span>
               {totalDiscount > 0 && (
@@ -98,6 +185,7 @@ function SummaryView({ db }) {
                     <th>건수</th>
                     <th>지출</th>
                     <th>할인</th>
+                    <th>총액</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -109,6 +197,7 @@ function SummaryView({ db }) {
                       <td className="discount-cell">
                         {r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}
                       </td>
+                      <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                     </tr>
                   ))}
                 </tbody>
@@ -138,6 +227,7 @@ function SummaryView({ db }) {
                     <th>건수</th>
                     <th>지출</th>
                     <th>할인</th>
+                    <th>총액</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -155,6 +245,7 @@ function SummaryView({ db }) {
                       <td className="discount-cell">
                         {r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}
                       </td>
+                      <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                     </tr>
                   ))}
                 </tbody>
@@ -165,6 +256,7 @@ function SummaryView({ db }) {
                     <td className="discount-cell">
                       {totalDiscount > 0 ? <strong>-{formatAmount(totalDiscount)}원</strong> : '-'}
                     </td>
+                    <td className="total-cell"><strong>{formatAmount(totalSpend - totalDiscount)}원</strong></td>
                   </tr>
                 </tfoot>
               </table>
@@ -186,6 +278,7 @@ function SummaryView({ db }) {
                   <th>건수</th>
                   <th>지출</th>
                   <th>할인</th>
+                  <th>총액</th>
                 </tr>
               </thead>
               <tbody>
@@ -197,6 +290,7 @@ function SummaryView({ db }) {
                     <td className="discount-cell">
                       {r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}
                     </td>
+                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                   </tr>
                 ))}
               </tbody>

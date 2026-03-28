@@ -31,6 +31,36 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
     [db, filters]
   );
 
+  // 현재 월 (YYYY-MM 형식)
+  const currentMonth = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  // 월별로 그룹화된 거래내역
+  const groupedTransactions = useMemo(() => {
+    const groups = {};
+    transactions.forEach(tx => {
+      const month = tx.date.substring(0, 7); // YYYY-MM 추출
+      if (!groups[month]) groups[month] = [];
+      groups[month].push(tx);
+    });
+    return groups;
+  }, [transactions]);
+
+  // 확장된 월들 (기본값으로 현재 월은 열려있음)
+  const [expandedMonths, setExpandedMonths] = useState(new Set([currentMonth]));
+
+  const toggleMonth = (month) => {
+    const newExpanded = new Set(expandedMonths);
+    if (newExpanded.has(month)) {
+      newExpanded.delete(month);
+    } else {
+      newExpanded.add(month);
+    }
+    setExpandedMonths(newExpanded);
+  };
+
   const totalAmount = useMemo(() => transactions.reduce((s, t) => s + t.amount, 0), [transactions]);
   const totalDiscount = useMemo(() => transactions.reduce((s, t) => s + (t.discount_amount || 0), 0), [transactions]);
 
@@ -98,43 +128,68 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
           <button className="btn-primary" onClick={onAdd}>+ 첫 거래 추가하기</button>
         </div>
       ) : (
-        <ul className="tx-list">
-          {transactions.map(tx => (
-            <li key={tx.id} className="tx-item">
+        <div className="tx-list">
+          {Object.keys(groupedTransactions).sort().reverse().map(month => (
+            <div key={month} className="month-group">
               <div
-                className="tx-category-bar"
-                style={{ backgroundColor: categoryColor(tx.budget_category) }}
-              />
-              <div className="tx-body">
-                <div className="tx-row1">
-                  <span className="tx-date">{tx.date}</span>
-                  <span className="tx-amount">{formatAmount(tx.amount)}원</span>
-                </div>
-                <div className="tx-row2">
-                  <span
-                    className="tx-badge"
-                    style={{ backgroundColor: categoryColor(tx.budget_category) + '33', color: categoryColor(tx.budget_category) }}
-                  >
-                    {tx.budget_category}
-                  </span>
-                  {tx.sub_category && <span className="tx-sub">{tx.sub_category}</span>}
-                  <span className="tx-payment">{tx.payment_method}</span>
-                </div>
-                {tx.detail && <div className="tx-detail">{tx.detail}</div>}
-                {tx.discount_amount > 0 && (
-                  <div className="tx-discount">
-                    할인 -{formatAmount(tx.discount_amount)}원
-                    {tx.discount_note && ` (${tx.discount_note})`}
-                  </div>
-                )}
+                className="month-header"
+                onClick={() => toggleMonth(month)}
+              >
+                <span className="month-toggle">
+                  {expandedMonths.has(month) ? '▼' : '▶'}
+                </span>
+                <span className="month-label">
+                  {month}
+                  {month === currentMonth && ' (이번 달)'}
+                </span>
+                <span className="month-stats">
+                  {groupedTransactions[month].length}건 / {formatAmount(
+                    groupedTransactions[month].reduce((s, t) => s + t.amount, 0)
+                  )}원
+                </span>
               </div>
-              <div className="tx-actions">
-                <button className="btn-icon" onClick={() => onEdit(tx)} title="수정">✏️</button>
-                <button className="btn-icon btn-delete" onClick={() => setConfirmDelete(tx)} title="삭제">🗑️</button>
-              </div>
-            </li>
+              {expandedMonths.has(month) && (
+                <ul className="tx-list-items">
+                  {groupedTransactions[month].map(tx => (
+                    <li key={tx.id} className="tx-item">
+                      <div
+                        className="tx-category-bar"
+                        style={{ backgroundColor: categoryColor(tx.budget_category) }}
+                      />
+                      <div className="tx-body">
+                        <div className="tx-row1">
+                          <span className="tx-date">{tx.date}</span>
+                          <span className="tx-amount">{formatAmount(tx.amount)}원</span>
+                        </div>
+                        <div className="tx-row2">
+                          <span
+                            className="tx-badge"
+                            style={{ backgroundColor: categoryColor(tx.budget_category) + '33', color: categoryColor(tx.budget_category) }}
+                          >
+                            {tx.budget_category}
+                          </span>
+                          {tx.sub_category && <span className="tx-sub">{tx.sub_category}</span>}
+                          <span className="tx-payment">{tx.payment_method}</span>
+                        </div>
+                        {tx.detail && <div className="tx-detail">{tx.detail}</div>}
+                        {tx.discount_amount > 0 && (
+                          <div className="tx-discount">
+                            할인 -{formatAmount(tx.discount_amount)}원
+                            {tx.discount_note && ` (${tx.discount_note})`}
+                          </div>
+                        )}
+                      </div>
+                      <div className="tx-actions">
+                        <button className="btn-icon" onClick={() => onEdit(tx)} title="수정">✏️</button>
+                        <button className="btn-icon btn-delete" onClick={() => setConfirmDelete(tx)} title="삭제">🗑️</button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
       {/* 삭제 확인 다이얼로그 */}

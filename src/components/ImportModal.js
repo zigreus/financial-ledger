@@ -47,7 +47,6 @@ function ImportModal({ db, onImport, onClose }) {
             detail: item.detail || '',
             amount: parseInt(item.amount, 10),
             discount_amount: parseInt(item.discount_amount || 0, 10),
-            discount_note: item.discount_note || '',
           }));
         } else {
           // CSV 파싱은 생략 (JSON만 사용하기로 함)

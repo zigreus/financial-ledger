@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, setMasterItemHidden, addPaymentMethod, addBudgetCategory, addSubCategory } from '../services/dbManager';
+import { getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, setMasterItemHidden, addPaymentMethod, addBudgetCategory, addSubCategory, cleanupHiddenPaymentMethods } from '../services/dbManager';
 
 function SettingsView({ db, onChanged }) {
   const [activeSection, setActiveSection] = useState('payment');
@@ -14,6 +14,10 @@ function SettingsView({ db, onChanged }) {
   const handleToggleHidden = (table, id, currentHidden) => {
     try {
       setMasterItemHidden(db, table, id, !currentHidden);
+      // 결제수단을 숨길 때, 사용되지 않는 숨겨진 항목 정리
+      if (table === 'payment_methods' && !currentHidden) {
+        cleanupHiddenPaymentMethods(db);
+      }
       onChanged();
       setError('');
     } catch (e) {
@@ -53,7 +57,15 @@ function SettingsView({ db, onChanged }) {
     }
   };
 
-  const currentItems = activeSection === 'payment' ? paymentMethods : activeSection === 'category' ? budgetCategories : subCategories;
+  const currentItems = useMemo(() => {
+    const items = activeSection === 'payment' ? paymentMethods : activeSection === 'category' ? budgetCategories : subCategories;
+    return [...items].sort((a, b) => {
+      if (a.is_hidden !== b.is_hidden) {
+        return a.is_hidden ? 1 : -1;
+      }
+      return a.sort_order - b.sort_order;
+    });
+  }, [activeSection, paymentMethods, budgetCategories, subCategories]);
 
   return (
     <div className="settings-page">

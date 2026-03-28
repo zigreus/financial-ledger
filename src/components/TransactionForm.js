@@ -10,7 +10,6 @@ const EMPTY_FORM = {
   detail: '',
   amount: '',
   discount_amount: '',
-  discount_note: '',
 };
 
 function FormulaInput({ label, value, onChange, required, placeholder }) {
@@ -60,7 +59,6 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
         detail: editingTx.detail || '',
         amount: String(editingTx.amount || ''),
         discount_amount: editingTx.discount_amount ? String(editingTx.discount_amount) : '',
-        discount_note: editingTx.discount_note || '',
       });
     } else {
       setForm(EMPTY_FORM);
@@ -92,7 +90,6 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
       detail: form.detail,
       amount,
       discount_amount: discountAmount || 0,
-      discount_note: form.discount_note,
     });
   };
 
@@ -192,24 +189,18 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
             required
           />
 
-          {/* 할인 정보 */}
-          <div className="form-section-title">할인/혜택 정보 <span className="optional">(선택)</span></div>
+          {/* 할인/수익 정보 */}
+          <div className="form-section-title">
+            {form.payment_method === '현금' ? '수익 정보' : '할인/혜택 정보'}
+            <span className="optional">(선택)</span>
+          </div>
           <div className="form-row">
             <FormulaInput
-              label="할인금액"
+              label={form.payment_method === '현금' ? '수익금액' : '할인금액'}
               value={form.discount_amount}
               onChange={v => set('discount_amount', v)}
               placeholder="0"
             />
-            <div className="form-group">
-              <label>할인내역</label>
-              <input
-                type="text"
-                value={form.discount_note}
-                onChange={e => set('discount_note', e.target.value)}
-                placeholder="예: 스프링클러 커버 할인"
-              />
-            </div>
           </div>
 
           <div className="form-actions">

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS sub_categories (
 
 const DEFAULT_PAYMENT_METHODS = [
   '신한카드', '현대카드', '삼성카드', 'KB국민카드', '롯데카드',
-  '카카오페이', '네이버페이', '토스페이', '현금',
+  '현금',
 ];
 
 const DEFAULT_CATEGORIES = {
@@ -263,6 +263,69 @@ export function getPaymentMethodSummary(db, month) {
   });
 }
 
+export function getAvailableYears(db) {
+  const result = db.exec(
+    "SELECT DISTINCT strftime('%Y', date) as year FROM transactions ORDER BY year DESC"
+  );
+  return result.length ? result[0].values.map(r => r[0]) : [];
+}
+
+export function getYearlySummary(db, year) {
+  const query = `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE strftime('%Y', date) = ?
+                 GROUP BY budget_category ORDER BY total DESC`;
+  const result = db.exec(query, [year]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getYearlyPaymentMethodSummary(db, year) {
+  const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE strftime('%Y', date) = ?
+                 GROUP BY payment_method ORDER BY total DESC`;
+  const result = db.exec(query, [year]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getRangeSummary(db, dateFrom, dateTo) {
+  const query = `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE date >= ? AND date <= ?
+                 GROUP BY budget_category ORDER BY total DESC`;
+  const result = db.exec(query, [dateFrom, dateTo]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getRangePaymentMethodSummary(db, dateFrom, dateTo) {
+  const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE date >= ? AND date <= ?
+                 GROUP BY payment_method ORDER BY total DESC`;
+  const result = db.exec(query, [dateFrom, dateTo]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
 // ── 마스터 데이터 편집 (설정용) ──────────────────────────
 
 export function getAllPaymentMethods(db) {
@@ -339,13 +402,51 @@ export function addSubCategory(db, budgetCategory, name) {
   db.run('INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [budgetCategory, name.trim(), nextSort]);
 }
 
+export function ensurePaymentMethodsExist(db, txList) {
+  // 트랜잭션 목록에서 사용된 결제수단들을 자동으로 추가
+  const paymentMethods = new Set(txList.map(tx => tx.payment_method).filter(Boolean));
+  const existingResult = db.exec('SELECT name FROM payment_methods');
+  const existingMethods = new Set(existingResult[0]?.values.map(r => r[0]) || []);
+
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) as max FROM payment_methods');
+  let nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
+
+  paymentMethods.forEach(method => {
+    if (!existingMethods.has(method)) {
+      db.run('INSERT INTO payment_methods (name, sort_order, is_hidden) VALUES (?, ?, 0)', [method, nextSort]);
+      nextSort++;
+    }
+  });
+}
+
 export function bulkInsertTransactions(db, txList) {
   db.run('BEGIN');
   try {
+    ensurePaymentMethodsExist(db, txList);
     txList.forEach(tx => addTransaction(db, tx));
     db.run('COMMIT');
   } catch (e) {
     db.run('ROLLBACK');
     throw e;
   }
+}
+
+export function cleanupHiddenPaymentMethods(db) {
+  // 숨겨진 결제수단 중 데이터에서 사용되지 않는 것들 삭제
+  const result = db.exec(
+    `SELECT id, name FROM payment_methods WHERE is_hidden = 1`
+  );
+  if (!result.length) return;
+
+  result[0].values.forEach(row => {
+    const [id, name] = row;
+    const usageResult = db.exec(
+      'SELECT COUNT(*) FROM transactions WHERE payment_method = ?',
+      [name]
+    );
+    const count = usageResult[0]?.values[0][0] || 0;
+    if (count === 0) {
+      db.run('DELETE FROM payment_methods WHERE id = ?', [id]);
+    }
+  });
 }
