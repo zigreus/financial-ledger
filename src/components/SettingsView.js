@@ -5,7 +5,7 @@ import {
   addPaymentMethod, addBudgetCategory, addSubCategory,
   cleanupHiddenPaymentMethods,
   setPaymentMethodDiscountRate, bulkApplyShinhanDiscount, bulkApplyWooriDiscount,
-  getAllTrips, getTripCountries, addTrip, setTripHidden, reorderTrip,
+  getAllTrips, getTripCountries, addTrip, updateTripName, deleteTrip, reorderTrip,
   addTripCountry, deleteTripCountry,
 } from '../services/dbManager';
 
@@ -19,6 +19,9 @@ function SettingsView({ db, onChanged }) {
   const [selectedTripId, setSelectedTripId] = useState('');
   const [addingCountry, setAddingCountry] = useState('');
   const [addingCurrency, setAddingCurrency] = useState('');
+  const [travelSubTab, setTravelSubTab] = useState('list');
+  const [editingTripId, setEditingTripId] = useState(null);
+  const [editingTripName, setEditingTripName] = useState('');
 
   const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
@@ -99,6 +102,9 @@ function SettingsView({ db, onChanged }) {
     setSelectedTripId('');
     setAddingCountry('');
     setAddingCurrency('');
+    setTravelSubTab('list');
+    setEditingTripId(null);
+    setEditingTripName('');
     setError('');
     setDataMsg('');
   };
@@ -113,9 +119,26 @@ function SettingsView({ db, onChanged }) {
     } catch (e) { setError(e.message); }
   };
 
-  const handleToggleTripHidden = (id, currentHidden) => {
+  const handleUpdateTripName = (id) => {
+    if (!editingTripName.trim()) { setError('여행 이름을 입력하세요.'); return; }
     try {
-      setTripHidden(db, id, !currentHidden);
+      updateTripName(db, id, editingTripName);
+      onChanged();
+      setEditingTripId(null);
+      setEditingTripName('');
+      setError('');
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDeleteTrip = (id, name) => {
+    try {
+      const res = db.exec('SELECT COUNT(*) FROM transactions WHERE trip_id = ?', [id]);
+      const count = res[0]?.values[0][0] || 0;
+      const msg = count > 0
+        ? `"${name}"을(를) 삭제하면 연결된 거래 ${count}건의 여행 태그가 해제됩니다.\n정말 삭제하시겠습니까?`
+        : `"${name}"을(를) 삭제하시겠습니까?`;
+      if (!window.confirm(msg)) return;
+      deleteTrip(db, id);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
@@ -178,98 +201,134 @@ function SettingsView({ db, onChanged }) {
         {activeSection === 'travel' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
 
-            {/* 여행 목록 */}
-            <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>여행 목록</div>
-            {trips.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px' }}>등록된 여행이 없습니다.</div>
-            ) : (
-              (() => {
-                const sorted = [...trips].sort((a, b) => {
-                  if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
-                  return a.sort_order - b.sort_order;
-                });
-                return sorted.map(trip => {
-                  const sameGroup = sorted.filter(t => t.is_hidden === trip.is_hidden);
-                  const groupIdx = sameGroup.indexOf(trip);
-                  return (
-                    <div key={trip.id} className={`settings-item ${trip.is_hidden ? 'settings-item-hidden' : ''}`}>
-                      <div className="reorder-buttons">
-                        <button className="btn-reorder" disabled={groupIdx === 0} onClick={() => handleReorderTrip(trip.id, 'up')}>▲</button>
-                        <button className="btn-reorder" disabled={groupIdx === sameGroup.length - 1} onClick={() => handleReorderTrip(trip.id, 'down')}>▼</button>
-                      </div>
-                      <span className="settings-item-name">{trip.name}</span>
-                      <button
-                        className={trip.is_hidden ? 'btn-secondary' : 'btn-outline'}
-                        onClick={() => handleToggleTripHidden(trip.id, trip.is_hidden)}
-                      >
-                        {trip.is_hidden ? '표시' : '숨기기'}
-                      </button>
-                    </div>
-                  );
-                });
-              })()
+            {/* 여행 서브탭 */}
+            <div className="settings-tabs" style={{ marginBottom: '12px' }}>
+              <button
+                className={travelSubTab === 'list' ? 'tab active' : 'tab'}
+                onClick={() => { setTravelSubTab('list'); setError(''); }}
+              >여행목록</button>
+              <button
+                className={travelSubTab === 'country' ? 'tab active' : 'tab'}
+                onClick={() => { setTravelSubTab('country'); setError(''); }}
+              >나라/화폐 관리</button>
+            </div>
+
+            {/* 서브탭: 여행목록 */}
+            {travelSubTab === 'list' && (
+              <>
+                {/* 여행 추가 (상단) */}
+                <div className="settings-add-row" style={{ marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    value={addingTripName}
+                    onChange={e => setAddingTripName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddTrip(); }}
+                    placeholder="새 여행 이름 (예: 일본 오사카 2026)"
+                  />
+                  <button className="btn-primary" onClick={handleAddTrip}>+ 추가</button>
+                </div>
+
+                {trips.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px' }}>등록된 여행이 없습니다.</div>
+                ) : (
+                  (() => {
+                    const sorted = [...trips].sort((a, b) => {
+                      if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
+                      return a.sort_order - b.sort_order;
+                    });
+                    return sorted.map(trip => {
+                      const sameGroup = sorted.filter(t => t.is_hidden === trip.is_hidden);
+                      const groupIdx = sameGroup.indexOf(trip);
+                      const isEditing = editingTripId === trip.id;
+                      return (
+                        <div key={trip.id} className="settings-item">
+                          <div className="reorder-buttons">
+                            <button className="btn-reorder" disabled={groupIdx === 0} onClick={() => handleReorderTrip(trip.id, 'up')}>▲</button>
+                            <button className="btn-reorder" disabled={groupIdx === sameGroup.length - 1} onClick={() => handleReorderTrip(trip.id, 'down')}>▼</button>
+                          </div>
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingTripName}
+                              onChange={e => setEditingTripName(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleUpdateTripName(trip.id);
+                                if (e.key === 'Escape') { setEditingTripId(null); setEditingTripName(''); }
+                              }}
+                              autoFocus
+                              style={{ flex: 1, marginRight: '6px' }}
+                            />
+                          ) : (
+                            <span className="settings-item-name">{trip.name}</span>
+                          )}
+                          {isEditing ? (
+                            <>
+                              <button className="btn-primary" onClick={() => handleUpdateTripName(trip.id)}>저장</button>
+                              <button className="btn-outline" style={{ marginLeft: '4px' }} onClick={() => { setEditingTripId(null); setEditingTripName(''); }}>취소</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn-outline" onClick={() => { setEditingTripId(trip.id); setEditingTripName(trip.name); setError(''); }}>수정</button>
+                              <button className="btn-outline" style={{ marginLeft: '4px', color: 'var(--danger, #e53e3e)' }} onClick={() => handleDeleteTrip(trip.id, trip.name)}>삭제</button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()
+                )}
+              </>
             )}
 
-            {/* 여행 추가 */}
-            <div className="settings-add-row">
-              <input
-                type="text"
-                value={addingTripName}
-                onChange={e => setAddingTripName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleAddTrip(); }}
-                placeholder="새 여행 이름 (예: 일본 오사카 2026)"
-              />
-              <button className="btn-primary" onClick={handleAddTrip}>+ 추가</button>
-            </div>
+            {/* 서브탭: 나라/화폐 관리 */}
+            {travelSubTab === 'country' && (
+              <>
+                <select
+                  value={selectedTripId}
+                  onChange={e => { setSelectedTripId(e.target.value); setAddingCountry(''); setAddingCurrency(''); }}
+                  style={{ width: '100%', marginBottom: '12px' }}
+                >
+                  <option value="">여행 선택</option>
+                  {trips.filter(t => !t.is_hidden).map(t => (
+                    <option key={t.id} value={String(t.id)}>{t.name}</option>
+                  ))}
+                </select>
 
-            {/* 나라/화폐 관리 */}
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px' }}>
-              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>나라 / 화폐 관리</div>
-              <select
-                value={selectedTripId}
-                onChange={e => { setSelectedTripId(e.target.value); setAddingCountry(''); setAddingCurrency(''); }}
-                style={{ width: '100%', marginBottom: '12px' }}
-              >
-                <option value="">여행 선택</option>
-                {trips.filter(t => !t.is_hidden).map(t => (
-                  <option key={t.id} value={String(t.id)}>{t.name}</option>
-                ))}
-              </select>
-
-              {selectedTripId && (
-                <>
-                  {tripCountries.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '8px', fontSize: '13px' }}>등록된 나라가 없습니다.</div>
-                  ) : (
-                    tripCountries.map(c => (
-                      <div key={c.id} className="settings-item">
-                        <span className="settings-item-name">{c.country}</span>
-                        <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginRight: '8px' }}>{c.currency}</span>
-                        <button className="btn-outline" onClick={() => handleDeleteTripCountry(c.id)}>삭제</button>
-                      </div>
-                    ))
-                  )}
-                  <div className="settings-add-row" style={{ marginTop: '8px' }}>
-                    <input
-                      type="text"
-                      value={addingCountry}
-                      onChange={e => setAddingCountry(e.target.value)}
-                      placeholder="나라 (예: 일본)"
-                      style={{ flex: 2 }}
-                    />
-                    <input
-                      type="text"
-                      value={addingCurrency}
-                      onChange={e => setAddingCurrency(e.target.value.toUpperCase())}
-                      onKeyDown={e => { if (e.key === 'Enter') handleAddTripCountry(); }}
-                      placeholder="화폐 (예: JPY)"
-                      style={{ flex: 1 }}
-                    />
-                    <button className="btn-primary" onClick={handleAddTripCountry}>+ 추가</button>
-                  </div>
-                </>
-              )}
-            </div>
+                {selectedTripId && (
+                  <>
+                    {tripCountries.length === 0 ? (
+                      <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '8px', fontSize: '13px' }}>등록된 나라가 없습니다.</div>
+                    ) : (
+                      tripCountries.map(c => (
+                        <div key={c.id} className="settings-item">
+                          <span className="settings-item-name">{c.country}</span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginRight: '8px' }}>{c.currency}</span>
+                          <button className="btn-outline" onClick={() => handleDeleteTripCountry(c.id)}>삭제</button>
+                        </div>
+                      ))
+                    )}
+                    <div className="settings-add-row" style={{ marginTop: '8px' }}>
+                      <input
+                        type="text"
+                        value={addingCountry}
+                        onChange={e => setAddingCountry(e.target.value)}
+                        placeholder="나라 (예: 일본)"
+                        style={{ flex: 2 }}
+                      />
+                      <input
+                        type="text"
+                        value={addingCurrency}
+                        onChange={e => setAddingCurrency(e.target.value.toUpperCase())}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddTripCountry(); }}
+                        placeholder="화폐 (예: JPY)"
+                        style={{ flex: 1 }}
+                      />
+                      <button className="btn-primary" onClick={handleAddTripCountry}>+ 추가</button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
 
         ) : activeSection === 'data' ? (

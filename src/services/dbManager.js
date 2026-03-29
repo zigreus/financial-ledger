@@ -1029,13 +1029,23 @@ export function getAllTrips(db) {
 
 export function addTrip(db, name) {
   if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
-  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM trips');
-  const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
+  const minSort = db.exec('SELECT COALESCE(MIN(sort_order), 1) FROM trips');
+  const nextSort = (minSort[0]?.values[0][0] || 1) - 1;
   db.run('INSERT INTO trips (name, sort_order, is_hidden) VALUES (?, ?, 0)', [name.trim(), nextSort]);
 }
 
-export function setTripHidden(db, id, isHidden) {
-  db.run('UPDATE trips SET is_hidden = ? WHERE id = ?', [isHidden ? 1 : 0, id]);
+export function updateTripName(db, id, name) {
+  if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
+  db.run('UPDATE trips SET name = ? WHERE id = ?', [name.trim(), id]);
+}
+
+export function deleteTrip(db, id) {
+  const res = db.exec('SELECT COUNT(*) FROM transactions WHERE trip_id = ?', [id]);
+  const count = res[0]?.values[0][0] || 0;
+  db.run('UPDATE transactions SET trip_id = NULL WHERE trip_id = ?', [id]);
+  db.run('DELETE FROM trip_countries WHERE trip_id = ?', [id]);
+  db.run('DELETE FROM trips WHERE id = ?', [id]);
+  return count;
 }
 
 export function reorderTrip(db, id, direction) {
