@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getCategoryColor } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
 const DEFAULT_CATEGORY_COLORS = {
@@ -14,34 +14,83 @@ const DEFAULT_CATEGORY_COLORS = {
   '기타': '#AAB7B8',
 };
 
-function categoryColor(db, cat) {
-  const customColor = getCategoryColor(db, cat);
-  return customColor || DEFAULT_CATEGORY_COLORS[cat] || '#AAB7B8';
+function stringToHue(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash) % 360;
+}
+
+function categoryColor(cat) {
+  if (!cat) return '#AAB7B8';
+  if (DEFAULT_CATEGORY_COLORS[cat]) return DEFAULT_CATEGORY_COLORS[cat];
+  const hue = stringToHue(cat);
+  return `hsl(${hue}, 55%, 52%)`;
 }
 
 function TransactionList({ db, onAdd, onEdit, onDelete }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
+  const [showIssueOnly, setShowIssueOnly] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState(new Set());
   const [selectedDetail, setSelectedDetail] = useState(null);
 
   const currentMonthRef = useRef(null);
-
-  const months = useMemo(() => getAvailableMonths(db), [db]);
-  const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
-  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
-
-  const transactions = useMemo(
-    () => getTransactions(db, filters),
-    [db, filters]
-  );
+  const filterBarRef = useRef(null);
+  const [filterBarHeight, setFilterBarHeight] = useState(58);
 
   // 현재 월 (YYYY-MM 형식)
   const currentMonth = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }, []);
+
+  const months = useMemo(() => getAvailableMonths(db), [db]);
+
+  // 결제수단 필터: 비숨김 먼저, 그 다음 숨김 (sort_order 기준)
+  const paymentMethods = useMemo(() => {
+    const all = getAllPaymentMethods(db);
+    return [...all].sort((a, b) => {
+      if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
+      return a.sort_order - b.sort_order;
+    });
+  }, [db]);
+
+  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
+  const tripMap = useMemo(() => {
+    const map = {};
+    getTrips(db).forEach(t => { map[t.id] = t.name; });
+    return map;
+  }, [db]);
+
+  // 유효한 메인카테고리 Set
+  const validBudgetCategoryNames = useMemo(
+    () => new Set(budgetCategories.map(c => c.name)),
+    [budgetCategories]
+  );
+
+  // 유효한 서브카테고리 Set: "메인카테고리|서브카테고리" 조합으로 확인
+  const validSubCategories = useMemo(() => {
+    const all = getAllSubCategories(db);
+    return new Set(all.map(s => `${s.budget_category}|${s.name}`));
+  }, [db]);
+
+  const allTransactions = useMemo(
+    () => getTransactions(db, filters),
+    [db, filters]
+  );
+
+  // 이슈 필터: 존재하지 않는 메인카테고리 또는 서브카테고리가 설정된 거래
+  const transactions = useMemo(() => {
+    if (!showIssueOnly) return allTransactions;
+    return allTransactions.filter(tx => {
+      const invalidMain = tx.budget_category && !validBudgetCategoryNames.has(tx.budget_category);
+      const invalidSub = tx.sub_category && !validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`);
+      return invalidMain || invalidSub;
+    });
+  }, [allTransactions, showIssueOnly, validBudgetCategoryNames, validSubCategories]);
 
   // 월별로 그룹화된 거래내역
   const groupedTransactions = useMemo(() => {
@@ -54,8 +103,27 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
     return groups;
   }, [transactions]);
 
-  // 확장된 월들 (현재 월만 기본으로 열림)
-  const [expandedMonths, setExpandedMonths] = useState(new Set([currentMonth]));
+  // 펼침 상태를 sessionStorage에 저장해 탭 전환 후에도 유지
+  const [expandedMonths, setExpandedMonths] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('fl_expanded_months');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch (e) {}
+    // 첫 방문 기본값: 현재 월 + 가장 최신 월
+    const now = new Date();
+    const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const set = new Set([cur]);
+    const available = getAvailableMonths(db);
+    if (available.length > 0) set.add(available[0]);
+    return set;
+  });
+
+  // expandedMonths 변경 시 sessionStorage에 저장
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('fl_expanded_months', JSON.stringify([...expandedMonths]));
+    } catch (e) {}
+  }, [expandedMonths]);
 
   // 마운트 시 현재 월로 스크롤
   useEffect(() => {
@@ -67,6 +135,23 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
     return () => clearTimeout(timer);
   }, []);
 
+  // 필터바 높이 측정 (스티키 월 헤더 offset용)
+  useEffect(() => {
+    const el = filterBarRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setFilterBarHeight(el.offsetHeight));
+    observer.observe(el);
+    setFilterBarHeight(el.offsetHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  // 월 필터 선택 시 해당 월 자동 펼침
+  useEffect(() => {
+    if (filters.month) {
+      setExpandedMonths(prev => new Set([...prev, filters.month]));
+    }
+  }, [filters.month]);
+
   const toggleMonth = (month) => {
     const newExpanded = new Set(expandedMonths);
     if (newExpanded.has(month)) {
@@ -77,13 +162,11 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
     setExpandedMonths(newExpanded);
   };
 
-  const totalAmount = useMemo(() => transactions.reduce((s, t) => s + t.amount, 0), [transactions]);
-  const totalDiscount = useMemo(() => transactions.reduce((s, t) => s + (t.discount_amount || 0), 0), [transactions]);
 
   const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  const clearFilters = () => setFilters({ month: '', payment_method: '', budget_category: '', search: '' });
-  const hasFilters = Object.values(filters).some(v => v !== '');
+  const clearFilters = () => { setFilters({ month: '', payment_method: '', budget_category: '', search: '' }); setShowIssueOnly(false); };
+  const hasFilters = Object.values(filters).some(v => v !== '') || showIssueOnly;
 
   const toggleSelectForDelete = (txId) => {
     const newSet = new Set(selectedForDelete);
@@ -105,7 +188,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   return (
     <div className="list-page">
       {/* 필터 바 + 요약 정보 통합 */}
-      <div className="filter-bar">
+      <div className="filter-bar" ref={filterBarRef}>
         <div className="filter-top">
           {deleteMode ? (
             <>
@@ -131,17 +214,21 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                 value={filters.search}
                 onChange={e => setFilter('search', e.target.value)}
               />
-              <span className="filter-summary-info">
-                {transactions.length}건 · {formatAmount(totalAmount)}원
-                {totalDiscount > 0 && ` · 할인 -${formatAmount(totalDiscount)}원`}
-              </span>
+
+              <button
+                className={`btn-filter-toggle ${showIssueOnly ? 'active' : ''}`}
+                onClick={() => setShowIssueOnly(v => !v)}
+                title="카테고리 이슈 거래만 보기"
+              >
+                이슈
+              </button>
               <button
                 className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
                 onClick={() => setShowFilters(v => !v)}
               >
                 필터 {hasFilters ? '●' : ''}
               </button>
-              <button className="btn-filter-sm" onClick={() => setDeleteMode(true)}>
+              <button className="btn-filter-toggle" onClick={() => setDeleteMode(true)}>
                 삭제
               </button>
             </>
@@ -186,6 +273,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
               <div
                 className="month-header"
                 onClick={() => toggleMonth(month)}
+                style={{ top: `${filterBarHeight}px` }}
               >
                 <span className="month-toggle">
                   {expandedMonths.has(month) ? '▼' : '▶'}
@@ -194,18 +282,29 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                   {month}
                   {month === currentMonth && ' (이번 달)'}
                 </span>
-                <span className="month-stats">
-                  {groupedTransactions[month].length}건 / {formatAmount(
-                    groupedTransactions[month].reduce((s, t) => s + t.amount, 0)
-                  )}원
-                </span>
+                {(() => {
+                  const txs = groupedTransactions[month];
+                  const spend = txs.reduce((s, t) => s + t.amount, 0);
+                  const discount = txs.reduce((s, t) => s + (t.discount_amount || 0), 0);
+                  const net = spend - discount;
+                  return (
+                    <div className="month-stats">
+                      <span className="month-stats-count">{txs.length}건</span>
+                      <span className="month-stats-net">{formatAmount(net)}원</span>
+                    </div>
+                  );
+                })()}
               </div>
               {expandedMonths.has(month) && (
                 <ul className="tx-list-items">
                   {groupedTransactions[month].map(tx => (
                     <li
                       key={tx.id}
-                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''}`}
+                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''} ${
+                        (tx.budget_category && !validBudgetCategoryNames.has(tx.budget_category)) ||
+                        (tx.sub_category && !validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`))
+                          ? 'tx-item-issue' : ''
+                      }`}
                       onClick={() => {
                         if (deleteMode) {
                           toggleSelectForDelete(tx.id);
@@ -225,30 +324,57 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                       )}
                       <div
                         className="tx-category-bar"
-                        style={{ backgroundColor: categoryColor(db, tx.budget_category) }}
+                        style={{ backgroundColor: categoryColor(tx.budget_category) }}
                       />
                       <div className="tx-body">
-                        <div className="tx-row1">
-                          <span className="tx-date">{tx.date}</span>
-                          <span className="tx-amount">{formatAmount(tx.amount)}원</span>
-                        </div>
-                        <div className="tx-row2">
+                        <div className="tx-row-single">
+                          <span className="tx-date">{tx.date.substring(5).replace('-', '/')}</span>
                           <span
                             className="tx-badge"
-                            style={{ backgroundColor: categoryColor(db, tx.budget_category) + '33', color: categoryColor(db, tx.budget_category) }}
+                            style={{ backgroundColor: categoryColor(tx.budget_category) + '33', color: categoryColor(tx.budget_category) }}
                           >
                             {tx.budget_category}
                           </span>
-                          {tx.sub_category && <span className="tx-sub">{tx.sub_category}</span>}
+                          {tx.trip_id && tripMap[tx.trip_id] && (
+                            <span className="tx-trip-badge">{tripMap[tx.trip_id]}</span>
+                          )}
+                          {tx.sub_category && (
+                            <span
+                              className="tx-sub"
+                              style={!validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`) ? { textDecoration: 'underline' } : {}}
+                            >
+                              {tx.sub_category}
+                            </span>
+                          )}
+                          {tx.detail && <span className="tx-detail-inline">{tx.sub_category ? `· ${tx.detail}` : tx.detail}</span>}
+                          <span className="tx-spacer" />
                           <span className="tx-payment">{tx.payment_method}</span>
+                          {(() => {
+                              let foreignEntries = [];
+                              try {
+                                const fa = tx.foreign_amounts ? JSON.parse(tx.foreign_amounts) : {};
+                                foreignEntries = Object.entries(fa).filter(([, v]) => v > 0);
+                              } catch {}
+                              const hasForeign = foreignEntries.length > 0;
+                              return (
+                                <div className="tx-amount-col">
+                                  <span className="tx-amount">
+                                    {tx.payment_method === '현금' && tx.discount_amount > 0 && !hasForeign
+                                      ? `${formatAmount(tx.amount - tx.discount_amount)}원`
+                                      : `${formatAmount(tx.amount)}원`}
+                                  </span>
+                                  {!hasForeign && tx.discount_amount > 0 && tx.payment_method !== '현금' && (
+                                    <span className="tx-discount-inline">-{formatAmount(tx.discount_amount)}원</span>
+                                  )}
+                                  {hasForeign && (
+                                    <span className="tx-foreign-amount">
+                                      ({foreignEntries.map(([cur, v]) => `${Number(v).toLocaleString()} ${cur}`).join(', ')})
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                         </div>
-                        {tx.detail && <div className="tx-detail">{tx.detail}</div>}
-                        {tx.discount_amount > 0 && (
-                          <div className="tx-discount">
-                            할인 -{formatAmount(tx.discount_amount)}원
-                            {tx.discount_note && ` (${tx.discount_note})`}
-                          </div>
-                        )}
                       </div>
                     </li>
                   ))}
@@ -274,18 +400,26 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
               </div>
               <div style={{ marginBottom: '12px' }}>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>카테고리</div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span
                     style={{
                       width: '12px',
                       height: '12px',
                       borderRadius: '50%',
-                      backgroundColor: categoryColor(db, selectedDetail.budget_category)
+                      flexShrink: 0,
+                      backgroundColor: categoryColor(selectedDetail.budget_category)
                     }}
                   />
                   <span style={{ fontSize: '15px' }}>{selectedDetail.budget_category}</span>
+                  {selectedDetail.trip_id && tripMap[selectedDetail.trip_id] && (
+                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>/ {tripMap[selectedDetail.trip_id]}</span>
+                  )}
                   {selectedDetail.sub_category && (
-                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                    <span style={{
+                      fontSize: '13px',
+                      color: 'var(--text-muted)',
+                      textDecoration: !validSubCategories.has(`${selectedDetail.budget_category}|${selectedDetail.sub_category}`) ? 'underline' : 'none'
+                    }}>
                       / {selectedDetail.sub_category}
                     </span>
                   )}
@@ -305,6 +439,15 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>금액</div>
                 <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--primary)' }}>
                   {formatAmount(selectedDetail.amount)}원
+                  {(() => {
+                    try {
+                      const fa = selectedDetail.foreign_amounts ? JSON.parse(selectedDetail.foreign_amounts) : {};
+                      const entries = Object.entries(fa).filter(([, v]) => v > 0);
+                      if (!entries.length) return null;
+                      const text = entries.map(([cur, v]) => `${Number(v).toLocaleString()} ${cur}`).join(', ');
+                      return <span style={{ fontSize: '14px', fontWeight: '400', color: 'var(--text-muted)', marginLeft: '6px' }}>({text})</span>;
+                    } catch { return null; }
+                  })()}
                 </div>
               </div>
               {selectedDetail.discount_amount > 0 && (

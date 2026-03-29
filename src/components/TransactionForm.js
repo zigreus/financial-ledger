@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories } from '../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getPaymentMethodDiscountRates, getTrips } from '../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../services/formulaEvaluator';
 
 const EMPTY_FORM = {
@@ -10,6 +10,8 @@ const EMPTY_FORM = {
   detail: '',
   amount: '',
   discount_amount: '',
+  trip_id: '',
+  foreign_amounts: {},
 };
 
 function FormulaInput({ label, value, onChange, required, placeholder }) {
@@ -43,22 +45,34 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
+  const [discountRates, setDiscountRates] = useState({});
+  const [trips, setTrips] = useState([]);
+  const skipAutoDiscountRef = React.useRef(false);
+  const skipSubResetRef = React.useRef(false);
 
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
     setBudgetCategories(getBudgetCategories(db));
+    setDiscountRates(getPaymentMethodDiscountRates(db));
+    setTrips(getTrips(db));
   }, [db]);
 
   useEffect(() => {
     if (editingTx) {
+      skipAutoDiscountRef.current = true;
+      skipSubResetRef.current = true;
+      let foreign_amounts = {};
+      try { foreign_amounts = editingTx.foreign_amounts ? JSON.parse(editingTx.foreign_amounts) : {}; } catch (e) {}
       setForm({
         payment_method: editingTx.payment_method || '',
         date: editingTx.date || today(),
         budget_category: editingTx.budget_category || '',
         sub_category: editingTx.sub_category || '',
         detail: editingTx.detail || '',
-        amount: String(editingTx.amount || ''),
+        amount: editingTx.amount != null ? String(editingTx.amount) : '',
         discount_amount: editingTx.discount_amount ? String(editingTx.discount_amount) : '',
+        trip_id: editingTx.trip_id ? String(editingTx.trip_id) : '',
+        foreign_amounts,
       });
     } else {
       setForm(EMPTY_FORM);
@@ -66,21 +80,98 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   }, [editingTx]);
 
   useEffect(() => {
-    setSubCategories(getSubCategories(db, form.budget_category));
+    const subs = getSubCategories(db, form.budget_category);
+    setSubCategories(subs);
+    if (skipSubResetRef.current) {
+      skipSubResetRef.current = false;
+      return;
+    }
+    setForm(prev => ({
+      ...prev,
+      sub_category: subs.includes(prev.sub_category) ? prev.sub_category : '',
+    }));
   }, [db, form.budget_category]);
 
-  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  // 결제수단별 자동 할인 계산
+  useEffect(() => {
+    if (skipAutoDiscountRef.current) {
+      return;
+    }
+    const pm = form.payment_method;
+    const amount = evaluateFormula(form.amount);
+    const setDiscount = (v) => setForm(prev => ({ ...prev, discount_amount: v }));
+
+    if (!pm || pm === '현금') return;
+
+    // 신한카드: 5,000원 이상이면 1,000원 미만 금액 할인
+    if (pm === '신한카드') {
+      if (amount !== null && !isNaN(amount) && amount >= 5000) {
+        const d = amount % 1000;
+        setDiscount(d > 0 ? String(d) : '');
+      } else {
+        setDiscount('');
+      }
+      return;
+    }
+
+    // 하나카드: 특정 세부내역/카테고리 오버라이드 후 DB 설정 기본율 적용
+    if (pm === '하나카드') {
+      if (amount === null || isNaN(amount) || amount <= 0) { setDiscount(''); return; }
+      const detail = (form.detail || '').toLowerCase();
+      const sub = form.sub_category || '';
+      let rate;
+      if (detail.includes('스타벅스') || detail.includes('youtube')) {
+        rate = 0.5;
+      } else if (sub === '주유' || sub === '세차') {
+        rate = 0.012;
+      } else {
+        rate = discountRates[pm] || 0.01; // DB 설정값, 없으면 1%
+      }
+      const d = Math.round(amount * rate);
+      setDiscount(d > 0 ? String(d) : '');
+      return;
+    }
+
+    // 기타 카드: DB 설정 할인율 적용
+    const rate = discountRates[pm] || 0;
+    if (rate <= 0 || amount === null || isNaN(amount) || amount <= 0) {
+      setDiscount('');
+      return;
+    }
+    const d = Math.round(amount * rate);
+    setDiscount(d > 0 ? String(d) : '');
+  }, [form.payment_method, form.amount, form.sub_category, form.detail, discountRates]);
+
+  const set = (key, value) => {
+    if (key === 'payment_method') {
+      skipAutoDiscountRef.current = false;
+    }
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
 
   const handleCategoryChange = (value) => {
-    setForm(prev => ({ ...prev, budget_category: value, sub_category: '' }));
+    setForm(prev => ({
+      ...prev,
+      budget_category: value,
+      sub_category: '',
+      ...(value !== '여행' ? { trip_id: '', foreign_amounts: {} } : {}),
+    }));
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const amount = evaluateFormula(form.amount);
-    if (!amount || isNaN(amount)) return;
+    if (amount === null || isNaN(amount)) return;
 
     const discountAmount = form.discount_amount ? evaluateFormula(form.discount_amount) : 0;
+
+    const foreign_amounts = {};
+    if (form.trip_id) {
+      Object.entries(form.foreign_amounts).forEach(([currency, val]) => {
+        const num = parseFloat(val);
+        if (!isNaN(num) && num > 0) foreign_amounts[currency] = num;
+      });
+    }
 
     onSave({
       payment_method: form.payment_method,
@@ -90,21 +181,23 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
       detail: form.detail,
       amount,
       discount_amount: discountAmount || 0,
+      trip_id: form.trip_id ? Number(form.trip_id) : null,
+      foreign_amounts,
     });
   };
 
   const amountParsed = evaluateFormula(form.amount);
-  const canSubmit =
-    form.payment_method &&
-    form.date &&
-    form.budget_category &&
-    form.sub_category &&
-    amountParsed !== null &&
-    !isNaN(amountParsed) &&
-    amountParsed > 0;
+  const missingReasons = [
+    !form.payment_method && '결제수단을 선택하세요',
+    !form.date && '날짜를 입력하세요',
+    !form.budget_category && '카테고리를 선택하세요',
+    !form.sub_category && '세부카테고리를 선택하세요',
+    (amountParsed === null || isNaN(amountParsed)) && '금액을 올바르게 입력하세요',
+  ].filter(Boolean);
+  const canSubmit = missingReasons.length === 0;
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay">
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{editingTx ? '거래 수정' : '거래 추가'}</h2>
@@ -181,6 +274,50 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
             />
           </div>
 
+          {/* 여행 정보 (카테고리가 여행일 때만 표시) */}
+          {form.budget_category === '여행' && trips.length > 0 && (
+            <div className="form-group">
+              <label>여행 <span className="optional">(선택)</span></label>
+              <select
+                value={form.trip_id}
+                onChange={e => setForm(prev => ({ ...prev, trip_id: e.target.value, foreign_amounts: {} }))}
+              >
+                <option value="">선택 안함</option>
+                {trips.map(t => (
+                  <option key={t.id} value={String(t.id)}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* 현지 금액 (여행 선택 시 나라별 화폐 입력) */}
+          {form.budget_category === '여행' && form.trip_id && (() => {
+            const selectedTrip = trips.find(t => String(t.id) === form.trip_id);
+            if (!selectedTrip?.countries.length) return null;
+            return (
+              <>
+                <div className="form-section-title">
+                  현지 금액 <span className="optional">(선택)</span>
+                </div>
+                {selectedTrip.countries.map(c => (
+                  <div key={c.id} className="form-group">
+                    <label>{c.country} ({c.currency})</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={form.foreign_amounts[c.currency] || ''}
+                      onChange={e => setForm(prev => ({
+                        ...prev,
+                        foreign_amounts: { ...prev.foreign_amounts, [c.currency]: e.target.value },
+                      }))}
+                      placeholder={`${c.currency} 금액`}
+                    />
+                  </div>
+                ))}
+              </>
+            );
+          })()}
+
           {/* 금액 */}
           <FormulaInput
             label="금액"
@@ -205,9 +342,16 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
 
           <div className="form-actions">
             <button type="button" className="btn-secondary" onClick={onCancel}>취소</button>
-            <button type="submit" className="btn-primary" disabled={!canSubmit}>
-              {editingTx ? '수정' : '추가'}
-            </button>
+            <div className="submit-tooltip-wrapper" onClick={e => { if (!canSubmit) e.currentTarget.classList.toggle('tooltip-visible'); }}>
+              <button type="submit" className="btn-primary" disabled={!canSubmit}>
+                {editingTx ? '수정' : '추가'}
+              </button>
+              {!canSubmit && (
+                <div className="submit-tooltip">
+                  {missingReasons.map((r, i) => <span key={i}>• {r}{'\n'}</span>)}
+                </div>
+              )}
+            </div>
           </div>
         </form>
       </div>

@@ -11,9 +11,9 @@ async function getToken(instance, accounts) {
     });
     return res.accessToken;
   } catch {
-    // silent 실패 시 popup으로 재시도
-    const res = await instance.acquireTokenPopup(loginRequest);
-    return res.accessToken;
+    // silent 실패 시 redirect로 재인증 (popup 차단 방지)
+    await instance.acquireTokenRedirect({ ...loginRequest, account: accounts[0] });
+    throw new Error('재인증 중… 잠시 후 자동으로 돌아옵니다.');
   }
 }
 

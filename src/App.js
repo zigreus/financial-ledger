@@ -26,6 +26,14 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
+  const [toast, setToast] = useState('');
+  const toastTimer = React.useRef(null);
+
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 2500);
+  }, []);
 
   // 로그인 후 DB 자동 로드
   useEffect(() => {
@@ -37,24 +45,28 @@ function App() {
 
   const loadDb = useCallback(async () => {
     if (loading) return;
-    if (dirty) {
-      const ok = window.confirm('저장하지 않은 변경사항이 있습니다. 새로고침하면 변경사항이 사라집니다. 계속하시겠습니까?');
-      if (!ok) return;
-    }
     setLoading(true);
     setError('');
     try {
       const SQL = await initSQL();
       const data = await readDbFromOneDrive(instance, accounts);
-      const newDb = createDatabase(SQL, data);
+      const { db: newDb, didMigrate } = createDatabase(SQL, data);
       setDb(newDb);
+      if (didMigrate) {
+        try {
+          const bytes = exportDatabase(newDb);
+          await writeDbToOneDrive(instance, accounts, bytes);
+        } catch (e) {
+          setError(`마이그레이션 저장 실패: ${e.message}`);
+        }
+      }
       setDirty(false);
     } catch (e) {
       setError(`로드 실패: ${e.message}`);
     } finally {
       setLoading(false);
     }
-  }, [loading, dirty, instance, accounts]);
+  }, [loading, instance, accounts]);
 
   const saveDb = useCallback(async () => {
     if (!db || saving) return;
@@ -71,29 +83,60 @@ function App() {
     }
   }, [db, saving, instance, accounts]);
 
-  const handleAdd = useCallback((txData) => {
+  // 저장 후 OneDrive에서 즉시 새로고침 (수정 시 자동 호출)
+  const saveAndReload = useCallback(async (currentDb) => {
+    setSaving(true);
+    setError('');
+    try {
+      const bytes = exportDatabase(currentDb);
+      await writeDbToOneDrive(instance, accounts, bytes);
+      setDirty(false);
+    } catch (e) {
+      setError(`저장 실패: ${e.message}`);
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+    setLoading(true);
+    try {
+      const SQL = await initSQL();
+      const data = await readDbFromOneDrive(instance, accounts);
+      const { db: newDb, didMigrate } = createDatabase(SQL, data);
+      setDb(newDb);
+      setDirty(didMigrate);
+    } catch (e) {
+      setError(`새로고침 실패: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [instance, accounts]);
+
+  const handleAdd = useCallback(async (txData) => {
     addTransaction(db, txData);
-    setDb(db); // 같은 참조지만 리렌더 트리거용
-    setDirty(true);
     setShowForm(false);
     setEditingTx(null);
-    // 강제 리렌더를 위해 db 상태 재설정
-    setDb(prev => prev);
-  }, [db]);
+    const amt = Number(txData.amount).toLocaleString();
+    showToast(`저장 중…`);
+    await saveAndReload(db);
+    showToast(`✓ ${txData.budget_category} ${amt}원 추가됨`);
+  }, [db, showToast, saveAndReload]);
 
-  const handleUpdate = useCallback((txData) => {
+  const handleUpdate = useCallback(async (txData) => {
     updateTransaction(db, editingTx.id, txData);
-    setDirty(true);
     setShowForm(false);
     setEditingTx(null);
-    setDb(prev => prev);
-  }, [db, editingTx]);
+    const amt = Number(txData.amount).toLocaleString();
+    showToast(`저장 중…`);
+    await saveAndReload(db);
+    showToast(`✓ ${txData.budget_category} ${amt}원 수정 및 저장됨`);
+  }, [db, editingTx, showToast, saveAndReload]);
 
-  const handleDelete = useCallback((id) => {
+  const handleDelete = useCallback(async (id) => {
     deleteTransaction(db, id);
-    setDirty(true);
-    setDb(prev => prev);
-  }, [db]);
+    showToast('저장 중…');
+    await saveAndReload(db);
+    showToast('✓ 거래가 삭제되었습니다');
+  }, [db, showToast, saveAndReload]);
 
   const openAdd = () => {
     setEditingTx(null);
@@ -110,11 +153,12 @@ function App() {
     setEditingTx(null);
   };
 
-  const handleImport = useCallback(() => {
-    setDirty(true);
-    setDb(prev => prev);
+  const handleImport = useCallback(async () => {
     setShowImport(false);
-  }, []);
+    showToast('저장 중…');
+    await saveAndReload(db);
+    showToast('✓ 가져오기 완료 및 저장됨');
+  }, [db, showToast, saveAndReload]);
 
   if (!isAuthenticated) return <LoginPage />;
 
@@ -146,19 +190,19 @@ function App() {
         dirty={dirty}
       />
 
+      {toast && (
+        <div className="toast-banner">
+          {toast}
+        </div>
+      )}
+
       {error && (
         <div className="error-banner" onClick={() => setError('')}>
           ⚠️ {error} (탭하여 닫기)
         </div>
       )}
 
-      {dirty && (
-        <div className="unsaved-banner">
-          저장되지 않은 변경사항이 있습니다 — 저장 버튼을 눌러 OneDrive에 동기화하세요.
-        </div>
-      )}
-
-      <main className="app-main">
+<main className="app-main">
         {activeTab === 'list' && (
           <TransactionList
             db={db}
@@ -173,7 +217,11 @@ function App() {
         {activeTab === 'settings' && (
           <SettingsView
             db={db}
-            onChanged={() => { setDirty(true); setDb(prev => prev); }}
+            onChanged={async () => {
+              showToast('저장 중…');
+              await saveAndReload(db);
+              showToast('✓ 설정이 저장됨');
+            }}
           />
         )}
       </main>
@@ -189,7 +237,7 @@ function App() {
         </button>
         <button
           className={activeTab === 'summary' ? 'nav-item active' : 'nav-item'}
-          onClick={() => setActiveTab('summary')}
+          onClick={() => { setActiveTab('summary'); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         >
           <span className="nav-icon">📊</span>
           <span className="nav-label">요약</span>
@@ -203,7 +251,7 @@ function App() {
         </button>
         <button
           className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}
-          onClick={() => setActiveTab('settings')}
+          onClick={() => { setActiveTab('settings'); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         >
           <span className="nav-icon">⚙️</span>
           <span className="nav-label">설정</span>
