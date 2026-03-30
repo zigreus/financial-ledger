@@ -1124,6 +1124,68 @@ body {
 }
 .btn-drilldown:hover { background: var(--primary-dark); }
 
+.settings-item-clickable {
+  cursor: pointer;
+  transition: background .12s;
+}
+.settings-item-clickable:hover {
+  background: rgba(37, 99, 235, 0.05);
+  border-radius: 8px;
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn-icon:hover {
+  background: var(--bg);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.btn-icon--danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.06);
+}
+.btn-icon--success:hover {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.trip-country-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.settings-inline-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1.5px solid var(--primary);
+  border-radius: 8px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  margin-right: 6px;
+}
+
 .discount-rate-field {
   display: flex;
   align-items: center;
@@ -1240,4 +1302,87 @@ body {
 .nav-label {
   font-size: 10px;
   margin-top: 2px;
+}
+
+/* ── 결제수단 할인규칙 UI ──────────────────────────────── */
+.rule-section-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.rule-scope {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin-right: 8px;
+}
+
+.rule-value-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-right: 6px;
+}
+
+.rule-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rule-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.rule-add-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.rule-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rule-form-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.rule-form-select,
+.rule-form-input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.rule-form-select:focus,
+.rule-form-input:focus {
+  border-color: var(--primary);
 }

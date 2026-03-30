@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getPaymentMethodDiscountRates, getTrips } from '../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getTrips } from '../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../services/formulaEvaluator';
 
 const EMPTY_FORM = {
@@ -98,7 +98,6 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
-  const [discountRates, setDiscountRates] = useState({});
   const [trips, setTrips] = useState([]);
   const skipAutoDiscountRef = React.useRef(false);
   const skipSubResetRef = React.useRef(false);
@@ -106,7 +105,6 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
     setBudgetCategories(getBudgetCategories(db));
-    setDiscountRates(getPaymentMethodDiscountRates(db));
     setTrips(getTrips(db));
   }, [db]);
 
@@ -145,55 +143,22 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
     }));
   }, [db, form.budget_category]);
 
-  // 결제수단별 자동 할인 계산
+  // 결제수단별 자동 할인 계산 (DB 규칙 기반)
   useEffect(() => {
-    if (skipAutoDiscountRef.current) {
-      return;
-    }
+    if (skipAutoDiscountRef.current) return;
     const pm = form.payment_method;
-    const amount = evaluateFormula(form.amount);
-    const setDiscount = (v) => setForm(prev => ({ ...prev, discount_amount: v }));
-
     if (!pm || pm === '현금') return;
 
-    // 신한카드: 5,000원 이상이면 1,000원 미만 금액 할인
-    if (pm === '신한카드') {
-      if (amount !== null && !isNaN(amount) && amount >= 5000) {
-        const d = amount % 1000;
-        setDiscount(d > 0 ? String(d) : '');
-      } else {
-        setDiscount('');
-      }
+    const amount = evaluateFormula(form.amount);
+    if (amount === null || isNaN(amount) || amount <= 0) {
+      setForm(prev => ({ ...prev, discount_amount: '' }));
       return;
     }
 
-    // 하나카드: 특정 세부내역/카테고리 오버라이드 후 DB 설정 기본율 적용
-    if (pm === '하나카드') {
-      if (amount === null || isNaN(amount) || amount <= 0) { setDiscount(''); return; }
-      const detail = (form.detail || '').toLowerCase();
-      const sub = form.sub_category || '';
-      let rate;
-      if (detail.includes('스타벅스') || detail.includes('youtube')) {
-        rate = 0.5;
-      } else if (sub === '주유' || sub === '세차') {
-        rate = 0.012;
-      } else {
-        rate = discountRates[pm] || 0.01; // DB 설정값, 없으면 1%
-      }
-      const d = Math.round(amount * rate);
-      setDiscount(d > 0 ? String(d) : '');
-      return;
-    }
-
-    // 기타 카드: DB 설정 할인율 적용
-    const rate = discountRates[pm] || 0;
-    if (rate <= 0 || amount === null || isNaN(amount) || amount <= 0) {
-      setDiscount('');
-      return;
-    }
-    const d = Math.round(amount * rate);
-    setDiscount(d > 0 ? String(d) : '');
-  }, [form.payment_method, form.amount, form.sub_category, form.detail, discountRates]);
+    const rules = getDiscountRules(db, pm);
+    const d = evaluateDiscountRule(rules, form.budget_category, form.sub_category, amount, form.detail);
+    setForm(prev => ({ ...prev, discount_amount: d > 0 ? String(d) : '' }));
+  }, [db, form.payment_method, form.amount, form.budget_category, form.sub_category, form.detail]);
 
   const set = (key, value) => {
     if (key === 'payment_method') {

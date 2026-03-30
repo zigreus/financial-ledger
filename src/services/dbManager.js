@@ -52,6 +52,18 @@ CREATE TABLE IF NOT EXISTS trip_countries (
   currency TEXT NOT NULL,
   sort_order INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS payment_method_discount_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  payment_method_name TEXT NOT NULL,
+  budget_category TEXT DEFAULT '',
+  sub_category TEXT DEFAULT '',
+  detail_keyword TEXT DEFAULT '',
+  rule_type TEXT NOT NULL DEFAULT 'percent',
+  value REAL NOT NULL DEFAULT 0,
+  min_amount INTEGER DEFAULT 0,
+  note TEXT DEFAULT ''
+);
 `;
 
 const DEFAULT_PAYMENT_METHODS = [
@@ -247,10 +259,13 @@ export function createDatabase(SQL, existingData = null) {
     );
   });
 
-  // 아버지 서브카테고리 추가 (없는 것만)
-  ['아버지', '아버지 쇼핑'].forEach((sub, i) => {
-    db.run('INSERT OR IGNORE INTO sub_categories (budget_category, name, sort_order) VALUES (?, ?, ?)', ['아버지', sub, i + 1]);
-  });
+  // 아버지 서브카테고리 추가 (서브카테고리가 전혀 없을 때만 기본값 삽입)
+  const 아버지SubCount = db.exec('SELECT COUNT(*) FROM sub_categories WHERE budget_category = ?', ['아버지']);
+  if ((아버지SubCount[0]?.values[0][0] || 0) === 0) {
+    ['아버지', '아버지 쇼핑'].forEach((sub, i) => {
+      db.run('INSERT OR IGNORE INTO sub_categories (budget_category, name, sort_order) VALUES (?, ?, ?)', ['아버지', sub, i + 1]);
+    });
+  }
 
   // 수리비 카테고리 추가 (없는 것만)
   if ((db.exec('SELECT COUNT(*) FROM budget_categories WHERE name = ?', ['수리비'])[0]?.values[0][0] || 0) === 0) {
@@ -410,6 +425,72 @@ export function createDatabase(SQL, existingData = null) {
   try {
     db.run(`ALTER TABLE transactions ADD COLUMN foreign_amounts TEXT DEFAULT ''`);
   } catch (e) {}
+
+  // payment_method_discount_rules 테이블 마이그레이션 (기존 DB 대응)
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS payment_method_discount_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      payment_method_name TEXT NOT NULL,
+      budget_category TEXT DEFAULT '',
+      sub_category TEXT DEFAULT '',
+      detail_keyword TEXT DEFAULT '',
+      rule_type TEXT NOT NULL DEFAULT 'percent',
+      value REAL NOT NULL DEFAULT 0,
+      min_amount INTEGER DEFAULT 0,
+      note TEXT DEFAULT ''
+    )`);
+  } catch (e) {}
+  // detail_keyword 컬럼 마이그레이션 (이미 테이블이 있는 기존 DB 대응)
+  try {
+    db.run(`ALTER TABLE payment_method_discount_rules ADD COLUMN detail_keyword TEXT DEFAULT ''`);
+  } catch (e) {}
+
+  // 신한카드: hardcoded 규칙 → DB 규칙 마이그레이션
+  {
+    const cnt = db.exec("SELECT COUNT(*) FROM payment_method_discount_rules WHERE payment_method_name = '신한카드'")[0]?.values[0][0] || 0;
+    const ex = db.exec("SELECT COUNT(*) FROM payment_methods WHERE name = '신한카드'")[0]?.values[0][0] || 0;
+    if (cnt === 0 && ex > 0) {
+      db.run("INSERT INTO payment_method_discount_rules (payment_method_name, rule_type, value, min_amount, note) VALUES ('신한카드', 'remainder', 1000, 5000, '5천원 이상 구매 시 천원 미만 잔액 포인트')");
+    }
+  }
+
+  // 하나카드: hardcoded 규칙 → DB 규칙 마이그레이션
+  {
+    const cnt = db.exec("SELECT COUNT(*) FROM payment_method_discount_rules WHERE payment_method_name = '하나카드'")[0]?.values[0][0] || 0;
+    const ex = db.exec("SELECT COUNT(*) FROM payment_methods WHERE name = '하나카드'")[0]?.values[0][0] || 0;
+    if (cnt === 0 && ex > 0) {
+      const rateRes = db.exec("SELECT discount_rate FROM payment_methods WHERE name = '하나카드'");
+      const rate = rateRes[0]?.values[0][0] || 0.01;
+      db.run("INSERT INTO payment_method_discount_rules (payment_method_name, rule_type, value, min_amount, note) VALUES ('하나카드', 'percent', ?, 0, '기본 적립')", [rate || 0.01]);
+      db.run("INSERT INTO payment_method_discount_rules (payment_method_name, budget_category, sub_category, rule_type, value, min_amount, note) VALUES ('하나카드', '차량교통비', '주유', 'percent', 0.012, 0, '주유 1.2% 적립')");
+      db.run("INSERT INTO payment_method_discount_rules (payment_method_name, budget_category, sub_category, rule_type, value, min_amount, note) VALUES ('하나카드', '차량교통비', '세차', 'percent', 0.012, 0, '세차 1.2% 적립')");
+      db.run("INSERT INTO payment_method_discount_rules (payment_method_name, detail_keyword, rule_type, value, min_amount, note) VALUES ('하나카드', '스타벅스', 'percent', 0.5, 0, '스타벅스 50% 할인')");
+    }
+  }
+  // 하나카드 스타벅스 규칙: detail_keyword 컬럼 추가 후 기존 규칙이 있는 경우 보완
+  {
+    const ex = db.exec("SELECT COUNT(*) FROM payment_methods WHERE name = '하나카드'")[0]?.values[0][0] || 0;
+    if (ex > 0) {
+      const sbCnt = db.exec("SELECT COUNT(*) FROM payment_method_discount_rules WHERE payment_method_name = '하나카드' AND detail_keyword = '스타벅스'")[0]?.values[0][0] || 0;
+      if (sbCnt === 0) {
+        db.run("INSERT INTO payment_method_discount_rules (payment_method_name, detail_keyword, rule_type, value, min_amount, note) VALUES ('하나카드', '스타벅스', 'percent', 0.5, 0, '스타벅스 50% 할인')");
+      }
+    }
+  }
+
+  // 기타 카드: discount_rate → 기본 percent 규칙 마이그레이션
+  {
+    const pmRes = db.exec("SELECT name, discount_rate FROM payment_methods WHERE discount_rate > 0 AND name NOT IN ('신한카드', '하나카드')");
+    if (pmRes.length) {
+      pmRes[0].values.forEach(([name, rate]) => {
+        const cnt = db.exec("SELECT COUNT(*) FROM payment_method_discount_rules WHERE payment_method_name = ?", [name])[0]?.values[0][0] || 0;
+        if (cnt === 0) {
+          const pct = Math.round(rate * 1000) / 10;
+          db.run("INSERT INTO payment_method_discount_rules (payment_method_name, rule_type, value, note) VALUES (?, 'percent', ?, ?)", [name, rate, `기본 ${pct}% 적립`]);
+        }
+      });
+    }
+  }
 
   // 사용하지 않는 결제수단 영구 삭제 마이그레이션
   ['KB국민카드', '카카오페이', '네이버페이', '토스페이'].forEach(name => {
@@ -969,6 +1050,57 @@ export function addSubCategory(db, budgetCategory, name) {
   db.run('INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [budgetCategory, name.trim(), nextSort]);
 }
 
+export function renameBudgetCategory(db, oldName, newName) {
+  if (!newName || !newName.trim()) throw new Error('이름을 입력하세요.');
+  const trimmed = newName.trim();
+  const exists = db.exec('SELECT COUNT(*) FROM budget_categories WHERE name = ? AND name != ?', [trimmed, oldName]);
+  if ((exists[0]?.values[0][0] || 0) > 0) throw new Error('이미 같은 이름의 카테고리가 있습니다.');
+  db.run('UPDATE budget_categories SET name = ? WHERE name = ?', [trimmed, oldName]);
+  db.run('UPDATE sub_categories SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
+  db.run('UPDATE transactions SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
+}
+
+export function renameSubCategory(db, budgetCategory, oldName, newName) {
+  if (!newName || !newName.trim()) throw new Error('이름을 입력하세요.');
+  const trimmed = newName.trim();
+  const exists = db.exec('SELECT COUNT(*) FROM sub_categories WHERE budget_category = ? AND name = ? AND name != ?', [budgetCategory, trimmed, oldName]);
+  if ((exists[0]?.values[0][0] || 0) > 0) throw new Error('이미 같은 이름의 세부카테고리가 있습니다.');
+  db.run('UPDATE sub_categories SET name = ? WHERE budget_category = ? AND name = ?', [trimmed, budgetCategory, oldName]);
+  db.run('UPDATE transactions SET sub_category = ? WHERE budget_category = ? AND sub_category = ?', [trimmed, budgetCategory, oldName]);
+}
+
+export function getSubCategoryTxCount(db, budgetCategory, name) {
+  const res = db.exec(
+    'SELECT COUNT(*) FROM transactions WHERE budget_category = ? AND sub_category = ?',
+    [budgetCategory, name]
+  );
+  return res[0]?.values[0][0] || 0;
+}
+
+export function deleteSubCategory(db, budgetCategory, name) {
+  db.run('DELETE FROM sub_categories WHERE budget_category = ? AND name = ?', [budgetCategory, name]);
+}
+
+export function moveTripCountryToPosition(db, id, tripId, newIndex) {
+  const itemsRes = db.exec(
+    'SELECT id FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
+    [tripId]
+  );
+  if (!itemsRes.length) return;
+  const ids = itemsRes[0].values.map(([itemId]) => itemId);
+
+  const currentIdx = ids.indexOf(id);
+  if (currentIdx === -1) return;
+  ids.splice(currentIdx, 1);
+
+  const clamped = Math.max(0, Math.min(newIndex, ids.length));
+  ids.splice(clamped, 0, id);
+
+  ids.forEach((itemId, i) => {
+    db.run('UPDATE trip_countries SET sort_order = ? WHERE id = ?', [i + 1, itemId]);
+  });
+}
+
 export function ensurePaymentMethodsExist(db, txList) {
   // 트랜잭션 목록에서 사용된 결제수단들을 자동으로 추가
   const paymentMethods = new Set(txList.map(tx => tx.payment_method).filter(Boolean));
@@ -1135,6 +1267,27 @@ export function deleteTrip(db, id) {
   return count;
 }
 
+export function moveTripToPosition(db, id, newIndex) {
+  const hiddenRes = db.exec('SELECT is_hidden FROM trips WHERE id = ?', [id]);
+  if (!hiddenRes.length || !hiddenRes[0].values.length) return;
+  const isHidden = hiddenRes[0].values[0][0];
+
+  const itemsRes = db.exec('SELECT id FROM trips WHERE is_hidden = ? ORDER BY sort_order', [isHidden]);
+  if (!itemsRes.length) return;
+  const ids = itemsRes[0].values.map(([itemId]) => itemId);
+
+  const currentIdx = ids.indexOf(id);
+  if (currentIdx === -1) return;
+  ids.splice(currentIdx, 1);
+
+  const clamped = Math.max(0, Math.min(newIndex, ids.length));
+  ids.splice(clamped, 0, id);
+
+  ids.forEach((itemId, i) => {
+    db.run('UPDATE trips SET sort_order = ? WHERE id = ?', [i + 1, itemId]);
+  });
+}
+
 export function reorderTrip(db, id, direction) {
   const currRes = db.exec('SELECT sort_order FROM trips WHERE id = ?', [id]);
   if (!currRes.length || !currRes[0].values.length) return;
@@ -1149,7 +1302,6 @@ export function reorderTrip(db, id, direction) {
 }
 
 export function addTripCountry(db, tripId, country, currency) {
-  if (!country || !country.trim()) throw new Error('나라명을 입력하세요');
   if (!currency || !currency.trim()) throw new Error('화폐 단위를 입력하세요');
   const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM trip_countries WHERE trip_id = ?', [tripId]);
   const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
@@ -1159,6 +1311,74 @@ export function addTripCountry(db, tripId, country, currency) {
   );
 }
 
+export function updateTripCountry(db, id, country, currency) {
+  if (!currency || !currency.trim()) throw new Error('화폐 단위를 입력하세요');
+  db.run(
+    'UPDATE trip_countries SET country = ?, currency = ? WHERE id = ?',
+    [country.trim(), currency.trim().toUpperCase(), id]
+  );
+}
+
 export function deleteTripCountry(db, id) {
   db.run('DELETE FROM trip_countries WHERE id = ?', [id]);
+}
+
+// ── 결제수단 할인규칙 ────────────────────────────────────────────
+
+export function getDiscountRules(db, paymentMethodName) {
+  const result = db.exec(
+    'SELECT id, payment_method_name, budget_category, sub_category, detail_keyword, rule_type, value, min_amount, note FROM payment_method_discount_rules WHERE payment_method_name = ? ORDER BY id',
+    [paymentMethodName]
+  );
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function addDiscountRule(db, rule) {
+  db.run(
+    `INSERT INTO payment_method_discount_rules (payment_method_name, budget_category, sub_category, detail_keyword, rule_type, value, min_amount, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [rule.payment_method_name, rule.budget_category || '', rule.sub_category || '', rule.detail_keyword || '', rule.rule_type, rule.value, rule.min_amount || 0, rule.note || '']
+  );
+}
+
+export function deleteDiscountRule(db, id) {
+  db.run('DELETE FROM payment_method_discount_rules WHERE id = ?', [id]);
+}
+
+/**
+ * rules 배열에서 (카테고리, 세부카테고리, 세부내역, 금액)에 맞는 최적 규칙을 찾아 할인 금액 반환.
+ * - 우선순위 스코어: detail_keyword(+4) > budget_category(+2) > sub_category(+1)
+ * - detail_keyword는 부분 일치(대소문자 무시)
+ * - rule_type: 'percent' (value=비율 e.g.0.01), 'fixed' (value=고정원), 'remainder' (value=단위 e.g.1000)
+ */
+export function evaluateDiscountRule(rules, budgetCategory, subCategory, amount, detail = '') {
+  if (!rules.length || !amount || amount <= 0) return 0;
+
+  const detailLower = (detail || '').toLowerCase();
+  let bestRule = null;
+  let bestScore = -1;
+
+  for (const rule of rules) {
+    if (rule.budget_category && rule.budget_category !== budgetCategory) continue;
+    if (rule.sub_category && rule.sub_category !== subCategory) continue;
+    if (rule.detail_keyword && !detailLower.includes(rule.detail_keyword.toLowerCase())) continue;
+    const score = (rule.budget_category ? 2 : 0) + (rule.sub_category ? 1 : 0) + (rule.detail_keyword ? 4 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestRule = rule;
+    }
+  }
+
+  if (!bestRule) return 0;
+  if (amount < (bestRule.min_amount || 0)) return 0;
+
+  if (bestRule.rule_type === 'percent') return Math.round(amount * bestRule.value);
+  if (bestRule.rule_type === 'fixed') return Math.round(bestRule.value);
+  if (bestRule.rule_type === 'remainder') return amount % bestRule.value;
+  return 0;
 }
