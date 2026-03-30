@@ -573,6 +573,25 @@ export function getMonthlySummary(db, month) {
   });
 }
 
+export function getMonthlySubCategorySummary(db, month, budgetCategory) {
+  const query = month
+    ? `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+       FROM transactions WHERE strftime('%Y-%m', date) = ? AND budget_category = ?
+       GROUP BY sub_category ORDER BY total DESC`
+    : `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+       FROM transactions WHERE budget_category = ?
+       GROUP BY sub_category ORDER BY total DESC`;
+  const params = month ? [month, budgetCategory] : [budgetCategory];
+  const result = db.exec(query, params);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
 export function getMonthlyTotals(db, limit = 24) {
   const query = limit
     ? `SELECT strftime('%Y-%m', date) as month,
@@ -637,6 +656,20 @@ export function getYearlySummary(db, year) {
   });
 }
 
+export function getYearlySubCategorySummary(db, year, budgetCategory) {
+  const query = `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE strftime('%Y', date) = ? AND budget_category = ?
+                 GROUP BY sub_category ORDER BY total DESC`;
+  const result = db.exec(query, [year, budgetCategory]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
 export function getYearlyPaymentMethodSummary(db, year) {
   const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
                  FROM transactions WHERE strftime('%Y', date) = ?
@@ -656,6 +689,20 @@ export function getRangeSummary(db, dateFrom, dateTo) {
                  FROM transactions WHERE date >= ? AND date <= ?
                  GROUP BY budget_category ORDER BY total DESC`;
   const result = db.exec(query, [dateFrom, dateTo]);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getRangeSubCategorySummary(db, dateFrom, dateTo, budgetCategory) {
+  const query = `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+                 FROM transactions WHERE date >= ? AND date <= ? AND budget_category = ?
+                 GROUP BY sub_category ORDER BY total DESC`;
+  const result = db.exec(query, [dateFrom, dateTo, budgetCategory]);
   if (!result.length) return [];
   const { columns, values } = result[0];
   return values.map(row => {
@@ -853,6 +900,46 @@ export function reorderMasterItem(db, table, id, direction) {
   const [neighborId, neighborOrder] = neighborRes[0].values[0];
   db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [neighborOrder, id]);
   db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [currentOrder, neighborId]);
+}
+
+export function moveItemToPosition(db, table, id, newIndex, budgetCategory = null) {
+  const allowed = ['payment_methods', 'budget_categories', 'sub_categories'];
+  if (!allowed.includes(table)) throw new Error('Invalid table name');
+
+  let hiddenRes;
+  if (table === 'sub_categories') {
+    hiddenRes = db.exec('SELECT is_hidden FROM sub_categories WHERE id = ?', [id]);
+  } else {
+    hiddenRes = db.exec(`SELECT is_hidden FROM ${table} WHERE id = ?`, [id]);
+  }
+  if (!hiddenRes.length || !hiddenRes[0].values.length) return;
+  const isHidden = hiddenRes[0].values[0][0];
+
+  let itemsRes;
+  if (table === 'sub_categories' && budgetCategory) {
+    itemsRes = db.exec(
+      'SELECT id FROM sub_categories WHERE is_hidden = ? AND budget_category = ? ORDER BY sort_order',
+      [isHidden, budgetCategory]
+    );
+  } else {
+    itemsRes = db.exec(
+      `SELECT id FROM ${table} WHERE is_hidden = ? ORDER BY sort_order`,
+      [isHidden]
+    );
+  }
+  if (!itemsRes.length) return;
+  const ids = itemsRes[0].values.map(([itemId]) => itemId);
+
+  const currentIdx = ids.indexOf(id);
+  if (currentIdx === -1) return;
+  ids.splice(currentIdx, 1);
+
+  const clamped = Math.max(0, Math.min(newIndex, ids.length));
+  ids.splice(clamped, 0, id);
+
+  ids.forEach((itemId, i) => {
+    db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [i + 1, itemId]);
+  });
 }
 
 export function setMasterItemHidden(db, table, id, isHidden) {

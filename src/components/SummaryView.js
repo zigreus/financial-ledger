@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import {
-  getMonthlySummary, getMonthlyTotals,
+  getMonthlySummary, getMonthlyTotals, getMonthlySubCategorySummary,
   getPaymentMethodSummary, getAvailableMonths,
-  getYearlySummary, getYearlyPaymentMethodSummary,
-  getRangeSummary, getRangePaymentMethodSummary,
+  getYearlySummary, getYearlyPaymentMethodSummary, getYearlySubCategorySummary,
+  getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
   getAvailableYears, getTripSummary, getTripDetailSummary, getTripPaymentMethodSummary,
   getTrips,
 } from '../services/dbManager';
@@ -68,6 +68,7 @@ function aggregateForeign(rows) {
 
 function SummaryView({ db }) {
   const [tab, setTab] = useState('monthly'); // 'monthly' | 'category' | 'payment'
+  const [drilldownCategory, setDrilldownCategory] = useState(null); // null = 메인, string = 세부 드릴다운
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
   const [filterType, setFilterType] = useState('month'); // 'month' | 'year' | 'range' | 'trip'
@@ -95,6 +96,14 @@ function SummaryView({ db }) {
     if (filterType === 'range') return dateFrom && dateTo ? getRangeSummary(db, dateFrom, dateTo) : [];
     return [];
   }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+
+  const subCategorySummary = useMemo(() => {
+    if (!drilldownCategory) return [];
+    if (filterType === 'month') return getMonthlySubCategorySummary(db, selectedMonth, drilldownCategory);
+    if (filterType === 'year') return selectedYear ? getYearlySubCategorySummary(db, selectedYear, drilldownCategory) : [];
+    if (filterType === 'range') return dateFrom && dateTo ? getRangeSubCategorySummary(db, dateFrom, dateTo, drilldownCategory) : [];
+    return [];
+  }, [db, drilldownCategory, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const paymentSummary = useMemo(() => {
     if (filterType === 'month') return getPaymentMethodSummary(db, selectedMonth);
@@ -146,13 +155,13 @@ function SummaryView({ db }) {
           <div className="filter-type-buttons">
             <button
               className={`filter-type-btn ${filterType === 'month' ? 'active' : ''}`}
-              onClick={() => { setFilterType('month'); setSelectedMonth(currentMonth); }}
+              onClick={() => { setFilterType('month'); setSelectedMonth(currentMonth); setDrilldownCategory(null); }}
             >
               월별
             </button>
             <button
               className={`filter-type-btn ${filterType === 'year' ? 'active' : ''}`}
-              onClick={() => { setFilterType('year'); setSelectedYear(currentYear); }}
+              onClick={() => { setFilterType('year'); setSelectedYear(currentYear); setDrilldownCategory(null); }}
             >
               연도별
             </button>
@@ -165,13 +174,14 @@ function SummaryView({ db }) {
                 setFilterType('range');
                 setDateFrom(fmt(firstDay));
                 setDateTo(fmt(today));
+                setDrilldownCategory(null);
               }}
             >
               기간별
             </button>
             <button
               className={`filter-type-btn ${filterType === 'trip' ? 'active' : ''}`}
-              onClick={() => { setFilterType('trip'); setSelectedTripId(''); }}
+              onClick={() => { setFilterType('trip'); setSelectedTripId(''); setDrilldownCategory(null); }}
             >
               여행별
             </button>
@@ -389,6 +399,63 @@ function SummaryView({ db }) {
                 </>
               )
             )
+          ) : drilldownCategory ? (
+            /* 세부카테고리 드릴다운 뷰 */
+            <>
+              <button className="drilldown-back-btn" onClick={() => setDrilldownCategory(null)}>
+                ← {drilldownCategory}
+              </button>
+              {subCategorySummary.length === 0 ? (
+                <p className="empty-state">데이터가 없습니다.</p>
+              ) : (
+                <>
+                  <BarChart
+                    data={subCategorySummary.map(r => ({ label: r.sub_category || '(미분류)', value: r.total }))}
+                    maxValue={subCategorySummary[0]?.total || 1}
+                    color={CATEGORY_COLORS[drilldownCategory] || '#AAB7B8'}
+                    formatLabel={v => `${formatAmount(v)}원`}
+                  />
+                  <table className="summary-table">
+                    <thead>
+                      <tr>
+                        <th>세부항목</th>
+                        <th>건수</th>
+                        <th>지출</th>
+                        <th>할인</th>
+                        <th>총액</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subCategorySummary.map(r => (
+                        <tr key={r.sub_category || ''}>
+                          <td>{r.sub_category || '(미분류)'}</td>
+                          <td>{r.cnt}</td>
+                          <td className="amount-cell">{formatAmount(r.total)}원</td>
+                          <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                          <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan="2"><strong>합계</strong></td>
+                        <td className="amount-cell">
+                          <strong>{formatAmount(subCategorySummary.reduce((s, r) => s + r.total, 0))}원</strong>
+                        </td>
+                        <td className="discount-cell">
+                          {subCategorySummary.reduce((s, r) => s + (r.discount || 0), 0) > 0
+                            ? <strong>-{formatAmount(subCategorySummary.reduce((s, r) => s + (r.discount || 0), 0))}원</strong>
+                            : '-'}
+                        </td>
+                        <td className="total-cell">
+                          <strong>{formatAmount(subCategorySummary.reduce((s, r) => s + r.total - (r.discount || 0), 0))}원</strong>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </>
+              )}
+            </>
           ) : (
             /* 일반 카테고리별 */
             categorySummary.length === 0 ? (
@@ -406,33 +473,38 @@ function SummaryView({ db }) {
                     <tr>
                       <th>카테고리</th>
                       <th>건수</th>
-                      <th>총액</th>
                       <th>지출</th>
                       <th>할인</th>
+                      <th>총액</th>
                     </tr>
                   </thead>
                   <tbody>
                     {categorySummary.map(r => (
-                      <tr key={r.budget_category}>
+                      <tr
+                        key={r.budget_category}
+                        className="clickable-row"
+                        onClick={() => setDrilldownCategory(r.budget_category)}
+                      >
                         <td>
                           <span className="cat-dot" style={{ backgroundColor: CATEGORY_COLORS[r.budget_category] || '#AAB7B8' }} />
                           {r.budget_category}
+                          <span className="drilldown-arrow">›</span>
                         </td>
                         <td>{r.cnt}</td>
-                        <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                         <td className="amount-cell">{formatAmount(r.total)}원</td>
                         <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                        <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
                       <td colSpan="2"><strong>합계</strong></td>
-                      <td className="total-cell"><strong>{formatAmount(totalSpend - totalDiscount)}원</strong></td>
                       <td className="amount-cell"><strong>{formatAmount(totalSpend)}원</strong></td>
                       <td className="discount-cell">
                         {totalDiscount > 0 ? <strong>-{formatAmount(totalDiscount)}원</strong> : '-'}
                       </td>
+                      <td className="total-cell"><strong>{formatAmount(totalSpend - totalDiscount)}원</strong></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -453,9 +525,9 @@ function SummaryView({ db }) {
                 <tr>
                   <th>결제수단</th>
                   <th>건수</th>
-                  <th>총액</th>
                   <th>지출</th>
                   <th>할인</th>
+                  <th>총액</th>
                 </tr>
               </thead>
               <tbody>
@@ -463,9 +535,9 @@ function SummaryView({ db }) {
                   <tr key={r.payment_method}>
                     <td>{r.payment_method}</td>
                     <td>{r.cnt}</td>
-                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                     <td className="amount-cell">{formatAmount(r.total)}원</td>
                     <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getPaymentMethods, getBudgetCategories, getSubCategories, getPaymentMethodDiscountRates, getTrips } from '../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../services/formulaEvaluator';
 
@@ -14,22 +14,59 @@ const EMPTY_FORM = {
   foreign_amounts: {},
 };
 
+const FORMULA_SYMBOLS = ['+', '-', '×', '÷', '(', ')'];
+
 function FormulaInput({ label, value, onChange, required, placeholder }) {
   const parsed = evaluateFormula(value);
   const isFormula = value && value.trim() && !/^-?\d+$/.test(value.trim());
   const isValid = parsed !== null && !isNaN(parsed);
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef(null);
+
+  const insertSymbol = (sym) => {
+    const input = inputRef.current;
+    if (!input) return;
+    const actual = sym === '×' ? '*' : sym === '÷' ? '/' : sym;
+    const start = input.selectionStart ?? value.length;
+    const end = input.selectionEnd ?? value.length;
+    const next = value.slice(0, start) + actual + value.slice(end);
+    onChange(next);
+    // 커서 위치 복원
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(start + 1, start + 1);
+    });
+  };
 
   return (
     <div className="form-group">
       <label>{label}{required && <span className="required">*</span>}</label>
       <input
+        ref={inputRef}
         type="text"
         inputMode="decimal"
         value={value}
         onChange={e => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         placeholder={placeholder || '금액 (예: 12000+3000)'}
         className={value && !isValid ? 'input-error' : ''}
       />
+      {focused && (
+        <div className="formula-toolbar">
+          {FORMULA_SYMBOLS.map(sym => (
+            <button
+              key={sym}
+              type="button"
+              className="formula-toolbar-btn"
+              onMouseDown={e => { e.preventDefault(); insertSymbol(sym); }}
+              onTouchStart={e => { e.preventDefault(); insertSymbol(sym); }}
+            >
+              {sym}
+            </button>
+          ))}
+        </div>
+      )}
       {isFormula && isValid && (
         <span className="formula-preview">= {formatAmount(parsed)}원</span>
       )}

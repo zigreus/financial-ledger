@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories,
-  setMasterItemHidden, reorderMasterItem,
+  setMasterItemHidden, moveItemToPosition,
   addPaymentMethod, addBudgetCategory, addSubCategory,
   cleanupHiddenPaymentMethods,
   setPaymentMethodDiscountRate, bulkApplyShinhanDiscount, bulkApplyWooriDiscount,
@@ -9,12 +9,46 @@ import {
   addTripCountry, deleteTripCountry,
 } from '../services/dbManager';
 
+const IconEyeOpen = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+    <circle cx="12" cy="12" r="3"/>
+  </svg>
+);
+
+const IconEyeOff = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+    <line x1="1" y1="1" x2="23" y2="23"/>
+  </svg>
+);
+
+const IconGrip = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <circle cx="5.5" cy="4" r="1.3"/>
+    <circle cx="10.5" cy="4" r="1.3"/>
+    <circle cx="5.5" cy="8" r="1.3"/>
+    <circle cx="10.5" cy="8" r="1.3"/>
+    <circle cx="5.5" cy="12" r="1.3"/>
+    <circle cx="10.5" cy="12" r="1.3"/>
+  </svg>
+);
+
+const IconChevronRight = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="9 18 15 12 9 6"/>
+  </svg>
+);
+
 function SettingsView({ db, onChanged }) {
   const [activeSection, setActiveSection] = useState('payment');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [drilldownCategory, setDrilldownCategory] = useState(null); // {id, name} | null
   const [addingName, setAddingName] = useState('');
   const [error, setError] = useState('');
   const [dataMsg, setDataMsg] = useState('');
+  const [dragId, setDragId] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null);
   const [addingTripName, setAddingTripName] = useState('');
   const [selectedTripId, setSelectedTripId] = useState('');
   const [addingCountry, setAddingCountry] = useState('');
@@ -25,7 +59,7 @@ function SettingsView({ db, onChanged }) {
 
   const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
-  const subCategories = useMemo(() => getAllSubCategories(db, selectedCategory), [db, selectedCategory]);
+  const subCategories = useMemo(() => getAllSubCategories(db, drilldownCategory?.name || ''), [db, drilldownCategory]);
   const trips = useMemo(() => getAllTrips(db), [db]);
   const tripCountries = useMemo(() => selectedTripId ? getTripCountries(db, Number(selectedTripId)) : [], [db, selectedTripId]);
 
@@ -42,14 +76,23 @@ function SettingsView({ db, onChanged }) {
     }
   };
 
-  const handleReorder = (table, id, direction) => {
+  const handleDrop = (table, items) => {
+    if (dragId === null || dropIdx === null) { setDragId(null); setDropIdx(null); return; }
+    const dragItem = items.find(i => i.id === dragId);
+    if (!dragItem) { setDragId(null); setDropIdx(null); return; }
+
+    // dropIdx 이전에 있는 같은 그룹 아이템 수 (드래그 아이템 제외)
+    const targetGroupIdx = items.slice(0, dropIdx).filter(i => i.is_hidden === dragItem.is_hidden && i.id !== dragId).length;
+
     try {
-      reorderMasterItem(db, table, id, direction);
+      moveItemToPosition(db, table, dragId, targetGroupIdx, drilldownCategory?.name);
       onChanged();
       setError('');
     } catch (e) {
       setError(e.message);
     }
+    setDragId(null);
+    setDropIdx(null);
   };
 
   const handleRateBlur = (name, inputEl) => {
@@ -69,10 +112,11 @@ function SettingsView({ db, onChanged }) {
       if (activeSection === 'payment') {
         addPaymentMethod(db, addingName);
       } else if (activeSection === 'category') {
-        addBudgetCategory(db, addingName);
-      } else if (activeSection === 'sub') {
-        if (!selectedCategory) { setError('카테고리를 선택해주세요.'); return; }
-        addSubCategory(db, selectedCategory, addingName);
+        if (drilldownCategory) {
+          addSubCategory(db, drilldownCategory.name, addingName);
+        } else {
+          addBudgetCategory(db, addingName);
+        }
       }
       onChanged();
       setAddingName('');
@@ -86,17 +130,18 @@ function SettingsView({ db, onChanged }) {
 
   const currentItems = useMemo(() => {
     const items = activeSection === 'payment' ? paymentMethods
+      : activeSection === 'category' && drilldownCategory ? subCategories
       : activeSection === 'category' ? budgetCategories
-      : subCategories;
+      : [];
     return [...items].sort((a, b) => {
       if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
       return a.sort_order - b.sort_order;
     });
-  }, [activeSection, paymentMethods, budgetCategories, subCategories]);
+  }, [activeSection, drilldownCategory, paymentMethods, budgetCategories, subCategories]);
 
   const switchSection = (sec) => {
     setActiveSection(sec);
-    setSelectedCategory('');
+    setDrilldownCategory(null);
     setAddingName('');
     setAddingTripName('');
     setSelectedTripId('');
@@ -178,19 +223,17 @@ function SettingsView({ db, onChanged }) {
       {/* 섹션 탭 */}
       <div className="settings-tabs">
         <button className={activeSection === 'payment' ? 'tab active' : 'tab'} onClick={() => switchSection('payment')}>결제수단</button>
-        <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>예산카테고리</button>
-        <button className={activeSection === 'sub' ? 'tab active' : 'tab'} onClick={() => switchSection('sub')}>세부카테고리</button>
+        <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={activeSection === 'travel' ? 'tab active' : 'tab'} onClick={() => switchSection('travel')}>여행</button>
         <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
       </div>
 
-      {/* 세부카테고리 섹션 필터 */}
-      {activeSection === 'sub' && (
-        <div className="settings-filter">
-          <select value={selectedCategory} onChange={e => { setSelectedCategory(e.target.value); setAddingName(''); }}>
-            <option value="">카테고리 선택</option>
-            {budgetCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-          </select>
+      {/* 카테고리 드릴다운 뒤로가기 */}
+      {activeSection === 'category' && drilldownCategory && (
+        <div style={{ padding: '0 0 8px' }}>
+          <button className="drilldown-back-btn" onClick={() => { setDrilldownCategory(null); setAddingName(''); setError(''); }}>
+            ← {drilldownCategory.name}
+          </button>
         </div>
       )}
 
@@ -370,82 +413,109 @@ function SettingsView({ db, onChanged }) {
             </div>
           </div>
 
-        /* ── 결제수단 / 카테고리 / 세부카테고리 탭 ── */
+        /* ── 결제수단 / 카테고리 탭 ── */
         ) : (
           <>
             {currentItems.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 16px' }}>항목이 없습니다.</div>
-            ) : (
-              currentItems.map((item, idx) => {
-                const table = activeSection === 'payment' ? 'payment_methods'
-                  : activeSection === 'category' ? 'budget_categories'
-                  : 'sub_categories';
-                const sameGroup = currentItems.filter(x => x.is_hidden === item.is_hidden);
-                const groupIdx = sameGroup.indexOf(item);
-                const isFirst = groupIdx === 0;
-                const isLast = groupIdx === sameGroup.length - 1;
-                return (
-                  <div key={item.id} className={`settings-item ${item.is_hidden ? 'settings-item-hidden' : ''}`}>
-                    {/* 순서 조정 버튼 */}
-                    <div className="reorder-buttons">
-                      <button
-                        className="btn-reorder"
-                        disabled={isFirst}
-                        onClick={() => handleReorder(table, item.id, 'up')}
-                      >▲</button>
-                      <button
-                        className="btn-reorder"
-                        disabled={isLast}
-                        onClick={() => handleReorder(table, item.id, 'down')}
-                      >▼</button>
-                    </div>
+            ) : (() => {
+              const table = activeSection === 'payment' ? 'payment_methods'
+                : activeSection === 'category' && drilldownCategory ? 'sub_categories'
+                : 'budget_categories';
+              const dragItem = dragId ? currentItems.find(i => i.id === dragId) : null;
+              return (
+                <div
+                  onDrop={(e) => { e.preventDefault(); handleDrop(table, currentItems); }}
+                  onDragEnd={() => { setDragId(null); setDropIdx(null); }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropIdx(null); }}
+                >
+                  {currentItems.map((item, idx) => {
+                    const isDragging = dragId === item.id;
+                    const sameGroup = dragItem && item.is_hidden === dragItem.is_hidden;
+                    const showIndicator = dropIdx === idx && dragId !== null && sameGroup;
+                    return (
+                      <React.Fragment key={item.id}>
+                        {showIndicator && <div className="drop-indicator" />}
+                        <div
+                          className={`settings-item ${item.is_hidden ? 'settings-item-hidden' : ''} ${isDragging ? 'settings-item-dragging' : ''}`}
+                          draggable
+                          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragId(item.id); setDropIdx(null); }}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            if (!dragItem || item.is_hidden !== dragItem.is_hidden) { setDropIdx(null); return; }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
+                          }}
+                        >
+                          {/* 드래그 핸들 */}
+                          <div className="drag-handle" title="드래그해서 순서 변경">
+                            <IconGrip />
+                          </div>
 
-                    <span className="settings-item-name">{item.name}</span>
+                          <span className="settings-item-name">{item.name}</span>
 
-                    {/* 결제수단 탭에서만 할인율 입력 표시 */}
-                    {activeSection === 'payment' && (
-                      <div className="discount-rate-field">
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="0.1"
-                          defaultValue={item.discount_rate ? Math.round(item.discount_rate * 1000) / 10 : 0}
-                          onBlur={(e) => handleRateBlur(item.name, e.target)}
-                          className="rate-input"
-                          title="기본 할인율 (%)"
-                        />
-                        <span className="rate-unit">%</span>
-                      </div>
-                    )}
+                          {/* 결제수단 탭에서만 할인율 입력 표시 */}
+                          {activeSection === 'payment' && (
+                            <div className="discount-rate-field">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.1"
+                                defaultValue={item.discount_rate ? Math.round(item.discount_rate * 1000) / 10 : 0}
+                                onBlur={(e) => handleRateBlur(item.name, e.target)}
+                                className="rate-input"
+                                title="기본 할인율 (%)"
+                              />
+                              <span className="rate-unit">%</span>
+                            </div>
+                          )}
 
-                    <button
-                      className={item.is_hidden ? 'btn-secondary' : 'btn-outline'}
-                      onClick={() => handleToggleHidden(table, item.id, item.is_hidden)}
-                    >
-                      {item.is_hidden ? '표시' : '숨기기'}
-                    </button>
-                  </div>
-                );
-              })
-            )}
+                          {/* 숨기기/표시 아이콘 버튼 */}
+                          <button
+                            className={`btn-eye-toggle ${item.is_hidden ? 'btn-eye-toggle--hidden' : ''}`}
+                            onClick={() => handleToggleHidden(table, item.id, item.is_hidden)}
+                            title={item.is_hidden ? '표시' : '숨기기'}
+                          >
+                            {item.is_hidden ? <IconEyeOff /> : <IconEyeOpen />}
+                          </button>
 
-            {activeSection !== 'sub' || selectedCategory ? (
-              <div className="settings-add-row">
-                <input
-                  type="text"
-                  value={addingName}
-                  onChange={e => setAddingName(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    activeSection === 'payment' ? '새 결제수단...' :
-                    activeSection === 'category' ? '새 카테고리...' :
-                    '새 세부카테고리...'
-                  }
-                />
-                <button className="btn-primary" onClick={handleAddItem}>+ 추가</button>
-              </div>
-            ) : null}
+                          {/* 예산카테고리 탭에서 세부카테고리 드릴다운 버튼 */}
+                          {activeSection === 'category' && !drilldownCategory && (
+                            <button
+                              className="btn-drilldown"
+                              onClick={() => { setDrilldownCategory({ id: item.id, name: item.name }); setAddingName(''); setError(''); }}
+                              title="세부카테고리 설정"
+                            >
+                              <IconChevronRight />
+                            </button>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                  {/* 마지막 위치 드롭 인디케이터 */}
+                  {dropIdx === currentItems.length && dragId !== null && dragItem && (
+                    <div className="drop-indicator" />
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="settings-add-row">
+              <input
+                type="text"
+                value={addingName}
+                onChange={e => setAddingName(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  activeSection === 'payment' ? '새 결제수단...' :
+                  drilldownCategory ? '새 세부카테고리...' :
+                  '새 카테고리...'
+                }
+              />
+              <button className="btn-primary" onClick={handleAddItem}>+ 추가</button>
+            </div>
           </>
         )}
       </div>
