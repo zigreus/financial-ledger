@@ -636,6 +636,9 @@ body {
   gap: 6px;
   margin-top: 4px;
 }
+@media (hover: hover) {
+  .formula-toolbar { display: none; }
+}
 .formula-toolbar-btn {
   flex: 1;
   padding: 8px 4px;
