@@ -27,6 +27,7 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
   const isValid = parsed !== null && !isNaN(parsed);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
+  const touchHandledRef = useRef(false);
 
   const insertSymbol = (sym) => {
     const input = inputRef.current;
@@ -74,8 +75,8 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
               type="button"
               className="formula-toolbar-btn"
               onMouseDown={e => e.preventDefault()}
-              onClick={() => insertSymbol(sym)}
-              onTouchStart={e => { e.preventDefault(); insertSymbol(sym); }}
+              onTouchStart={e => { e.preventDefault(); touchHandledRef.current = true; insertSymbol(sym); }}
+              onClick={() => { if (touchHandledRef.current) { touchHandledRef.current = false; return; } insertSymbol(sym); }}
             >
               {sym}
             </button>
