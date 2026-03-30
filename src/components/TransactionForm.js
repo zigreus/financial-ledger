@@ -59,7 +59,7 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
               key={sym}
               type="button"
               className="formula-toolbar-btn"
-              onMouseDown={e => { e.preventDefault(); insertSymbol(sym); }}
+              onClick={e => { e.preventDefault(); insertSymbol(sym); }}
               onTouchStart={e => { e.preventDefault(); insertSymbol(sym); }}
             >
               {sym}
