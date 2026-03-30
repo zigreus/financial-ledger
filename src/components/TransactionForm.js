@@ -16,6 +16,11 @@ const EMPTY_FORM = {
 
 const FORMULA_SYMBOLS = ['+', '-', '×', '÷', '(', ')'];
 
+// 수식이 연산자/괄호로 끝나는 미완성 상태 여부
+function isIncomplete(v) {
+  return /[+\-*/(%]$/.test(v.trim());
+}
+
 function FormulaInput({ label, value, onChange, required, placeholder }) {
   const parsed = evaluateFormula(value);
   const isFormula = value && value.trim() && !/^-?\d+$/.test(value.trim());
@@ -30,11 +35,20 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
     const start = input.selectionStart ?? value.length;
     const end = input.selectionEnd ?? value.length;
     const next = value.slice(0, start) + actual + value.slice(end);
+    // focus를 onChange 이전에 동기 호출 — Android에서 키보드가 닫히지 않도록
+    input.focus();
     onChange(next);
-    // 커서 위치 복원
     requestAnimationFrame(() => {
-      input.focus();
       input.setSelectionRange(start + 1, start + 1);
+    });
+  };
+
+  const handleBlur = () => {
+    // 심볼 버튼 탭 후 focus가 돌아올 시간을 한 프레임 기다림
+    requestAnimationFrame(() => {
+      if (document.activeElement !== inputRef.current) {
+        setFocused(false);
+      }
     });
   };
 
@@ -48,9 +62,9 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
         value={value}
         onChange={e => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onBlur={handleBlur}
         placeholder={placeholder || '금액 (예: 12000+3000)'}
-        className={value && !isValid ? 'input-error' : ''}
+        className={value && !isValid && !isIncomplete(value) ? 'input-error' : ''}
       />
       {focused && (
         <div className="formula-toolbar">
@@ -59,7 +73,8 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
               key={sym}
               type="button"
               className="formula-toolbar-btn"
-              onClick={e => { e.preventDefault(); insertSymbol(sym); }}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => insertSymbol(sym)}
               onTouchStart={e => { e.preventDefault(); insertSymbol(sym); }}
             >
               {sym}
@@ -70,7 +85,7 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
       {isFormula && isValid && (
         <span className="formula-preview">= {formatAmount(parsed)}원</span>
       )}
-      {value && !isValid && (
+      {value && !isValid && !isIncomplete(value) && (
         <span className="formula-error">올바른 숫자 또는 수식을 입력하세요</span>
       )}
     </div>
