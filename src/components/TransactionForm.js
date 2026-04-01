@@ -33,27 +33,33 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
   const containerRef = useRef(null);
   const touchHandledRef = useRef(false);
 
+  const scrollContainerUp = () => {
+    if (!containerRef.current) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const scrollable = containerRef.current.closest('.modal-content');
+    if (!scrollable) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    // rect은 visual viewport 기준 — vv.height에서 툴바+여백을 빼면 실제 보이는 영역 하단
+    const visibleBottom = vv.height - 52 - 8;
+    if (rect.bottom > visibleBottom) {
+      scrollable.scrollTop += rect.bottom - visibleBottom;
+    }
+  };
+
   useEffect(() => {
     if (!focused || !isTouchDevice) return;
     const vv = window.visualViewport;
     if (!vv) return;
-    const TOOLBAR_HEIGHT = 52;
-    const PADDING = 8;
-    const scrollIntoView = (kb) => {
-      if (!containerRef.current || kb <= 0) return;
-      requestAnimationFrame(() => {
-        const rect = containerRef.current.getBoundingClientRect();
-        const visibleBottom = window.innerHeight - kb - TOOLBAR_HEIGHT - PADDING;
-        if (rect.bottom > visibleBottom) {
-          const scrollable = containerRef.current.closest('.modal-content');
-          if (scrollable) scrollable.scrollTop += rect.bottom - visibleBottom;
-        }
-      });
-    };
     const update = () => {
       const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
       setToolbarBottom(kb);
-      scrollIntoView(kb);
+      // 모달 패딩을 늘려 스크롤 공간 확보
+      const scrollable = containerRef.current?.closest('.modal-content');
+      if (scrollable) {
+        scrollable.style.paddingBottom = kb > 0 ? `${kb + 52 + 16}px` : '';
+      }
+      requestAnimationFrame(scrollContainerUp);
     };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
@@ -62,8 +68,18 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       setToolbarBottom(0);
+      const scrollable = containerRef.current?.closest('.modal-content');
+      if (scrollable) scrollable.style.paddingBottom = '';
     };
   }, [focused]);
+
+  // 타이핑으로 수식 미리보기가 생겼을 때도 스크롤 재조정
+  useEffect(() => {
+    if (!focused || !isTouchDevice) return;
+    const vv = window.visualViewport;
+    if (!vv || window.innerHeight - vv.offsetTop - vv.height <= 0) return;
+    requestAnimationFrame(scrollContainerUp);
+  }, [value, focused]);
 
   const insertSymbol = (sym) => {
     const input = inputRef.current;
