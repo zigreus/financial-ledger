@@ -21,13 +21,34 @@ function isIncomplete(v) {
   return /[+\-*/(%]$/.test(v.trim());
 }
 
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+
 function FormulaInput({ label, value, onChange, required, placeholder }) {
   const parsed = evaluateFormula(value);
   const isFormula = value && value.trim() && !/^-?\d+$/.test(value.trim());
   const isValid = parsed !== null && !isNaN(parsed);
   const [focused, setFocused] = useState(false);
+  const [toolbarBottom, setToolbarBottom] = useState(0);
   const inputRef = useRef(null);
   const touchHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (!focused || !isTouchDevice) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const kb = window.innerHeight - vv.offsetTop - vv.height;
+      setToolbarBottom(Math.max(0, kb));
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+      setToolbarBottom(0);
+    };
+  }, [focused]);
 
   const insertSymbol = (sym) => {
     const input = inputRef.current;
@@ -67,8 +88,8 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
         placeholder={placeholder || '금액 (예: 12000+3000)'}
         className={value && !isValid && !isIncomplete(value) ? 'input-error' : ''}
       />
-      {focused && (
-        <div className="formula-toolbar">
+      {focused && isTouchDevice && (
+        <div className="formula-toolbar" style={{ bottom: toolbarBottom }}>
           {FORMULA_SYMBOLS.map(sym => (
             <button
               key={sym}
