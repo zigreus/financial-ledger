@@ -51,11 +51,11 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
     if (!focused || !isTouchDevice) return;
     const vv = window.visualViewport;
     if (!vv) return;
+    const scrollable = containerRef.current?.closest('.modal-content');
     const update = () => {
       const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
       setToolbarBottom(kb);
       // 모달 패딩을 늘려 스크롤 공간 확보
-      const scrollable = containerRef.current?.closest('.modal-content');
       if (scrollable) {
         scrollable.style.paddingBottom = kb > 0 ? `${kb + 52 + 16}px` : '';
       }
@@ -68,7 +68,6 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       setToolbarBottom(0);
-      const scrollable = containerRef.current?.closest('.modal-content');
       if (scrollable) scrollable.style.paddingBottom = '';
     };
   }, [focused]);
