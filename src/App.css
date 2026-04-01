@@ -255,13 +255,13 @@ body {
 
 .filter-top {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .filter-search {
-  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -271,14 +271,21 @@ body {
 }
 .filter-search:focus { border-color: var(--primary); }
 
+.filter-btn-row {
+  display: flex;
+  gap: 6px;
+}
+
 .btn-filter-toggle {
-  padding: 8px 14px;
+  flex: 1;
+  padding: 8px 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
+  text-align: center;
 }
 .btn-filter-toggle.active { border-color: var(--primary); color: var(--primary); }
 

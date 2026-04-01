@@ -4,7 +4,6 @@ import {
   setMasterItemHidden, moveItemToPosition, moveTripToPosition,
   addPaymentMethod, addBudgetCategory, addSubCategory,
   cleanupHiddenPaymentMethods,
-  bulkApplyShinhanDiscount, bulkApplyWooriDiscount,
   getAllTrips, getTripCountries, addTrip, updateTripName, deleteTrip,
   addTripCountry, updateTripCountry, deleteTripCountry, moveTripCountryToPosition,
   getSubCategoryTxCount, deleteSubCategory,
@@ -80,8 +79,7 @@ function SettingsView({ db, onChanged }) {
   const [drilldownTrip, setDrilldownTrip] = useState(null);          // {id, name} | null
   const [addingName, setAddingName] = useState('');
   const [error, setError] = useState('');
-  const [dataMsg, setDataMsg] = useState('');
-  const [dragId, setDragId] = useState(null);
+const [dragId, setDragId] = useState(null);
   const [dropIdx, setDropIdx] = useState(null);
   const [addingTripName, setAddingTripName] = useState('');
   const [addingCountry, setAddingCountry] = useState('');
@@ -236,7 +234,7 @@ function SettingsView({ db, onChanged }) {
     setDragId(null);
     setDropIdx(null);
     setError('');
-    setDataMsg('');
+
   };
 
   const handleAddTrip = () => {
@@ -581,7 +579,7 @@ function SettingsView({ db, onChanged }) {
         <button className={activeSection === 'payment' ? 'tab active' : 'tab'} onClick={() => switchSection('payment')}>결제수단</button>
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={activeSection === 'travel' ? 'tab active' : 'tab'} onClick={() => switchSection('travel')}>여행</button>
-        <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
+
       </div>
 
       {/* 드릴다운 뒤로가기 */}
@@ -730,44 +728,7 @@ function SettingsView({ db, onChanged }) {
             </>
           )
 
-        ) : activeSection === 'data' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-            {dataMsg && <div style={{ fontSize: '13px', color: 'var(--success)', padding: '8px 0 12px' }}>{dataMsg}</div>}
-
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>신한카드 할인 일괄 적용</div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                5,000원 이상 신한카드 거래 → 1,000원 미만 금액을 할인으로 적용
-              </div>
-              <button className="btn-primary" onClick={() => {
-                if (!window.confirm('신한카드 5,000원 이상 거래에 할인금액을 일괄 적용합니다.\n기존 할인금액도 덮어씌워집니다.')) return;
-                try {
-                  const count = bulkApplyShinhanDiscount(db);
-                  onChanged();
-                  setDataMsg(`신한카드 ${count}건 할인 적용 완료`);
-                } catch (e) { setError(e.message); }
-              }}>일괄 적용</button>
-            </div>
-
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>우리카드 할인 일괄 적용</div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                2026년 2월 이전 → 30% 할인<br />
-                2026년 3월 이후 → 20% 할인<br />
-                <span style={{ color: 'var(--primary)' }}>적용 후 우리카드 기본 할인율이 20%로 설정됩니다.</span>
-              </div>
-              <button className="btn-primary" onClick={() => {
-                if (!window.confirm('우리카드 거래에 기간별 할인금액을 일괄 적용합니다.\n기존 할인금액도 덮어씌워집니다.')) return;
-                try {
-                  const count = bulkApplyWooriDiscount(db);
-                  onChanged();
-                  setDataMsg(`우리카드 ${count}건 할인 적용 완료 (이후 신규 거래: 20%)`);
-                } catch (e) { setError(e.message); }
-              }}>일괄 적용</button>
-            </div>
-          </div>
-
-        /* ── 결제수단 / 카테고리 탭 ── */
+/* ── 결제수단 / 카테고리 탭 ── */
         ) : activeSection === 'payment' && drilldownPayment ? (
           /* ── 결제수단 할인규칙 드릴다운 ── */
           <>

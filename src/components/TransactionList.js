@@ -109,13 +109,13 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
       const saved = sessionStorage.getItem('fl_expanded_months');
       if (saved) return new Set(JSON.parse(saved));
     } catch (e) {}
-    // 첫 방문 기본값: 현재 월 + 가장 최신 월
+    // 첫 방문 기본값: 현재 월 (또는 데이터가 없으면 가장 최신 월)
     const now = new Date();
     const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const set = new Set([cur]);
     const available = getAvailableMonths(db);
-    if (available.length > 0) set.add(available[0]);
-    return set;
+    const hasCurrentMonth = available.includes(cur);
+    const defaultMonth = hasCurrentMonth ? cur : (available.length > 0 ? available[0] : cur);
+    return new Set([defaultMonth]);
   });
 
   // expandedMonths 변경 시 sessionStorage에 저장
@@ -215,22 +215,24 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                 onChange={e => setFilter('search', e.target.value)}
               />
 
-              <button
-                className={`btn-filter-toggle ${showIssueOnly ? 'active' : ''}`}
-                onClick={() => setShowIssueOnly(v => !v)}
-                title="카테고리 이슈 거래만 보기"
-              >
-                이슈
-              </button>
-              <button
-                className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
-                onClick={() => setShowFilters(v => !v)}
-              >
-                필터 {hasFilters ? '●' : ''}
-              </button>
-              <button className="btn-filter-toggle" onClick={() => setDeleteMode(true)}>
-                삭제
-              </button>
+              <div className="filter-btn-row">
+                <button
+                  className={`btn-filter-toggle ${showIssueOnly ? 'active' : ''}`}
+                  onClick={() => setShowIssueOnly(v => !v)}
+                  title="카테고리 이슈 거래만 보기"
+                >
+                  이슈
+                </button>
+                <button
+                  className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
+                  onClick={() => setShowFilters(v => !v)}
+                >
+                  필터 {hasFilters ? '●' : ''}
+                </button>
+                <button className="btn-filter-toggle" onClick={() => setDeleteMode(true)}>
+                  삭제
+                </button>
+              </div>
             </>
           )}
         </div>
