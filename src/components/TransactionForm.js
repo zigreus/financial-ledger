@@ -30,15 +30,30 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
   const [focused, setFocused] = useState(false);
   const [toolbarBottom, setToolbarBottom] = useState(0);
   const inputRef = useRef(null);
+  const containerRef = useRef(null);
   const touchHandledRef = useRef(false);
 
   useEffect(() => {
     if (!focused || !isTouchDevice) return;
     const vv = window.visualViewport;
     if (!vv) return;
+    const TOOLBAR_HEIGHT = 52;
+    const PADDING = 8;
+    const scrollIntoView = (kb) => {
+      if (!containerRef.current || kb <= 0) return;
+      requestAnimationFrame(() => {
+        const rect = containerRef.current.getBoundingClientRect();
+        const visibleBottom = window.innerHeight - kb - TOOLBAR_HEIGHT - PADDING;
+        if (rect.bottom > visibleBottom) {
+          const scrollable = containerRef.current.closest('.modal-content');
+          if (scrollable) scrollable.scrollTop += rect.bottom - visibleBottom;
+        }
+      });
+    };
     const update = () => {
-      const kb = window.innerHeight - vv.offsetTop - vv.height;
-      setToolbarBottom(Math.max(0, kb));
+      const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+      setToolbarBottom(kb);
+      scrollIntoView(kb);
     };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
@@ -75,7 +90,7 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
   };
 
   return (
-    <div className="form-group">
+    <div className="form-group" ref={containerRef}>
       <label>{label}{required && <span className="required">*</span>}</label>
       <input
         ref={inputRef}
