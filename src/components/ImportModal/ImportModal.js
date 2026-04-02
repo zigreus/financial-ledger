@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { bulkInsertTransactions } from '../services/dbManager';
+import { bulkInsertTransactions } from '../../services/dbManager';
+import './ImportModal.css';
 
 function ImportModal({ db, onImport, onClose }) {
   const [step, setStep] = useState('upload');

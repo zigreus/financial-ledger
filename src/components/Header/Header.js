@@ -1,5 +1,6 @@
 import React from 'react';
 import { useMsal } from '@azure/msal-react';
+import './Header.css';
 
 function Header({ onRefresh, onSave, loading, saving, dirty }) {
   const { accounts, instance } = useMsal();

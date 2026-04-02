@@ -1,0 +1,30 @@
+/* ── 헤더 ────────────────────────────────────────────────── */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: var(--header-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.header-title { font-size: 18px; font-weight: 700; }
+.header-right { display: flex; align-items: center; gap: 8px; }
+
+.btn-header {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-header:disabled { opacity: .5; cursor: not-allowed; }
+.btn-save { background: var(--primary); color: white; border-color: var(--primary); font-weight: 600; }
+.btn-refresh { font-size: 16px; padding: 6px 10px; }
+.btn-user { max-width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }

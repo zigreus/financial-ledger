@@ -6,8 +6,9 @@ import {
   getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
   getAvailableYears, getTripSummary, getTripDetailSummary, getTripPaymentMethodSummary,
   getTrips, getMonthlyTotalsWithGoals,
-} from '../services/dbManager';
-import { formatAmount } from '../services/formulaEvaluator';
+} from '../../services/dbManager';
+import { formatAmount } from '../../services/formulaEvaluator';
+import './SummaryView.css';
 
 const CATEGORY_COLORS = {
   '식비': '#FF6B6B',

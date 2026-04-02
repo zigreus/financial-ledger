@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../services/dbManager';
-import { formatAmount } from '../services/formulaEvaluator';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../../services/dbManager';
+import { formatAmount } from '../../services/formulaEvaluator';
+import './TransactionList.css';
 
 const DEFAULT_CATEGORY_COLORS = {
   '식비': '#FF6B6B',

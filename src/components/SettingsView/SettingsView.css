@@ -1,0 +1,356 @@
+/* ── 설정 화면 ─────────────────────────────────────────── */
+.settings-page {
+  padding-bottom: 16px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  background: var(--surface);
+}
+
+.tab {
+  flex: 1;
+  padding: 12px 0;
+  text-align: center;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color .2s, border-color .2s;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.settings-section {
+  padding: 16px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-item-hidden .settings-item-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.settings-item-name {
+  font-size: 15px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  cursor: grab;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.drag-handle:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.drag-handle:active { cursor: grabbing; }
+
+.settings-item-dragging {
+  opacity: 0.35;
+}
+
+.drop-indicator {
+  height: 3px;
+  background: var(--primary);
+  border-radius: 2px;
+  margin: -1px 0;
+  pointer-events: none;
+}
+
+.btn-eye-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn-eye-toggle:hover {
+  background: var(--bg);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.btn-eye-toggle--hidden {
+  color: var(--text-muted);
+  border-style: dashed;
+  opacity: 0.6;
+}
+.btn-eye-toggle--hidden:hover {
+  opacity: 1;
+  color: var(--primary);
+  border-color: var(--primary);
+  border-style: solid;
+}
+
+.btn-drilldown {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 6px;
+  transition: background .15s;
+}
+.btn-drilldown:hover { background: var(--primary-dark); }
+
+.settings-item-clickable {
+  cursor: pointer;
+  transition: background .12s;
+}
+.settings-item-clickable:hover {
+  background: rgba(37, 99, 235, 0.05);
+  border-radius: 8px;
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn-icon:hover {
+  background: var(--bg);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.btn-icon--danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.06);
+}
+.btn-icon--success:hover {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.trip-country-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.settings-inline-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1.5px solid var(--primary);
+  border-radius: 8px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  margin-right: 6px;
+}
+
+.discount-rate-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 8px;
+}
+.rate-input {
+  width: 52px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: right;
+  background: var(--bg);
+  color: var(--text);
+}
+.rate-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-add-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 0;
+  margin-top: 8px;
+}
+
+.settings-add-row input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--bg);
+  outline: none;
+  font-family: inherit;
+}
+
+.settings-add-row input:focus {
+  border-color: var(--primary);
+  background: var(--surface);
+}
+
+.settings-filter {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-filter select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--bg);
+  font-family: inherit;
+}
+
+.btn-outline {
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+
+.btn-outline:hover {
+  border-color: var(--primary);
+  background: var(--bg);
+}
+
+/* ── 결제수단 할인규칙 UI ──────────────────────────────── */
+.rule-section-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.rule-scope {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin-right: 8px;
+}
+
+.rule-value-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-right: 6px;
+}
+
+.rule-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rule-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.rule-add-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.rule-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rule-form-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.rule-form-select,
+.rule-form-input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.rule-form-select:focus,
+.rule-form-input:focus {
+  border-color: var(--primary);
+}

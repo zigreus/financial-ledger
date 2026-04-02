@@ -1,0 +1,37 @@
+/* ── 임포트 모달 ────────────────────────────────────────── */
+.import-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0;
+}
+
+.import-preview-table th,
+.import-preview-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.import-preview-table th {
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.import-preview-table td {
+  font-size: 12px;
+}
+
+.import-info {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.import-info strong {
+  color: var(--text);
+  font-weight: 600;
+}

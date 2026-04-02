@@ -2,16 +2,16 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import './App.css';
 
-import LoginPage from './components/LoginPage';
-import Header from './components/Header';
-import TransactionList from './components/TransactionList';
-import TransactionForm from './components/TransactionForm';
-import SummaryView from './components/SummaryView';
-import SettingsView from './components/SettingsView';
-import ImportModal from './components/ImportModal';
+import LoginPage from '../LoginPage/LoginPage';
+import Header from '../Header/Header';
+import TransactionList from '../TransactionList/TransactionList';
+import TransactionForm from '../TransactionForm/TransactionForm';
+import SummaryView from '../SummaryView/SummaryView';
+import SettingsView from '../SettingsView/SettingsView';
+import ImportModal from '../ImportModal/ImportModal';
 
-import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister } from './services/dbManager';
-import { readDbFromOneDrive, writeDbToOneDrive } from './services/oneDriveService';
+import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister } from '../../services/dbManager';
+import { readDbFromOneDrive, writeDbToOneDrive } from '../../services/oneDriveService';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();

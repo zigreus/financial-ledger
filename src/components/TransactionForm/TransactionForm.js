@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getTrips } from '../services/dbManager';
-import { evaluateFormula, formatAmount, today } from '../services/formulaEvaluator';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getTrips } from '../../services/dbManager';
+import { evaluateFormula, formatAmount, today } from '../../services/formulaEvaluator';
+import './TransactionForm.css';
 
 const EMPTY_FORM = {
   payment_method: '',

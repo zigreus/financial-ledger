@@ -1,0 +1,59 @@
+/* ── 로그인 페이지 ─────────────────────────────────────────── */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1E3A5F 0%, #2563EB 100%);
+  padding: 24px;
+}
+
+.login-card {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 40px 32px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-icon { font-size: 56px; margin-bottom: 12px; }
+.login-card h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+.login-subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 14px; }
+
+.btn-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+}
+.btn-login:hover { background: var(--primary-dark); }
+.ms-icon { font-size: 18px; }
+
+.login-error { color: var(--danger); font-size: 13px; margin-top: 12px; }
+
+.config-warning {
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  border-radius: var(--radius);
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.config-warning code {
+  background: rgba(0,0,0,.08);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}

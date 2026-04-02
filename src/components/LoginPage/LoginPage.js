@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useMsal } from '@azure/msal-react';
-import { loginRequest } from '../auth/msalConfig';
-import { AZURE_CLIENT_ID } from '../config';
+import { loginRequest } from '../../auth/msalConfig';
+import { AZURE_CLIENT_ID } from '../../config';
+import './LoginPage.css';
 
 function LoginPage() {
   const { instance } = useMsal();
