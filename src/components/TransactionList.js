@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting, getRecurringTransactions } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
 const DEFAULT_CATEGORY_COLORS = {
@@ -74,6 +74,12 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   const tripMap = useMemo(() => {
     const map = {};
     getTrips(db).forEach(t => { map[t.id] = t.name; });
+    return map;
+  }, [db]);
+
+  const recurringFreqMap = useMemo(() => {
+    const map = {};
+    getRecurringTransactions(db).forEach(r => { map[r.id] = r.frequency; });
     return map;
   }, [db]);
 
@@ -411,7 +417,9 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                             {tx.budget_category}
                           </span>
                           {tx.is_recurring ? (
-                            <span className="tx-recurring-badge">🔄 정기</span>
+                            <span className="tx-recurring-badge">
+                              🔄{recurringFreqMap[tx.recurring_source_id] === 'annual' ? '연' : '월'}
+                            </span>
                           ) : null}
                           {tx.trip_id && tripMap[tx.trip_id] && (
                             <span className="tx-trip-badge">{tripMap[tx.trip_id]}</span>
