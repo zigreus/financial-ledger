@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
 const DEFAULT_CATEGORY_COLORS = {
@@ -29,13 +29,15 @@ function categoryColor(cat) {
   return `hsl(${hue}, 55%, 52%)`;
 }
 
-function TransactionList({ db, onAdd, onEdit, onDelete }) {
+function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState(new Set());
   const [selectedDetail, setSelectedDetail] = useState(null);
+  const [editingGoalMonth, setEditingGoalMonth] = useState(null);
+  const [editingGoalValue, setEditingGoalValue] = useState('');
 
   const currentMonthRef = useRef(null);
   const filterBarRef = useRef(null);
@@ -48,6 +50,16 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
   }, []);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
+  const monthlyGoalsMap = useMemo(() => getAllMonthlyGoals(db), [db]);
+  const defaultGoal = useMemo(() => {
+    const v = getSetting(db, 'default_monthly_goal', '');
+    return v !== '' ? parseInt(v, 10) : null;
+  }, [db]);
+
+  const getGoalForMonth = (yearMonth) => {
+    if (monthlyGoalsMap[yearMonth] !== undefined) return monthlyGoalsMap[yearMonth];
+    return defaultGoal;
+  };
 
   // 결제수단 필터: 비숨김 먼저, 그 다음 숨김 (sort_order 기준)
   const paymentMethods = useMemo(() => {
@@ -274,7 +286,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
             >
               <div
                 className="month-header"
-                onClick={() => toggleMonth(month)}
+                onClick={() => { if (editingGoalMonth !== month) toggleMonth(month); }}
                 style={{ top: `${filterBarHeight}px` }}
               >
                 <span className="month-toggle">
@@ -289,10 +301,71 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                   const spend = txs.reduce((s, t) => s + t.amount, 0);
                   const discount = txs.reduce((s, t) => s + (t.discount_amount || 0), 0);
                   const net = spend - discount;
+                  const goal = getGoalForMonth(month);
+                  const diff = goal !== null ? goal - net : null;
+                  const isSaved = diff !== null && diff >= 0;
                   return (
-                    <div className="month-stats">
+                    <div className="month-stats" onClick={e => e.stopPropagation()}>
                       <span className="month-stats-count">{txs.length}건</span>
                       <span className="month-stats-net">{formatAmount(net)}원</span>
+                      {goal !== null && (
+                        <span
+                          className={`month-goal-diff ${isSaved ? 'month-goal-saved' : 'month-goal-over'}`}
+                          title={`목표: ${formatAmount(goal)}원`}
+                        >
+                          {isSaved ? `+${formatAmount(diff)}↓` : `-${formatAmount(Math.abs(diff))}↑`}
+                        </span>
+                      )}
+                      {editingGoalMonth === month ? (
+                        <div className="month-goal-edit" onClick={e => e.stopPropagation()}>
+                          <input
+                            className="month-goal-input"
+                            type="number"
+                            value={editingGoalValue}
+                            onChange={e => setEditingGoalValue(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const amt = parseInt(editingGoalValue, 10);
+                                if (!isNaN(amt) && amt > 0) {
+                                  setMonthlyGoal(db, month, amt);
+                                  onChanged && onChanged();
+                                }
+                                setEditingGoalMonth(null);
+                              }
+                              if (e.key === 'Escape') setEditingGoalMonth(null);
+                            }}
+                            autoFocus
+                            placeholder="목표금액"
+                          />
+                          <button
+                            className="month-goal-btn month-goal-btn-ok"
+                            onClick={() => {
+                              const amt = parseInt(editingGoalValue, 10);
+                              if (!isNaN(amt) && amt > 0) {
+                                setMonthlyGoal(db, month, amt);
+                                onChanged && onChanged();
+                              }
+                              setEditingGoalMonth(null);
+                            }}
+                          >✓</button>
+                          <button
+                            className="month-goal-btn"
+                            onClick={() => setEditingGoalMonth(null)}
+                          >✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          className="month-goal-set-btn"
+                          title={goal !== null ? `목표: ${formatAmount(goal)}원 (수정)` : '이 달 목표 설정'}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setEditingGoalMonth(month);
+                            setEditingGoalValue(goal !== null ? String(goal) : '');
+                          }}
+                        >
+                          {goal !== null ? `목표 ${formatAmount(goal)}` : '목표 설정'}
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
@@ -337,6 +410,9 @@ function TransactionList({ db, onAdd, onEdit, onDelete }) {
                           >
                             {tx.budget_category}
                           </span>
+                          {tx.is_recurring ? (
+                            <span className="tx-recurring-badge">🔄 정기</span>
+                          ) : null}
                           {tx.trip_id && tripMap[tx.trip_id] && (
                             <span className="tx-trip-badge">{tripMap[tx.trip_id]}</span>
                           )}

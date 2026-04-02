@@ -64,6 +64,40 @@ CREATE TABLE IF NOT EXISTS payment_method_discount_rules (
   min_amount INTEGER DEFAULT 0,
   note TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS monthly_goals (
+  year_month TEXT PRIMARY KEY,
+  goal_amount INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recurring_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  payment_method TEXT NOT NULL,
+  budget_category TEXT NOT NULL,
+  sub_category TEXT DEFAULT '',
+  detail TEXT DEFAULT '',
+  amount INTEGER NOT NULL,
+  frequency TEXT NOT NULL DEFAULT 'monthly',
+  day_of_month INTEGER NOT NULL DEFAULT 1,
+  month_of_year INTEGER,
+  is_active INTEGER DEFAULT 1,
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS recurring_registration_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recurring_id INTEGER NOT NULL,
+  registered_for_month TEXT NOT NULL,
+  transaction_id INTEGER,
+  registered_at TEXT DEFAULT (datetime('now', 'localtime')),
+  UNIQUE(recurring_id, registered_for_month)
+);
 `;
 
 
@@ -81,7 +115,14 @@ export function createDatabase(SQL, existingData = null) {
   db.run(SCHEMA);
 
   // 완료된 마이그레이션 코드는 dbMigrations.legacy.js 에 보존됨
-  const didMigrate = false;
+  let didMigrate = false;
+
+  // transactions 테이블에 정기지출 컬럼 추가 (기존 DB 호환)
+  try { db.run('ALTER TABLE transactions ADD COLUMN is_recurring INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
+  try { db.run('ALTER TABLE transactions ADD COLUMN recurring_source_id INTEGER DEFAULT NULL'); didMigrate = true; } catch (e) {}
+  // recurring_transactions 테이블에 할인 컬럼 추가 (기존 DB 호환)
+  try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_amount INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
+  try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_note TEXT DEFAULT \'\''); didMigrate = true; } catch (e) {}
 
   return { db, didMigrate };
 }
@@ -905,4 +946,209 @@ export function evaluateDiscountRule(rules, budgetCategory, subCategory, amount,
   if (bestRule.rule_type === 'fixed') return Math.round(bestRule.value);
   if (bestRule.rule_type === 'remainder') return amount % bestRule.value;
   return 0;
+}
+
+// ── 앱 설정 ──────────────────────────────────────────────────────
+
+export function getSetting(db, key, defaultVal = '') {
+  const res = db.exec('SELECT value FROM settings WHERE key = ?', [key]);
+  if (!res.length || !res[0].values.length) return defaultVal;
+  return res[0].values[0][0] ?? defaultVal;
+}
+
+export function setSetting(db, key, value) {
+  db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, String(value)]);
+}
+
+// ── 월 목표금액 ───────────────────────────────────────────────────
+
+export function getMonthlyGoal(db, yearMonth) {
+  const res = db.exec('SELECT goal_amount FROM monthly_goals WHERE year_month = ?', [yearMonth]);
+  if (!res.length || !res[0].values.length) return null;
+  return res[0].values[0][0];
+}
+
+export function getEffectiveMonthlyGoal(db, yearMonth) {
+  const override = getMonthlyGoal(db, yearMonth);
+  if (override !== null) return override;
+  const def = getSetting(db, 'default_monthly_goal', '');
+  return def !== '' ? parseInt(def, 10) : null;
+}
+
+export function setMonthlyGoal(db, yearMonth, amount) {
+  db.run('INSERT OR REPLACE INTO monthly_goals (year_month, goal_amount) VALUES (?, ?)', [yearMonth, amount]);
+}
+
+/**
+ * 상시 목표금액 변경 시 호출.
+ * 기존 거래내역이 있는 월 중 개별 설정이 없는 월을 현재(구) 기본값으로 스냅샷한 뒤 새 값을 저장.
+ * 이후 새로 생기는 월만 신규 기본값이 적용된다.
+ */
+export function changeDefaultMonthlyGoal(db, newAmount) {
+  const oldDefault = getSetting(db, 'default_monthly_goal', '');
+  if (oldDefault !== '') {
+    const oldVal = parseInt(oldDefault, 10);
+    // 거래내역이 있는 모든 월 조회
+    const monthsRes = db.exec(
+      "SELECT DISTINCT strftime('%Y-%m', date) as month FROM transactions ORDER BY month"
+    );
+    const months = monthsRes.length ? monthsRes[0].values.map(r => r[0]) : [];
+    // 개별 설정이 없는 월만 구 기본값으로 고정
+    months.forEach(ym => {
+      db.run(
+        'INSERT OR IGNORE INTO monthly_goals (year_month, goal_amount) VALUES (?, ?)',
+        [ym, oldVal]
+      );
+    });
+  }
+  setSetting(db, 'default_monthly_goal', String(newAmount));
+}
+
+export function deleteMonthlyGoal(db, yearMonth) {
+  db.run('DELETE FROM monthly_goals WHERE year_month = ?', [yearMonth]);
+}
+
+export function getAllMonthlyGoals(db) {
+  const res = db.exec('SELECT year_month, goal_amount FROM monthly_goals ORDER BY year_month DESC');
+  if (!res.length) return {};
+  const map = {};
+  res[0].values.forEach(([ym, amt]) => { map[ym] = amt; });
+  return map;
+}
+
+export function getMonthlyTotalsWithGoals(db, limit = 24) {
+  const totals = getMonthlyTotals(db, limit);
+  const goalsMap = getAllMonthlyGoals(db);
+  const defaultGoal = getSetting(db, 'default_monthly_goal', '');
+  const defGoalNum = defaultGoal !== '' ? parseInt(defaultGoal, 10) : null;
+  return totals.map(r => ({
+    ...r,
+    goal: goalsMap[r.month] !== undefined ? goalsMap[r.month] : defGoalNum,
+  }));
+}
+
+// ── 정기지출 템플릿 ───────────────────────────────────────────────
+
+export function getRecurringTransactions(db) {
+  const res = db.exec(
+    `SELECT id, payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, is_active, note
+     FROM recurring_transactions
+     ORDER BY
+       CASE frequency WHEN 'monthly' THEN 0 ELSE 1 END,
+       COALESCE(month_of_year, 0),
+       CASE day_of_month WHEN 0 THEN 32 ELSE day_of_month END`
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function addRecurringTransaction(db, data) {
+  db.run(
+    `INSERT INTO recurring_transactions (payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, is_active, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    [
+      data.payment_method, data.budget_category, data.sub_category || '',
+      data.detail || '', data.amount,
+      data.discount_amount || 0, data.discount_note || '',
+      data.frequency || 'monthly', data.day_of_month ?? 1,
+      data.month_of_year || null, data.note || '',
+    ]
+  );
+}
+
+export function updateRecurringTransaction(db, id, data) {
+  db.run(
+    `UPDATE recurring_transactions SET payment_method=?, budget_category=?, sub_category=?, detail=?, amount=?, discount_amount=?, discount_note=?, frequency=?, day_of_month=?, month_of_year=?, note=? WHERE id=?`,
+    [
+      data.payment_method, data.budget_category, data.sub_category || '',
+      data.detail || '', data.amount,
+      data.discount_amount || 0, data.discount_note || '',
+      data.frequency || 'monthly', data.day_of_month ?? 1,
+      data.month_of_year || null, data.note || '', id,
+    ]
+  );
+}
+
+export function deleteRecurringTransaction(db, id) {
+  db.run('DELETE FROM recurring_transactions WHERE id = ?', [id]);
+  db.run('DELETE FROM recurring_registration_log WHERE recurring_id = ?', [id]);
+}
+
+export function setRecurringActive(db, id, isActive) {
+  db.run('UPDATE recurring_transactions SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
+}
+
+export function getRegistrationLog(db) {
+  const res = db.exec('SELECT recurring_id, registered_for_month FROM recurring_registration_log ORDER BY registered_for_month DESC');
+  if (!res.length) return {};
+  const map = {};
+  res[0].values.forEach(([rid, ym]) => {
+    if (!map[rid]) map[rid] = new Set();
+    map[rid].add(ym);
+  });
+  return map;
+}
+
+// ── 자동등록 ─────────────────────────────────────────────────────
+
+function resolveDay(year, month1based, dayOfMonth) {
+  // month1based: 1=1월, 12=12월
+  const lastDay = new Date(year, month1based, 0).getDate(); // month1based month의 마지막 날
+  if (dayOfMonth === 0) return lastDay;
+  return Math.min(dayOfMonth, lastDay);
+}
+
+export function runAutoRegister(db) {
+  const now = new Date();
+  const targetDate = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+  const targetYear = targetDate.getFullYear();
+  const targetMonth = targetDate.getMonth() + 1; // 1-indexed
+  const targetYearMonth = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+
+  const recurring = getRecurringTransactions(db).filter(r => r.is_active);
+  let count = 0;
+
+  recurring.forEach(r => {
+    if (r.frequency === 'annual' && r.month_of_year !== targetMonth) return;
+
+    const alreadyDone = db.exec(
+      'SELECT 1 FROM recurring_registration_log WHERE recurring_id = ? AND registered_for_month = ?',
+      [r.id, targetYearMonth]
+    );
+    if (alreadyDone.length && alreadyDone[0].values.length) return;
+
+    const day = resolveDay(targetYear, targetMonth, r.day_of_month);
+    const txDate = `${targetYearMonth}-${String(day).padStart(2, '0')}`;
+
+    // 자동 할인 계산: template에 할인이 없으면 결제수단 규칙 적용
+    let discountAmt = r.discount_amount || 0;
+    let discountNote = r.discount_note || '';
+    if (discountAmt === 0) {
+      const rules = getDiscountRules(db, r.payment_method);
+      const autoDiscount = evaluateDiscountRule(rules, r.budget_category, r.sub_category || '', r.amount, r.detail || '');
+      if (autoDiscount > 0) discountAmt = autoDiscount;
+    }
+
+    db.run(
+      `INSERT INTO transactions (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, is_recurring, recurring_source_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [r.payment_method, txDate, r.budget_category, r.sub_category || '', r.detail || '', r.amount, discountAmt, discountNote, r.id]
+    );
+
+    const txIdRes = db.exec('SELECT last_insert_rowid()');
+    const txId = txIdRes[0]?.values[0][0] || null;
+
+    db.run(
+      'INSERT OR IGNORE INTO recurring_registration_log (recurring_id, registered_for_month, transaction_id) VALUES (?, ?, ?)',
+      [r.id, targetYearMonth, txId]
+    );
+    count++;
+  });
+
+  return { count, targetYearMonth };
 }

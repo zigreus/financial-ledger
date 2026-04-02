@@ -10,7 +10,7 @@ import SummaryView from './components/SummaryView';
 import SettingsView from './components/SettingsView';
 import ImportModal from './components/ImportModal';
 
-import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction } from './services/dbManager';
+import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister } from './services/dbManager';
 import { readDbFromOneDrive, writeDbToOneDrive } from './services/oneDriveService';
 
 function App() {
@@ -106,22 +106,31 @@ function App() {
       const SQL = await initSQL();
       const data = await readDbFromOneDrive(instance, accounts);
       const { db: newDb, didMigrate } = createDatabase(SQL, data);
-      setDb(newDb);
-      if (didMigrate) {
+
+      // 자동등록 실행 (매 로그인 시)
+      const { count, targetYearMonth } = runAutoRegister(newDb);
+
+      const needsSave = didMigrate || count > 0;
+      if (needsSave) {
         try {
           const bytes = exportDatabase(newDb);
           await writeDbToOneDrive(instance, accounts, bytes);
         } catch (e) {
-          setError(`마이그레이션 저장 실패: ${e.message}`);
+          setError(`저장 실패: ${e.message}`);
+        }
+        if (count > 0) {
+          showToast(`✓ ${targetYearMonth} 정기지출 ${count}건 자동 등록됨`);
         }
       }
+
+      setDb(newDb);
       setDirty(false);
     } catch (e) {
       setError(`로드 실패: ${e.message}`);
     } finally {
       setLoading(false);
     }
-  }, [loading, instance, accounts]);
+  }, [loading, instance, accounts, showToast]);
 
   const saveDb = useCallback(async () => {
     if (!db || saving) return;
@@ -266,6 +275,9 @@ function App() {
             onAdd={openAdd}
             onEdit={openEdit}
             onDelete={handleDelete}
+            onChanged={async () => {
+              await saveAndReload(db);
+            }}
           />
         )}
         {activeTab === 'summary' && (

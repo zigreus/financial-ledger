@@ -1399,3 +1399,83 @@ body {
 .rule-form-input:focus {
   border-color: var(--primary);
 }
+
+/* ── 월 목표금액 ───────────────────────────────────────────── */
+.month-goal-diff {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.month-goal-saved {
+  color: #16A34A;
+  background: #DCFCE7;
+}
+.month-goal-over {
+  color: #DC2626;
+  background: #FEE2E2;
+}
+.month-goal-set-btn {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--border);
+  border: none;
+  padding: 2px 7px;
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.month-goal-set-btn:hover {
+  background: #CBD5E1;
+  color: var(--text);
+}
+.month-goal-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.month-goal-input {
+  width: 100px;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+.month-goal-btn {
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.month-goal-btn-ok {
+  color: #16A34A;
+  border-color: #16A34A;
+}
+
+/* ── 정기지출 배지 ─────────────────────────────────────────── */
+.tx-recurring-badge {
+  font-size: 11px;
+  color: #7C3AED;
+  background: #EDE9FE;
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+/* ── SummaryView 목표 컬럼 ──────────────────────────────────── */
+.summary-goal-saved {
+  color: #16A34A;
+  font-weight: 700;
+}
+.summary-goal-over {
+  color: #DC2626;
+  font-weight: 700;
+}
