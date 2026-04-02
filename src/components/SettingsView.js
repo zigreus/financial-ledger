@@ -73,10 +73,7 @@ const IconClose = () => (
   </svg>
 );
 
-function SettingsView({ db, onChanged }) {
-  const [activeSection, setActiveSection] = useState('payment');
-  const [drilldownCategory, setDrilldownCategory] = useState(null); // {id, name} | null
-  const [drilldownTrip, setDrilldownTrip] = useState(null);          // {id, name} | null
+function SettingsView({ db, onChanged, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
   const [addingName, setAddingName] = useState('');
   const [error, setError] = useState('');
 const [dragId, setDragId] = useState(null);
@@ -91,7 +88,6 @@ const [dragId, setDragId] = useState(null);
   const [editingCountryCurrency, setEditingCountryCurrency] = useState('');
   const [countryDragId, setCountryDragId] = useState(null);
   const [countryDropIdx, setCountryDropIdx] = useState(null);
-  const [drilldownPayment, setDrilldownPayment] = useState(null); // {id, name} | null
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingSubCategoryId, setEditingSubCategoryId] = useState(null);
@@ -112,6 +108,24 @@ const [dragId, setDragId] = useState(null);
   const discountRules = useMemo(() => drilldownPayment ? getDiscountRules(db, drilldownPayment.name) : [], [db, drilldownPayment]);
   const ruleCategories = useMemo(() => getBudgetCategories(db), [db]);
   const ruleSubCategories = useMemo(() => addingRuleCategory ? getSubCategories(db, addingRuleCategory) : [], [db, addingRuleCategory]);
+
+  // 브라우저 뒤로가기로 드릴다운이 닫힐 때 내부 form state 초기화
+  React.useEffect(() => {
+    if (!drilldownCategory) {
+      setAddingName('');
+      setEditingCategoryId(null);
+      setEditingCategoryName('');
+      setEditingSubCategoryId(null);
+      setEditingSubCategoryName('');
+    }
+  }, [drilldownCategory]);
+
+  React.useEffect(() => {
+    if (!drilldownTrip) {
+      setAddingCountry('');
+      setAddingCurrency('');
+    }
+  }, [drilldownTrip]);
 
   const handleToggleHidden = (table, id, currentHidden) => {
     try {
@@ -217,10 +231,7 @@ const [dragId, setDragId] = useState(null);
   }), [trips]);
 
   const switchSection = (sec) => {
-    setActiveSection(sec);
-    setDrilldownCategory(null);
-    setDrilldownTrip(null);
-    setDrilldownPayment(null);
+    onSectionChange(sec); // App.js에서 드릴다운 초기화 + history push 처리
     setAddingName('');
     setAddingTripName('');
     setAddingCountry('');
@@ -234,7 +245,6 @@ const [dragId, setDragId] = useState(null);
     setDragId(null);
     setDropIdx(null);
     setError('');
-
   };
 
   const handleAddTrip = () => {
@@ -357,8 +367,8 @@ const [dragId, setDragId] = useState(null);
     const isPaymentList = activeSection === 'payment' && !drilldownPayment;
     const isClickable = isCategoryList || isPaymentList;
     const handleDrilldown = (item) => {
-      if (isCategoryList) { setDrilldownCategory({ id: item.id, name: item.name }); setAddingName(''); }
-      if (isPaymentList) { setDrilldownPayment({ id: item.id, name: item.name }); setAddingRuleType('percent'); setAddingRuleCategory(''); setAddingRuleSub(''); setAddingRuleDetailKeyword(''); setAddingRuleValue(''); setAddingRuleMinAmount(''); setAddingRuleNote(''); }
+      if (isCategoryList) { onDrilldownCategoryChange({ id: item.id, name: item.name }); setAddingName(''); }
+      if (isPaymentList) { onDrilldownPaymentChange({ id: item.id, name: item.name }); setAddingRuleType('percent'); setAddingRuleCategory(''); setAddingRuleSub(''); setAddingRuleDetailKeyword(''); setAddingRuleValue(''); setAddingRuleMinAmount(''); setAddingRuleNote(''); }
       setError('');
     };
     return (
@@ -513,7 +523,7 @@ const [dragId, setDragId] = useState(null);
                   const rect = e.currentTarget.getBoundingClientRect();
                   setDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
                 }}
-                onClick={!isEditing ? () => { setDrilldownTrip({ id: trip.id, name: trip.name }); setAddingCountry(''); setAddingCurrency(''); setError(''); } : undefined}
+                onClick={!isEditing ? () => { onDrilldownTripChange({ id: trip.id, name: trip.name }); setAddingCountry(''); setAddingCurrency(''); setError(''); } : undefined}
               >
                 <div className="drag-handle" title="드래그해서 순서 변경" onClick={(e) => e.stopPropagation()}>
                   <IconGrip />
@@ -553,7 +563,7 @@ const [dragId, setDragId] = useState(null);
                     <button className="btn-icon btn-icon--danger" onClick={() => handleDeleteTrip(trip.id, trip.name)} title="삭제">
                       <IconTrash />
                     </button>
-                    <button className="btn-drilldown" onClick={() => { setDrilldownTrip({ id: trip.id, name: trip.name }); setAddingCountry(''); setAddingCurrency(''); setError(''); }} title="나라/화폐 관리">
+                    <button className="btn-drilldown" onClick={() => { onDrilldownTripChange({ id: trip.id, name: trip.name }); setAddingCountry(''); setAddingCurrency(''); setError(''); }} title="나라/화폐 관리">
                       <IconChevronRight />
                     </button>
                   </div>
@@ -588,9 +598,7 @@ const [dragId, setDragId] = useState(null);
           <button
             className="drilldown-back-btn"
             onClick={() => {
-              if (activeSection === 'category') { setDrilldownCategory(null); setAddingName(''); setEditingCategoryId(null); setEditingCategoryName(''); setEditingSubCategoryId(null); setEditingSubCategoryName(''); }
-              if (activeSection === 'travel') { setDrilldownTrip(null); setAddingCountry(''); setAddingCurrency(''); }
-              if (activeSection === 'payment') { setDrilldownPayment(null); }
+              window.history.back();
               setError('');
             }}
           >

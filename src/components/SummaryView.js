@@ -66,9 +66,7 @@ function aggregateForeign(rows) {
   return all;
 }
 
-function SummaryView({ db }) {
-  const [tab, setTab] = useState('monthly'); // 'monthly' | 'category' | 'payment'
-  const [drilldownCategory, setDrilldownCategory] = useState(null); // null = 메인, string = 세부 드릴다운
+function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChange }) {
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
   const [filterType, setFilterType] = useState('month'); // 'month' | 'year' | 'range' | 'trip'
@@ -144,9 +142,9 @@ function SummaryView({ db }) {
     <div className="summary-page">
       {/* 메인 탭 */}
       <div className="summary-tabs">
-        <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => setTab('monthly')}>월별 추이</button>
-        <button className={tab === 'category' ? 'tab active' : 'tab'} onClick={() => setTab('category')}>카테고리</button>
-        <button className={tab === 'payment' ? 'tab active' : 'tab'} onClick={() => setTab('payment')}>결제수단</button>
+        <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => onTabChange('monthly')}>월별 추이</button>
+        <button className={tab === 'category' ? 'tab active' : 'tab'} onClick={() => onTabChange('category')}>카테고리</button>
+        <button className={tab === 'payment' ? 'tab active' : 'tab'} onClick={() => onTabChange('payment')}>결제수단</button>
       </div>
 
       {/* 필터 (카테고리/결제수단 탭에서만) */}
@@ -155,13 +153,13 @@ function SummaryView({ db }) {
           <div className="filter-type-buttons">
             <button
               className={`filter-type-btn ${filterType === 'month' ? 'active' : ''}`}
-              onClick={() => { setFilterType('month'); setSelectedMonth(currentMonth); setDrilldownCategory(null); }}
+              onClick={() => { setFilterType('month'); setSelectedMonth(currentMonth); if (drilldownCategory) onDrilldownChange(null); }}
             >
               월별
             </button>
             <button
               className={`filter-type-btn ${filterType === 'year' ? 'active' : ''}`}
-              onClick={() => { setFilterType('year'); setSelectedYear(currentYear); setDrilldownCategory(null); }}
+              onClick={() => { setFilterType('year'); setSelectedYear(currentYear); if (drilldownCategory) onDrilldownChange(null); }}
             >
               연도별
             </button>
@@ -174,14 +172,14 @@ function SummaryView({ db }) {
                 setFilterType('range');
                 setDateFrom(fmt(firstDay));
                 setDateTo(fmt(today));
-                setDrilldownCategory(null);
+                if (drilldownCategory) onDrilldownChange(null);
               }}
             >
               기간별
             </button>
             <button
               className={`filter-type-btn ${filterType === 'trip' ? 'active' : ''}`}
-              onClick={() => { setFilterType('trip'); setSelectedTripId(''); setDrilldownCategory(null); }}
+              onClick={() => { setFilterType('trip'); setSelectedTripId(''); if (drilldownCategory) onDrilldownChange(null); }}
             >
               여행별
             </button>
@@ -402,7 +400,7 @@ function SummaryView({ db }) {
           ) : drilldownCategory ? (
             /* 세부카테고리 드릴다운 뷰 */
             <>
-              <button className="drilldown-back-btn" onClick={() => setDrilldownCategory(null)}>
+              <button className="drilldown-back-btn" onClick={() => window.history.back()}>
                 ← {drilldownCategory}
               </button>
               {subCategorySummary.length === 0 ? (
@@ -483,7 +481,7 @@ function SummaryView({ db }) {
                       <tr
                         key={r.budget_category}
                         className="clickable-row"
-                        onClick={() => setDrilldownCategory(r.budget_category)}
+                        onClick={() => onDrilldownChange(r.budget_category)}
                       >
                         <td>
                           <span className="cat-dot" style={{ backgroundColor: CATEGORY_COLORS[r.budget_category] || '#AAB7B8' }} />

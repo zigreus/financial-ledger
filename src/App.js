@@ -29,11 +29,59 @@ function App() {
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
 
+  // SummaryView 내비게이션 state
+  const [summaryTab, setSummaryTab] = useState('monthly');
+  const [summaryDrilldown, setSummaryDrilldown] = useState(null);
+  // SettingsView 내비게이션 state
+  const [settingsSection, setSettingsSection] = useState('payment');
+  const [settingsDrilldownCategory, setSettingsDrilldownCategory] = useState(null);
+  const [settingsDrilldownTrip, setSettingsDrilldownTrip] = useState(null);
+  const [settingsDrilldownPayment, setSettingsDrilldownPayment] = useState(null);
+
+  const navRef = React.useRef({
+    activeTab: 'list', showForm: false, showImport: false, editingTx: null,
+    summaryTab: 'monthly', summaryDrilldown: null,
+    settingsSection: 'payment',
+    settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+  });
+  const historyInitialized = React.useRef(false);
+
   const showToast = useCallback((msg) => {
     setToast(msg);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 2500);
   }, []);
+
+  const applyNavState = useCallback((s) => {
+    if ('activeTab' in s) setActiveTab(s.activeTab);
+    if ('showForm' in s) setShowForm(s.showForm);
+    if ('showImport' in s) setShowImport(s.showImport);
+    if ('editingTx' in s) setEditingTx(s.editingTx);
+    if ('summaryTab' in s) setSummaryTab(s.summaryTab);
+    if ('summaryDrilldown' in s) setSummaryDrilldown(s.summaryDrilldown);
+    if ('settingsSection' in s) setSettingsSection(s.settingsSection);
+    if ('settingsDrilldownCategory' in s) setSettingsDrilldownCategory(s.settingsDrilldownCategory);
+    if ('settingsDrilldownTrip' in s) setSettingsDrilldownTrip(s.settingsDrilldownTrip);
+    if ('settingsDrilldownPayment' in s) setSettingsDrilldownPayment(s.settingsDrilldownPayment);
+  }, []);
+
+  const navigate = useCallback((updates) => {
+    const newState = { ...navRef.current, ...updates };
+    navRef.current = newState;
+    window.history.pushState(newState, '');
+    applyNavState(updates);
+  }, [applyNavState]);
+
+  useEffect(() => {
+    const onPopState = (e) => {
+      if (e.state) {
+        navRef.current = e.state;
+        applyNavState(e.state);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [applyNavState]);
 
   // 로그인 후 DB 자동 로드
   useEffect(() => {
@@ -42,6 +90,13 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, accounts]);
+
+  // DB 최초 로드 완료 시 브라우저 히스토리 초기화
+  useEffect(() => {
+    if (!db || historyInitialized.current) return;
+    historyInitialized.current = true;
+    window.history.replaceState(navRef.current, '');
+  }, [db]);
 
   const loadDb = useCallback(async () => {
     if (loading) return;
@@ -115,6 +170,7 @@ function App() {
     addTransaction(db, txData);
     setShowForm(false);
     setEditingTx(null);
+    window.history.back();
     const amt = Number(txData.amount).toLocaleString();
     showToast(`저장 중…`);
     await saveAndReload(db);
@@ -125,6 +181,7 @@ function App() {
     updateTransaction(db, editingTx.id, txData);
     setShowForm(false);
     setEditingTx(null);
+    window.history.back();
     const amt = Number(txData.amount).toLocaleString();
     showToast(`저장 중…`);
     await saveAndReload(db);
@@ -139,22 +196,22 @@ function App() {
   }, [db, showToast, saveAndReload]);
 
   const openAdd = () => {
-    setEditingTx(null);
-    setShowForm(true);
+    navigate({ showForm: true, editingTx: null });
   };
 
   const openEdit = (tx) => {
-    setEditingTx(tx);
-    setShowForm(true);
+    navigate({ showForm: true, editingTx: tx });
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditingTx(null);
+    window.history.back();
   };
 
   const handleImport = useCallback(async () => {
     setShowImport(false);
+    window.history.back();
     showToast('저장 중…');
     await saveAndReload(db);
     showToast('✓ 가져오기 완료 및 저장됨');
@@ -212,7 +269,13 @@ function App() {
           />
         )}
         {activeTab === 'summary' && (
-          <SummaryView db={db} />
+          <SummaryView
+            db={db}
+            tab={summaryTab}
+            drilldownCategory={summaryDrilldown}
+            onTabChange={(t) => navigate({ summaryTab: t, summaryDrilldown: null })}
+            onDrilldownChange={(d) => navigate({ summaryDrilldown: d })}
+          />
         )}
         {activeTab === 'settings' && (
           <SettingsView
@@ -222,6 +285,19 @@ function App() {
               await saveAndReload(db);
               showToast('✓ 설정이 저장됨');
             }}
+            activeSection={settingsSection}
+            drilldownCategory={settingsDrilldownCategory}
+            drilldownTrip={settingsDrilldownTrip}
+            drilldownPayment={settingsDrilldownPayment}
+            onSectionChange={(sec) => navigate({
+              settingsSection: sec,
+              settingsDrilldownCategory: null,
+              settingsDrilldownTrip: null,
+              settingsDrilldownPayment: null,
+            })}
+            onDrilldownCategoryChange={(v) => navigate({ settingsDrilldownCategory: v })}
+            onDrilldownTripChange={(v) => navigate({ settingsDrilldownTrip: v })}
+            onDrilldownPaymentChange={(v) => navigate({ settingsDrilldownPayment: v })}
           />
         )}
       </main>
@@ -230,14 +306,14 @@ function App() {
       <nav className="bottom-nav">
         <button
           className={activeTab === 'list' ? 'nav-item active' : 'nav-item'}
-          onClick={() => setActiveTab('list')}
+          onClick={() => navigate({ activeTab: 'list' })}
         >
           <span className="nav-icon">📋</span>
           <span className="nav-label">거래내역</span>
         </button>
         <button
           className={activeTab === 'summary' ? 'nav-item active' : 'nav-item'}
-          onClick={() => { setActiveTab('summary'); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+          onClick={() => { navigate({ activeTab: 'summary' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         >
           <span className="nav-icon">📊</span>
           <span className="nav-label">요약</span>
@@ -245,13 +321,13 @@ function App() {
         <button className="nav-item nav-add" onClick={openAdd}>
           <span className="nav-icon-add">+</span>
         </button>
-        <button className="nav-item" onClick={() => setShowImport(true)}>
+        <button className="nav-item" onClick={() => navigate({ showImport: true })}>
           <span className="nav-icon">📥</span>
           <span className="nav-label">가져오기</span>
         </button>
         <button
           className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}
-          onClick={() => { setActiveTab('settings'); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+          onClick={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         >
           <span className="nav-icon">⚙️</span>
           <span className="nav-label">설정</span>
@@ -273,7 +349,7 @@ function App() {
         <ImportModal
           db={db}
           onImport={handleImport}
-          onClose={() => setShowImport(false)}
+          onClose={() => { setShowImport(false); window.history.back(); }}
         />
       )}
     </div>
