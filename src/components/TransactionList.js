@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting, getRecurringTransactions } from '../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../services/dbManager';
 import { formatAmount } from '../services/formulaEvaluator';
 
 const DEFAULT_CATEGORY_COLORS = {
@@ -77,11 +77,6 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     return map;
   }, [db]);
 
-  const recurringFreqMap = useMemo(() => {
-    const map = {};
-    getRecurringTransactions(db).forEach(r => { map[r.id] = r.frequency; });
-    return map;
-  }, [db]);
 
   // 유효한 메인카테고리 Set
   const validBudgetCategoryNames = useMemo(
@@ -418,7 +413,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                           </span>
                           {tx.is_recurring ? (
                             <span className="tx-recurring-badge">
-                              🔄{recurringFreqMap[tx.recurring_source_id] === 'annual' ? '연' : '월'}
+                              🔄{tx.recurring_frequency === 'annual' ? '연' : '월'}
                             </span>
                           ) : null}
                           {tx.trip_id && tripMap[tx.trip_id] && (

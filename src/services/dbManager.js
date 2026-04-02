@@ -123,6 +123,8 @@ export function createDatabase(SQL, existingData = null) {
   // recurring_transactions 테이블에 할인 컬럼 추가 (기존 DB 호환)
   try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_amount INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
   try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_note TEXT DEFAULT \'\''); didMigrate = true; } catch (e) {}
+  // transactions 테이블에 정기지출 주기 컬럼 추가 (기존 DB 호환)
+  try { db.run('ALTER TABLE transactions ADD COLUMN recurring_frequency TEXT DEFAULT NULL'); didMigrate = true; } catch (e) {}
 
   return { db, didMigrate };
 }
@@ -1135,9 +1137,9 @@ export function runAutoRegister(db) {
     }
 
     db.run(
-      `INSERT INTO transactions (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, is_recurring, recurring_source_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [r.payment_method, txDate, r.budget_category, r.sub_category || '', r.detail || '', r.amount, discountAmt, discountNote, r.id]
+      `INSERT INTO transactions (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, is_recurring, recurring_source_id, recurring_frequency)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [r.payment_method, txDate, r.budget_category, r.sub_category || '', r.detail || '', r.amount, discountAmt, discountNote, r.id, r.frequency]
     );
 
     const txIdRes = db.exec('SELECT last_insert_rowid()');
