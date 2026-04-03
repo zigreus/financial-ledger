@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './TransactionList.css';
@@ -56,6 +57,11 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     const v = getSetting(db, 'default_monthly_goal', '');
     return v !== '' ? parseInt(v, 10) : null;
   }, [db]);
+  const isMobile = useIsMobile();
+  const showGoal = useMemo(
+    () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
+    [db, isMobile]
+  );
 
   const getGoalForMonth = (yearMonth) => {
     if (monthlyGoalsMap[yearMonth] !== undefined) return monthlyGoalsMap[yearMonth];
@@ -310,15 +316,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                     <div className="month-stats" onClick={e => e.stopPropagation()}>
                       <span className="month-stats-count">{txs.length}건</span>
                       <span className="month-stats-net">{formatAmount(net)}원</span>
-                      {goal !== null && (
-                        <span
-                          className={`month-goal-diff ${isSaved ? 'month-goal-saved' : 'month-goal-over'}`}
-                          title={`목표: ${formatAmount(goal)}원`}
-                        >
-                          {isSaved ? `+${formatAmount(diff)}↓` : `-${formatAmount(Math.abs(diff))}↑`}
-                        </span>
-                      )}
-                      {editingGoalMonth === month ? (
+                      {showGoal && (editingGoalMonth === month ? (
                         <div className="month-goal-edit" onClick={e => e.stopPropagation()}>
                           <input
                             className="month-goal-input"
@@ -356,18 +354,25 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                           >✕</button>
                         </div>
                       ) : (
-                        <button
-                          className="month-goal-set-btn"
-                          title={goal !== null ? `목표: ${formatAmount(goal)}원 (수정)` : '이 달 목표 설정'}
-                          onClick={e => {
-                            e.stopPropagation();
-                            setEditingGoalMonth(month);
-                            setEditingGoalValue(goal !== null ? String(goal) : '');
-                          }}
-                        >
-                          {goal !== null ? `목표 ${formatAmount(goal)}` : '목표 설정'}
-                        </button>
-                      )}
+                        <div className="month-goal-stack" onClick={e => e.stopPropagation()}>
+                          {diff !== null && (
+                            <span className={`month-goal-diff-text ${isSaved ? 'month-goal-saved' : 'month-goal-over'}`}>
+                              {isSaved ? `+${formatAmount(diff)}` : `-${formatAmount(Math.abs(diff))}`}
+                            </span>
+                          )}
+                          <button
+                            className="month-goal-set-btn"
+                            title={goal !== null ? `목표: ${formatAmount(goal)}원 (수정)` : '이 달 목표 설정'}
+                            onClick={e => {
+                              e.stopPropagation();
+                              setEditingGoalMonth(month);
+                              setEditingGoalValue(goal !== null ? String(goal) : '');
+                            }}
+                          >
+                            {goal !== null ? `목표 ${formatAmount(goal)}` : '목표 설정'}
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   );
                 })()}

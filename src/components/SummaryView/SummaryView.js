@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   getMonthlySummary, getMonthlySubCategorySummary,
   getPaymentMethodSummary, getAvailableMonths,
   getYearlySummary, getYearlyPaymentMethodSummary, getYearlySubCategorySummary,
   getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
   getAvailableYears, getTripSummary, getTripDetailSummary, getTripPaymentMethodSummary,
-  getTrips, getMonthlyTotalsWithGoals,
+  getTrips, getMonthlyTotalsWithGoals, getSetting,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './SummaryView.css';
@@ -87,6 +88,11 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const years = useMemo(() => getAvailableYears(db), [db]);
   const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(db, monthlyLimit), [db, monthlyLimit]);
+  const isMobile = useIsMobile();
+  const showGoal = useMemo(
+    () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
+    [db, isMobile]
+  );
   const trips = useMemo(() => getTrips(db), [db]);
 
   const categorySummary = useMemo(() => {
@@ -274,11 +280,10 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                 <tr>
                   <th>월</th>
                   <th>건수</th>
-                  <th>지출</th>
-                  <th>할인</th>
+                  {showGoal ? <th>지출/할인</th> : <th>지출</th>}
+                  {!showGoal && <th>할인</th>}
                   <th>총액</th>
-                  <th>목표</th>
-                  <th>절약/초과</th>
+                  {showGoal && <th>목표/절약</th>}
                 </tr>
               </thead>
               <tbody>
@@ -291,17 +296,34 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <tr key={r.month} className={isCurrent ? 'current-month-row' : ''}>
                       <td>{r.month}</td>
                       <td>{r.cnt}</td>
-                      <td className="amount-cell">{formatAmount(r.total)}원</td>
-                      <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                      {showGoal ? (
+                        <td className="amount-cell">
+                          {formatAmount(r.total)}원
+                          {r.discount > 0 && (
+                            <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                          )}
+                        </td>
+                      ) : (
+                        <td className="amount-cell">{formatAmount(r.total)}원</td>
+                      )}
+                      {!showGoal && (
+                        <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                      )}
                       <td className="total-cell">{formatAmount(net)}원</td>
-                      <td className="amount-cell">
-                        {r.goal !== null && r.goal !== undefined ? `${formatAmount(r.goal)}원` : '-'}
-                      </td>
-                      <td className={diff !== null ? (isSaved ? 'summary-goal-saved' : 'summary-goal-over') : ''}>
-                        {diff !== null
-                          ? (isSaved ? `+${formatAmount(diff)}` : `-${formatAmount(Math.abs(diff))}`)
-                          : '-'}
-                      </td>
+                      {showGoal && (
+                        <td className="amount-cell">
+                          {r.goal !== null && r.goal !== undefined ? (
+                            <>
+                              {diff !== null && (
+                                <div className={`cell-goal-diff ${isSaved ? 'cell-sub-saved' : 'cell-sub-over'}`}>
+                                  {isSaved ? `+${formatAmount(diff)}원` : `-${formatAmount(Math.abs(diff))}원`}
+                                </div>
+                              )}
+                              <div className="cell-goal-amount">목표 {formatAmount(r.goal)}</div>
+                            </>
+                          ) : '-'}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

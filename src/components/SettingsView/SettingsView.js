@@ -12,7 +12,7 @@ import {
   getBudgetCategories, getSubCategories,
   getSetting, setSetting, changeDefaultMonthlyGoal,
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
-  deleteRecurringTransaction, setRecurringActive, getRegistrationLog,
+  deleteRecurringTransaction, getRegistrationLog,
   evaluateDiscountRule,
 } from '../../services/dbManager';
 import './SettingsView.css';
@@ -108,6 +108,8 @@ const [dragId, setDragId] = useState(null);
   // 예산 섹션
   const [editingDefaultGoal, setEditingDefaultGoal] = useState(false);
   const [defaultGoalInput, setDefaultGoalInput] = useState('');
+  const showGoalPc = useMemo(() => getSetting(db, 'show_goal_display_pc', '1') !== '0', [db]);
+  const showGoalMobile = useMemo(() => getSetting(db, 'show_goal_display_mobile', '1') !== '0', [db]);
 
   // 정기지출 섹션
   const emptyRecurringForm = {
@@ -390,14 +392,6 @@ const [dragId, setDragId] = useState(null);
     if (!window.confirm('정기지출을 삭제하시겠습니까?\n(자동등록된 거래내역은 삭제되지 않습니다)')) return;
     try {
       deleteRecurringTransaction(db, id);
-      onChanged();
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleToggleRecurring = (id, isActive) => {
-    try {
-      setRecurringActive(db, id, !isActive);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
@@ -770,7 +764,38 @@ const [dragId, setDragId] = useState(null);
         {/* ── 예산 탭 ── */}
         {activeSection === 'budget' && (
           <div>
-            <div style={{ marginBottom: '20px' }}>
+            <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>목표금액 표시</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '13px' }}>PC</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>화면 너비 640px 초과</div>
+                  </div>
+                  <button
+                    className={`goal-display-toggle${showGoalPc ? ' goal-display-toggle--on' : ''}`}
+                    onClick={() => { setSetting(db, 'show_goal_display_pc', showGoalPc ? '0' : '1'); onChanged(); }}
+                    title={showGoalPc ? 'PC 목표금액 표시 끄기' : 'PC 목표금액 표시 켜기'}
+                  >
+                    <span className="goal-display-toggle-knob" />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '13px' }}>모바일</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>화면 너비 640px 이하</div>
+                  </div>
+                  <button
+                    className={`goal-display-toggle${showGoalMobile ? ' goal-display-toggle--on' : ''}`}
+                    onClick={() => { setSetting(db, 'show_goal_display_mobile', showGoalMobile ? '0' : '1'); onChanged(); }}
+                    title={showGoalMobile ? '모바일 목표금액 표시 끄기' : '모바일 목표금액 표시 켜기'}
+                  >
+                    <span className="goal-display-toggle-knob" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div style={{ marginBottom: '20px', opacity: (showGoalPc || showGoalMobile) ? 1 : 0.4, pointerEvents: (showGoalPc || showGoalMobile) ? 'auto' : 'none', transition: 'opacity .2s' }}>
               <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>
                 상시 월 목표금액 — 개별 월에서 덮어쓰기 가능합니다.
               </div>
@@ -844,29 +869,22 @@ const [dragId, setDragId] = useState(null);
                               ? `${r.month_of_year}월 ${dayLabel}`
                               : dayLabel;
                             return (
-                              <div key={r.id} className={`settings-item ${!r.is_active ? 'settings-item-hidden' : ''}`}>
+                              <div key={r.id} className="settings-item">
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                    <span style={{ fontWeight: '600', fontSize: '14px' }}>{r.detail || r.sub_category || r.budget_category}</span>
-                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{r.budget_category}{r.sub_category ? ` / ${r.sub_category}` : ''}</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                                    <span style={{ fontWeight: '600', fontSize: '14px', flexShrink: 0, maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.detail || r.sub_category || r.budget_category}</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.budget_category}{r.sub_category ? ` / ${r.sub_category}` : ''}</span>
+                                    {lastRegistered && <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>최근 {lastRegistered}</span>}
                                   </div>
-                                  <div style={{ fontSize: '13px', marginTop: '2px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                    <span style={{ color: 'var(--primary)', fontWeight: '600' }}>{r.amount.toLocaleString()}원</span>
+                                  <div style={{ fontSize: '13px', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                                    <span style={{ color: 'var(--primary)', fontWeight: '600', flexShrink: 0 }}>{r.amount.toLocaleString()}원</span>
                                     {r.discount_amount > 0 && (
-                                      <span style={{ fontSize: '12px', color: '#16A34A' }}>-{r.discount_amount.toLocaleString()}원 할인</span>
+                                      <span style={{ fontSize: '12px', color: '#16A34A', flexShrink: 0 }}>-{r.discount_amount.toLocaleString()}원 할인</span>
                                     )}
-                                    <span style={{ color: 'var(--text-muted)' }}>{r.payment_method} · {scheduleLabel}</span>
-                                    {lastRegistered && <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>최근 {lastRegistered}</span>}
+                                    <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.payment_method} · {scheduleLabel}</span>
                                   </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                                  <button
-                                    className={`btn-eye-toggle ${!r.is_active ? 'btn-eye-toggle--hidden' : ''}`}
-                                    onClick={() => handleToggleRecurring(r.id, r.is_active)}
-                                    title={r.is_active ? '비활성화' : '활성화'}
-                                  >
-                                    {r.is_active ? <IconEyeOpen /> : <IconEyeOff />}
-                                  </button>
                                   <button className="btn-icon" onClick={() => openRecurringForm(r)} title="수정"><IconEdit /></button>
                                   <button className="btn-icon btn-icon--danger" onClick={() => handleDeleteRecurring(r.id)} title="삭제"><IconTrash /></button>
                                 </div>

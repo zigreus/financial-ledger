@@ -85,7 +85,6 @@ CREATE TABLE IF NOT EXISTS recurring_transactions (
   frequency TEXT NOT NULL DEFAULT 'monthly',
   day_of_month INTEGER NOT NULL DEFAULT 1,
   month_of_year INTEGER,
-  is_active INTEGER DEFAULT 1,
   note TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
@@ -125,6 +124,8 @@ export function createDatabase(SQL, existingData = null) {
   try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_note TEXT DEFAULT \'\''); didMigrate = true; } catch (e) {}
   // transactions 테이블에 정기지출 주기 컬럼 추가 (기존 DB 호환)
   try { db.run('ALTER TABLE transactions ADD COLUMN recurring_frequency TEXT DEFAULT NULL'); didMigrate = true; } catch (e) {}
+  // recurring_transactions.is_active 컬럼 제거 (기존 DB 호환)
+  try { db.run('ALTER TABLE recurring_transactions DROP COLUMN is_active'); didMigrate = true; } catch (e) {}
 
   return { db, didMigrate };
 }
@@ -1033,7 +1034,7 @@ export function getMonthlyTotalsWithGoals(db, limit = 24) {
 
 export function getRecurringTransactions(db) {
   const res = db.exec(
-    `SELECT id, payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, is_active, note
+    `SELECT id, payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, note
      FROM recurring_transactions
      ORDER BY
        CASE frequency WHEN 'monthly' THEN 0 ELSE 1 END,
@@ -1051,8 +1052,8 @@ export function getRecurringTransactions(db) {
 
 export function addRecurringTransaction(db, data) {
   db.run(
-    `INSERT INTO recurring_transactions (payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, is_active, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    `INSERT INTO recurring_transactions (payment_method, budget_category, sub_category, detail, amount, discount_amount, discount_note, frequency, day_of_month, month_of_year, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.payment_method, data.budget_category, data.sub_category || '',
       data.detail || '', data.amount,
@@ -1081,9 +1082,6 @@ export function deleteRecurringTransaction(db, id) {
   db.run('DELETE FROM recurring_registration_log WHERE recurring_id = ?', [id]);
 }
 
-export function setRecurringActive(db, id, isActive) {
-  db.run('UPDATE recurring_transactions SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
-}
 
 export function getRegistrationLog(db) {
   const res = db.exec('SELECT recurring_id, registered_for_month FROM recurring_registration_log ORDER BY registered_for_month DESC');
@@ -1112,7 +1110,7 @@ export function runAutoRegister(db) {
   const targetMonth = targetDate.getMonth() + 1; // 1-indexed
   const targetYearMonth = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
-  const recurring = getRecurringTransactions(db).filter(r => r.is_active);
+  const recurring = getRecurringTransactions(db);
   let count = 0;
 
   recurring.forEach(r => {
