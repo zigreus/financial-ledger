@@ -302,7 +302,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                 </span>
                 <span className="month-label">
                   {month}
-                  {month === currentMonth && ' (이번 달)'}
+                  {month === currentMonth && ' 📍'}
                 </span>
                 {(() => {
                   const txs = groupedTransactions[month];

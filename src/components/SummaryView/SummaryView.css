@@ -169,7 +169,7 @@
 }
 .amount-cell { text-align: right; font-weight: 600; }
 .discount-cell { text-align: right; color: var(--success); }
-.total-cell { text-align: right; font-weight: 700; color: var(--primary); white-space: nowrap; }
+.total-cell { text-align: right; font-weight: 700; color: var(--primary); }
 .nowrap-cell { white-space: nowrap; }
 .cat-dot {
   display: inline-block;

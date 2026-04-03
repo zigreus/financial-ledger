@@ -282,8 +282,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                   <th>건수</th>
                   {showGoal ? <th>지출/할인</th> : <th>지출</th>}
                   {!showGoal && <th>할인</th>}
-                  <th>총액</th>
-                  {showGoal && <th>목표/절약</th>}
+                  <th>{showGoal ? '총액/목표' : '총액'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -309,21 +308,17 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       {!showGoal && (
                         <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
                       )}
-                      <td className="total-cell">{formatAmount(net)}원</td>
-                      {showGoal && (
-                        <td className="amount-cell">
-                          {r.goal !== null && r.goal !== undefined ? (
-                            <>
-                              {diff !== null && (
-                                <div className={`cell-goal-diff ${isSaved ? 'cell-sub-saved' : 'cell-sub-over'}`}>
-                                  {isSaved ? `+${formatAmount(diff)}원` : `-${formatAmount(Math.abs(diff))}원`}
-                                </div>
-                              )}
-                              <div className="cell-goal-amount">목표 {formatAmount(r.goal)}</div>
-                            </>
-                          ) : '-'}
-                        </td>
-                      )}
+                      <td className="total-cell">
+                        {formatAmount(net)}원
+                        {showGoal && r.goal !== null && r.goal !== undefined && (
+                          <>
+                            <div className={`cell-sub-line ${isSaved ? 'cell-sub-saved' : 'cell-sub-over'}`}>
+                              {isSaved ? `+${formatAmount(diff)}원` : `-${formatAmount(Math.abs(diff))}원`}
+                            </div>
+                            <div className="cell-goal-amount">목표 {formatAmount(r.goal)}</div>
+                          </>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
