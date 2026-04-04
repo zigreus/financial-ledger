@@ -776,6 +776,44 @@ export function bulkInsertTransactions(db, txList) {
   }
 }
 
+export function ensureCategoriesExist(db, categoryNames) {
+  const existing = new Set(
+    (db.exec('SELECT name FROM budget_categories')[0]?.values || []).map(r => r[0])
+  );
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM budget_categories')[0]?.values[0][0] || 0;
+  let nextSort = maxSort + 1;
+  categoryNames.forEach(name => {
+    if (!existing.has(name)) {
+      db.run('INSERT INTO budget_categories (name, sort_order) VALUES (?, ?)', [name, nextSort++]);
+    }
+  });
+}
+
+export function ensureSubCategoriesExist(db, subcats) {
+  // subcats: [{budget_category, name}]
+  subcats.forEach(({ budget_category, name }) => {
+    const maxSort = db.exec(
+      'SELECT COALESCE(MAX(sort_order), 0) FROM sub_categories WHERE budget_category = ?',
+      [budget_category]
+    )[0]?.values[0][0] || 0;
+    db.run(
+      'INSERT OR IGNORE INTO sub_categories (budget_category, name, sort_order) VALUES (?, ?, ?)',
+      [budget_category, name, maxSort + 1]
+    );
+  });
+}
+
+export function ensureTripsExist(db, trips) {
+  // trips: [{name, schedule}]
+  trips.forEach(({ name, schedule }) => {
+    const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM trips')[0]?.values[0][0] || 0;
+    db.run(
+      'INSERT OR IGNORE INTO trips (name, schedule, sort_order, is_hidden) VALUES (?, ?, ?, 0)',
+      [name, schedule || '', maxSort + 1]
+    );
+  });
+}
+
 export function cleanupHiddenPaymentMethods(db) {
   // 숨겨진 결제수단 중 데이터에서 사용되지 않는 것들 삭제
   const result = db.exec(

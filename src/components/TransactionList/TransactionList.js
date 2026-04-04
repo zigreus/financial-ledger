@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../../services/dbManager';
+import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './TransactionList.css';
 
@@ -85,32 +86,19 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   }, [db]);
 
 
-  // 유효한 메인카테고리 Set
-  const validBudgetCategoryNames = useMemo(
-    () => new Set(budgetCategories.map(c => c.name)),
-    [budgetCategories]
-  );
-
-  // 유효한 서브카테고리 Set: "메인카테고리|서브카테고리" 조합으로 확인
-  const validSubCategories = useMemo(() => {
-    const all = getAllSubCategories(db);
-    return new Set(all.map(s => `${s.budget_category}|${s.name}`));
-  }, [db]);
+  // 이슈 감지용 공통 컨텍스트 (ImportModal과 동일한 로직)
+  const validationCtx = useMemo(() => buildValidationContext(db), [db]);
 
   const allTransactions = useMemo(
     () => getTransactions(db, filters),
     [db, filters]
   );
 
-  // 이슈 필터: 존재하지 않는 메인카테고리 또는 서브카테고리가 설정된 거래
+  // 이슈 필터: 존재하지 않는 메인카테고리 또는 세부카테고리가 설정된 거래
   const transactions = useMemo(() => {
     if (!showIssueOnly) return allTransactions;
-    return allTransactions.filter(tx => {
-      const invalidMain = tx.budget_category && !validBudgetCategoryNames.has(tx.budget_category);
-      const invalidSub = tx.sub_category && !validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`);
-      return invalidMain || invalidSub;
-    });
-  }, [allTransactions, showIssueOnly, validBudgetCategoryNames, validSubCategories]);
+    return allTransactions.filter(tx => hasIssue(tx, validationCtx));
+  }, [allTransactions, showIssueOnly, validationCtx]);
 
   // 월별로 그룹화된 거래내역
   const groupedTransactions = useMemo(() => {
@@ -382,11 +370,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                   {groupedTransactions[month].map(tx => (
                     <li
                       key={tx.id}
-                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''} ${
-                        (tx.budget_category && !validBudgetCategoryNames.has(tx.budget_category)) ||
-                        (tx.sub_category && !validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`))
-                          ? 'tx-item-issue' : ''
-                      }`}
+                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''} ${hasIssue(tx, validationCtx) ? 'tx-item-issue' : ''}`}
                       onClick={() => {
                         if (deleteMode) {
                           toggleSelectForDelete(tx.id);
@@ -431,7 +415,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                           {tx.sub_category && (
                             <span
                               className="tx-sub"
-                              style={!validSubCategories.has(`${tx.budget_category}|${tx.sub_category}`) ? { textDecoration: 'underline' } : {}}
+                              style={hasSubCategoryIssue(tx, validationCtx) ? { textDecoration: 'underline' } : {}}
                             >
                               {tx.sub_category}
                             </span>
@@ -513,7 +497,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                     <span style={{
                       fontSize: '13px',
                       color: 'var(--text-muted)',
-                      textDecoration: !validSubCategories.has(`${selectedDetail.budget_category}|${selectedDetail.sub_category}`) ? 'underline' : 'none'
+                      textDecoration: hasSubCategoryIssue(selectedDetail, validationCtx) ? 'underline' : 'none'
                     }}>
                       / {selectedDetail.sub_category}
                     </span>
