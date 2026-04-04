@@ -18,7 +18,7 @@
   box-shadow: var(--shadow-lg);
 }
 
-.login-icon { font-size: 56px; margin-bottom: 12px; }
+.login-icon { width: 64px; height: 64px; margin-bottom: 12px; }
 .login-card h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
 .login-subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 14px; }
 

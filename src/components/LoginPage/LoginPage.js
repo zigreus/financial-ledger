@@ -23,7 +23,7 @@ function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="login-icon">💰</div>
+        <img src="/favicon_b2.ico" alt="" className="login-icon" />
         <h1>지금 가계부</h1>
         <p className="login-subtitle">가족 모두가 함께 쓰는 스마트 가계부</p>
 

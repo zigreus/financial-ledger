@@ -13,6 +13,7 @@ function Header({ onRefresh, onSave, loading, saving, dirty }) {
   return (
     <header className="app-header">
       <div className="header-left">
+        <img src="/favicon_b2.ico" alt="" className="header-logo" />
         <span className="header-title">지금 가계부</span>
       </div>
       <div className="header-right">
