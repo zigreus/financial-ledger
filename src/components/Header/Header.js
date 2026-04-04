@@ -13,7 +13,7 @@ function Header({ onRefresh, onSave, loading, saving, dirty }) {
   return (
     <header className="app-header">
       <div className="header-left">
-        <span className="header-title">💰 가계부</span>
+        <span className="header-title">지금 가계부</span>
       </div>
       <div className="header-right">
         {dirty && (

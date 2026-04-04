@@ -24,7 +24,7 @@ function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-icon">💰</div>
-        <h1>우리 가계부</h1>
+        <h1>지금 가계부</h1>
         <p className="login-subtitle">가족 모두가 함께 쓰는 스마트 가계부</p>
 
         {isConfigured ? (
