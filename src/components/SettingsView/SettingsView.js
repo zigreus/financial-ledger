@@ -971,11 +971,11 @@ const [dragId, setDragId] = useState(null);
 
                 <div className="rule-form-row">
                   <label className="rule-form-label">할인 (원)</label>
-                  <div style={{ display: 'flex', gap: '6px', flex: 1 }}>
+                  <div style={{ display: 'flex', gap: '6px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
                     <input
                       className="rule-form-input"
                       type="number"
-                      style={{ flex: 1 }}
+                      style={{ flex: '1 1 80px' }}
                       value={recurringForm.discount_amount}
                       onChange={e => {
                         skipAutoDiscountRef.current = true;
@@ -986,7 +986,7 @@ const [dragId, setDragId] = useState(null);
                     <input
                       className="rule-form-input"
                       type="text"
-                      style={{ flex: 1 }}
+                      style={{ flex: '1 1 80px' }}
                       value={recurringForm.discount_note}
                       onChange={e => setRecurringForm(f => ({ ...f, discount_note: e.target.value }))}
                       placeholder="할인 메모 (선택)"

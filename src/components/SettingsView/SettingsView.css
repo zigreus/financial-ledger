@@ -372,6 +372,7 @@
 .rule-form-select,
 .rule-form-input {
   flex: 1;
+  min-width: 0;
   padding: 8px 10px;
   border: 1.5px solid var(--border);
   border-radius: 8px;

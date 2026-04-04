@@ -1,19 +1,19 @@
 {
-  "short_name": "우리 가계부",
-  "name": "우리 가계부",
+  "short_name": "지금 가계부",
+  "name": "지금 가계부",
   "icons": [
     {
-      "src": "favicon.ico",
+      "src": "favicon_transparent.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "logo192.png",
+      "src": "logo192_transparent.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "logo512.png",
+      "src": "logo512_transparent.png",
       "type": "image/png",
       "sizes": "512x512"
     }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   getMonthlySummary, getMonthlySubCategorySummary,
@@ -10,6 +10,22 @@ import {
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './SummaryView.css';
+
+// 날짜 포맷 헬퍼
+const _fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+// 앱 종료 전까지 필터 상태 유지 (모듈 레벨)
+const _initNow = new Date();
+const _initWeekAgo = new Date(_initNow);
+_initWeekAgo.setDate(_initNow.getDate() - 6);
+const _filterState = {
+  filterType: 'month',
+  selectedMonth: `${_initNow.getFullYear()}-${String(_initNow.getMonth()+1).padStart(2,'0')}`,
+  selectedYear: String(_initNow.getFullYear()),
+  dateFrom: _fmt(_initWeekAgo),
+  dateTo: _fmt(_initNow),
+  selectedTripId: '',
+};
 
 const CATEGORY_COLORS = {
   '식비': '#FF6B6B',
@@ -71,19 +87,27 @@ function aggregateForeign(rows) {
 function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChange }) {
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
-  const [filterType, setFilterType] = useState('month'); // 'month' | 'year' | 'range' | 'trip'
+  const [filterType, setFilterType] = useState(() => _filterState.filterType);
   const currentYear = useMemo(() => String(new Date().getFullYear()), []);
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [selectedTripId, setSelectedTripId] = useState(''); // '' = 전체
+  const [selectedYear, setSelectedYear] = useState(() => _filterState.selectedYear);
+  const [dateFrom, setDateFrom] = useState(() => _filterState.dateFrom);
+  const [dateTo, setDateTo] = useState(() => _filterState.dateTo);
+  const [selectedTripId, setSelectedTripId] = useState(() => _filterState.selectedTripId);
 
   const currentMonth = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }, []);
 
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedMonth, setSelectedMonth] = useState(() => _filterState.selectedMonth);
+
+  // 필터 상태 변경 시 모듈 레벨에 저장 (앱 종료 전까지 유지)
+  useEffect(() => { _filterState.filterType = filterType; }, [filterType]);
+  useEffect(() => { _filterState.selectedMonth = selectedMonth; }, [selectedMonth]);
+  useEffect(() => { _filterState.selectedYear = selectedYear; }, [selectedYear]);
+  useEffect(() => { _filterState.dateFrom = dateFrom; }, [dateFrom]);
+  useEffect(() => { _filterState.dateTo = dateTo; }, [dateTo]);
+  useEffect(() => { _filterState.selectedTripId = selectedTripId; }, [selectedTripId]);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const years = useMemo(() => getAvailableYears(db), [db]);
@@ -173,12 +197,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             <button
               className={`filter-type-btn ${filterType === 'range' ? 'active' : ''}`}
               onClick={() => {
-                const today = new Date();
-                const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-                const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 setFilterType('range');
-                setDateFrom(fmt(firstDay));
-                setDateTo(fmt(today));
                 if (drilldownCategory) onDrilldownChange(null);
               }}
             >
@@ -280,8 +299,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                 <tr>
                   <th>월</th>
                   <th>건수</th>
-                  {showGoal ? <th>지출/할인</th> : <th>지출</th>}
-                  {!showGoal && <th>할인</th>}
+                  <th>지출/할인</th>
                   <th>{showGoal ? '총액/목표' : '총액'}</th>
                 </tr>
               </thead>
@@ -295,19 +313,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <tr key={r.month} className={isCurrent ? 'current-month-row' : ''}>
                       <td>{r.month}</td>
                       <td>{r.cnt}</td>
-                      {showGoal ? (
-                        <td className="amount-cell">
-                          {formatAmount(r.total)}원
-                          {r.discount > 0 && (
-                            <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
-                          )}
-                        </td>
-                      ) : (
-                        <td className="amount-cell">{formatAmount(r.total)}원</td>
-                      )}
-                      {!showGoal && (
-                        <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
-                      )}
+                      <td className="amount-cell">
+                        {formatAmount(r.total)}원
+                        {r.discount > 0 && (
+                          <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                        )}
+                      </td>
                       <td className="total-cell">
                         {formatAmount(net)}원
                         {showGoal && r.goal !== null && r.goal !== undefined && (
@@ -502,8 +513,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <tr>
                       <th>카테고리</th>
                       <th>건수</th>
-                      <th>지출</th>
-                      <th>할인</th>
+                      <th>지출/할인</th>
                       <th>총액</th>
                     </tr>
                   </thead>
@@ -520,8 +530,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                           <span className="drilldown-arrow">›</span>
                         </td>
                         <td>{r.cnt}</td>
-                        <td className="amount-cell">{formatAmount(r.total)}원</td>
-                        <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                        <td className="amount-cell">
+                          {formatAmount(r.total)}원
+                          {r.discount > 0 && (
+                            <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                          )}
+                        </td>
                         <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                       </tr>
                     ))}
@@ -529,9 +543,11 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                   <tfoot>
                     <tr>
                       <td colSpan="2"><strong>합계</strong></td>
-                      <td className="amount-cell"><strong>{formatAmount(totalSpend)}원</strong></td>
-                      <td className="discount-cell">
-                        {totalDiscount > 0 ? <strong>-{formatAmount(totalDiscount)}원</strong> : '-'}
+                      <td className="amount-cell">
+                        <strong>{formatAmount(totalSpend)}원</strong>
+                        {totalDiscount > 0 && (
+                          <div className="cell-sub-line cell-sub-discount">-{formatAmount(totalDiscount)}원</div>
+                        )}
                       </td>
                       <td className="total-cell"><strong>{formatAmount(totalSpend - totalDiscount)}원</strong></td>
                     </tr>
