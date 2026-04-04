@@ -233,7 +233,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             {filterType === 'trip' && trips.length > 0 && (
               <select value={selectedTripId} onChange={e => setSelectedTripId(e.target.value)}>
                 <option value="">전체 여행</option>
-                {trips.map(t => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+                {trips.map(t => <option key={t.id} value={String(t.id)}>{t.name}{t.schedule ? ` (${t.schedule})` : ''}</option>)}
               </select>
             )}
           </div>
@@ -346,16 +346,14 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             /* 여행별 모드 */
             selectedTripId ? (
               /* 특정 여행 선택 → 세부카테고리별 */
-              tripDetailSummary.length === 0 ? (
+              <>
+                <button className="drilldown-back-btn" onClick={() => setSelectedTripId('')}>
+                  {(() => { const t = trips.find(t => String(t.id) === selectedTripId); return t ? `← ${t.name}${t.schedule ? ` (${t.schedule})` : ''}` : '← 전체 여행'; })()}
+                </button>
+                {tripDetailSummary.length === 0 ? (
                 <p className="empty-state">데이터가 없습니다.</p>
               ) : (
                 <>
-                  <BarChart
-                    data={tripDetailSummary.map(r => ({ label: r.sub_category, value: r.total }))}
-                    maxValue={tripDetailSummary[0]?.total || 1}
-                    color="#F0A500"
-                    formatLabel={v => `${formatAmount(v)}원`}
-                  />
                   <table className="summary-table">
                     <thead>
                       <tr>
@@ -390,19 +388,14 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     </tfoot>
                   </table>
                 </>
-              )
+              )}
+              </>
             ) : (
               /* 전체 여행 → 여행별 */
               tripSummary.length === 0 ? (
                 <p className="empty-state">여행 데이터가 없습니다.</p>
               ) : (
                 <>
-                  <BarChart
-                    data={tripSummary.map(r => ({ label: r.trip_name, value: r.total }))}
-                    maxValue={tripSummary[0]?.total || 1}
-                    color="#F0A500"
-                    formatLabel={v => `${formatAmount(v)}원`}
-                  />
                   <table className="summary-table">
                     <thead>
                       <tr>
@@ -414,8 +407,11 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     </thead>
                     <tbody>
                       {tripSummary.map(r => (
-                        <tr key={r.trip_id}>
-                          <td className="nowrap-cell">{r.trip_name}</td>
+                        <tr key={r.trip_id} className="clickable-row" onClick={() => setSelectedTripId(String(r.trip_id))}>
+                          <td className="nowrap-cell">
+                            {r.trip_name}<span className="drilldown-arrow">›</span>
+                            {r.trip_schedule && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>{r.trip_schedule}</span>}
+                          </td>
                           <td>{r.cnt}</td>
                           <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                           <td className="foreign-amounts-cell">
@@ -570,8 +566,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                 <tr>
                   <th>결제수단</th>
                   <th>건수</th>
-                  <th>지출</th>
-                  <th>할인</th>
+                  <th>지출/할인</th>
                   <th>총액</th>
                 </tr>
               </thead>
@@ -580,12 +575,30 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                   <tr key={r.payment_method}>
                     <td>{r.payment_method}</td>
                     <td>{r.cnt}</td>
-                    <td className="amount-cell">{formatAmount(r.total)}원</td>
-                    <td className="discount-cell">{r.discount > 0 ? `-${formatAmount(r.discount)}원` : '-'}</td>
+                    <td className="amount-cell">
+                      {formatAmount(r.total)}원
+                      {r.discount > 0 && (
+                        <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                      )}
+                    </td>
                     <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan="2"><strong>합계</strong></td>
+                  <td className="amount-cell">
+                    <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total, 0))}원</strong>
+                    {paymentSummary.reduce((s, r) => s + (r.discount || 0), 0) > 0 && (
+                      <div className="cell-sub-line cell-sub-discount">-{formatAmount(paymentSummary.reduce((s, r) => s + (r.discount || 0), 0))}원</div>
+                    )}
+                  </td>
+                  <td className="total-cell">
+                    <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total - (r.discount || 0), 0))}원</strong>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>

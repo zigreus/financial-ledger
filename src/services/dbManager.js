@@ -40,9 +40,11 @@ CREATE TABLE IF NOT EXISTS sub_categories (
 
 CREATE TABLE IF NOT EXISTS trips (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  schedule TEXT DEFAULT '',
   sort_order INTEGER DEFAULT 0,
-  is_hidden INTEGER DEFAULT 0
+  is_hidden INTEGER DEFAULT 0,
+  UNIQUE(name, schedule)
 );
 
 CREATE TABLE IF NOT EXISTS trip_countries (
@@ -126,6 +128,27 @@ export function createDatabase(SQL, existingData = null) {
   try { db.run('ALTER TABLE transactions ADD COLUMN recurring_frequency TEXT DEFAULT NULL'); didMigrate = true; } catch (e) {}
   // recurring_transactions.is_active 컬럼 제거 (기존 DB 호환)
   try { db.run('ALTER TABLE recurring_transactions DROP COLUMN is_active'); didMigrate = true; } catch (e) {}
+  // trips 테이블에 여행일정 컬럼 추가 (기존 DB 호환)
+  try { db.run("ALTER TABLE trips ADD COLUMN schedule TEXT DEFAULT ''"); didMigrate = true; } catch (e) {}
+  // trips UNIQUE 제약 변경: name 단독 → (name, schedule) 복합 (기존 DB 호환)
+  try {
+    const schemaRes = db.exec("SELECT sql FROM sqlite_master WHERE type='table' AND name='trips'");
+    const schemaSql = schemaRes[0]?.values[0]?.[0] || '';
+    if (!schemaSql.includes('UNIQUE(name, schedule)') && !schemaSql.includes('UNIQUE (name, schedule)')) {
+      db.run(`CREATE TABLE trips_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        schedule TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        is_hidden INTEGER DEFAULT 0,
+        UNIQUE(name, schedule)
+      )`);
+      db.run(`INSERT INTO trips_new SELECT id, name, COALESCE(schedule, ''), sort_order, is_hidden FROM trips`);
+      db.run(`DROP TABLE trips`);
+      db.run(`ALTER TABLE trips_new RENAME TO trips`);
+      didMigrate = true;
+    }
+  } catch (e) {}
 
   return { db, didMigrate };
 }
@@ -419,7 +442,7 @@ export function getRangePaymentMethodSummary(db, dateFrom, dateTo) {
 
 export function getTripSummary(db) {
   const query = `
-    SELECT tr.id as trip_id, tr.name as trip_name,
+    SELECT tr.id as trip_id, tr.name as trip_name, tr.schedule as trip_schedule,
            t.amount, t.discount_amount, t.foreign_amounts
     FROM transactions t
     JOIN trips tr ON t.trip_id = tr.id
@@ -439,7 +462,7 @@ export function getTripSummary(db) {
 
     const key = obj.trip_id;
     if (!tripMap[key]) {
-      tripMap[key] = { trip_id: obj.trip_id, trip_name: obj.trip_name, total: 0, discount: 0, cnt: 0, foreignTotals: {} };
+      tripMap[key] = { trip_id: obj.trip_id, trip_name: obj.trip_name, trip_schedule: obj.trip_schedule || '', total: 0, discount: 0, cnt: 0, foreignTotals: {} };
       tripOrder.push(key);
     }
     const trip = tripMap[key];
@@ -691,6 +714,19 @@ export function deleteSubCategory(db, budgetCategory, name) {
   db.run('DELETE FROM sub_categories WHERE budget_category = ? AND name = ?', [budgetCategory, name]);
 }
 
+export function getBudgetCategoryTxCount(db, name) {
+  const res = db.exec(
+    'SELECT COUNT(*) FROM transactions WHERE budget_category = ?',
+    [name]
+  );
+  return res[0]?.values[0][0] || 0;
+}
+
+export function deleteBudgetCategory(db, name) {
+  db.run('DELETE FROM sub_categories WHERE budget_category = ?', [name]);
+  db.run('DELETE FROM budget_categories WHERE name = ?', [name]);
+}
+
 export function moveTripCountryToPosition(db, id, tripId, newIndex) {
   const itemsRes = db.exec(
     'SELECT id FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
@@ -786,10 +822,10 @@ export function setPaymentMethodDiscountRate(db, name, rate) {
 // ── 여행 ──────────────────────────────────────────────────────────
 
 export function getTrips(db) {
-  const res = db.exec('SELECT id, name FROM trips WHERE is_hidden = 0 ORDER BY sort_order, id');
+  const res = db.exec('SELECT id, name, schedule FROM trips WHERE is_hidden = 0 ORDER BY sort_order, id');
   if (!res.length) return [];
-  return res[0].values.map(([id, name]) => ({
-    id, name,
+  return res[0].values.map(([id, name, schedule]) => ({
+    id, name, schedule: schedule || '',
     countries: getTripCountries(db, id),
   }));
 }
@@ -804,7 +840,7 @@ export function getTripCountries(db, tripId) {
 }
 
 export function getAllTrips(db) {
-  const res = db.exec('SELECT id, name, sort_order, is_hidden FROM trips ORDER BY sort_order, id');
+  const res = db.exec('SELECT id, name, schedule, sort_order, is_hidden FROM trips ORDER BY sort_order, id');
   if (!res.length) return [];
   const { columns, values } = res[0];
   return values.map(row => {
@@ -814,16 +850,24 @@ export function getAllTrips(db) {
   });
 }
 
-export function addTrip(db, name) {
+export function addTrip(db, name, schedule = '') {
   if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
   const minSort = db.exec('SELECT COALESCE(MIN(sort_order), 1) FROM trips');
   const nextSort = (minSort[0]?.values[0][0] || 1) - 1;
-  db.run('INSERT INTO trips (name, sort_order, is_hidden) VALUES (?, ?, 0)', [name.trim(), nextSort]);
+  try {
+    db.run('INSERT INTO trips (name, schedule, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [name.trim(), schedule.trim(), nextSort]);
+  } catch (e) {
+    throw new Error(`"${name.trim()}${schedule.trim() ? ` (${schedule.trim()})` : ''}" 여행이 이미 존재합니다`);
+  }
 }
 
-export function updateTripName(db, id, name) {
+export function updateTripName(db, id, name, schedule = '') {
   if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
-  db.run('UPDATE trips SET name = ? WHERE id = ?', [name.trim(), id]);
+  try {
+    db.run('UPDATE trips SET name = ?, schedule = ? WHERE id = ?', [name.trim(), schedule.trim(), id]);
+  } catch (e) {
+    throw new Error(`"${name.trim()}${schedule.trim() ? ` (${schedule.trim()})` : ''}" 여행이 이미 존재합니다`);
+  }
 }
 
 export function deleteTrip(db, id) {

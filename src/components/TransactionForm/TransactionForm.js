@@ -354,7 +354,7 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
               >
                 <option value="">선택 안함</option>
                 {trips.map(t => (
-                  <option key={t.id} value={String(t.id)}>{t.name}</option>
+                  <option key={t.id} value={String(t.id)}>{t.name}{t.schedule ? ` (${t.schedule})` : ''}</option>
                 ))}
               </select>
             </div>

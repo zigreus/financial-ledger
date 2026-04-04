@@ -80,7 +80,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
   const tripMap = useMemo(() => {
     const map = {};
-    getTrips(db).forEach(t => { map[t.id] = t.name; });
+    getTrips(db).forEach(t => { map[t.id] = { name: t.name, schedule: t.schedule || '' }; });
     return map;
   }, [db]);
 
@@ -423,7 +423,10 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                             </span>
                           ) : null}
                           {tx.trip_id && tripMap[tx.trip_id] && (
-                            <span className="tx-trip-badge">{tripMap[tx.trip_id]}</span>
+                            <span className="tx-trip-badge">
+                              {tripMap[tx.trip_id].name}
+                              {tripMap[tx.trip_id].schedule && <span style={{ display: 'block', fontSize: '11px', opacity: 0.8 }}>{tripMap[tx.trip_id].schedule}</span>}
+                            </span>
                           )}
                           {tx.sub_category && (
                             <span
@@ -499,7 +502,12 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                   />
                   <span style={{ fontSize: '15px' }}>{selectedDetail.budget_category}</span>
                   {selectedDetail.trip_id && tripMap[selectedDetail.trip_id] && (
-                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>/ {tripMap[selectedDetail.trip_id]}</span>
+                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                      / {tripMap[selectedDetail.trip_id].name}
+                      {tripMap[selectedDetail.trip_id].schedule && (
+                        <span style={{ display: 'block', fontSize: '12px' }}>{tripMap[selectedDetail.trip_id].schedule}</span>
+                      )}
+                    </span>
                   )}
                   {selectedDetail.sub_category && (
                     <span style={{
