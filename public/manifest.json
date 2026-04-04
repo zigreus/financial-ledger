@@ -3,23 +3,23 @@
   "name": "지금 가계부",
   "icons": [
     {
-      "src": "favicon_transparent.ico",
+      "src": "favicon_b2.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "logo192_transparent.png",
+      "src": "logo192_b2.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "logo512_transparent.png",
+      "src": "logo512_b2.png",
       "type": "image/png",
       "sizes": "512x512"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#38BDF8",
-  "background_color": "#38BDF8"
+  "theme_color": "#2563EB",
+  "background_color": "#2563EB"
 }
