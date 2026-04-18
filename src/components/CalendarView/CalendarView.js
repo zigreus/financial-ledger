@@ -399,7 +399,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
   async function handleFormSave() {
     setInternalEventForm(false);
     setEditingEvent(null);
-    if (onCloseEventForm) onCloseEventForm();
+    if (showEventForm && onCloseEventForm) onCloseEventForm();
     await onChanged();
   }
 

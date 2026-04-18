@@ -162,7 +162,14 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
     setBudgetCategories(getBudgetCategories(db));
-    setCalendarEvents(getCalendarEvents(db));
+    const events = getCalendarEvents(db);
+    events.sort((a, b) => {
+      if (!a.date_from && !b.date_from) return 0;
+      if (!a.date_from) return 1;
+      if (!b.date_from) return -1;
+      return b.date_from.localeCompare(a.date_from);
+    });
+    setCalendarEvents(events);
   }, [db]);
 
   useEffect(() => {
@@ -357,8 +364,8 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
                   const color = ev.color || EVENT_TYPE_COLORS[ev.event_type] || '#6366F1';
                   const dateLabel = ev.date_from
                     ? ev.date_to && ev.date_to !== ev.date_from
-                      ? ` (${ev.date_from.slice(5)} ~ ${ev.date_to.slice(5)})`
-                      : ` (${ev.date_from.slice(5)})`
+                      ? ` (${ev.date_from.slice(0, 4)}, ${ev.date_from.slice(5)} ~ ${ev.date_to.slice(5)})`
+                      : ` (${ev.date_from.slice(0, 4)}, ${ev.date_from.slice(5)})`
                     : '';
                   return (
                     <option key={ev.id} value={String(ev.id)} style={{ color }}>

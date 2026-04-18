@@ -113,7 +113,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     return allTransactions.filter(tx => hasIssue(tx, validationCtx));
   }, [allTransactions, showIssueOnly, validationCtx]);
 
-  // 월별로 그룹화된 거래내역
+  // 월별로 그룹화된 거래내역 (월 내에서 날짜 내림차순 정렬)
   const groupedTransactions = useMemo(() => {
     const groups = {};
     transactions.forEach(tx => {
@@ -121,6 +121,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
       if (!groups[month]) groups[month] = [];
       groups[month].push(tx);
     });
+    Object.values(groups).forEach(arr => arr.sort((a, b) => b.date.localeCompare(a.date)));
     return groups;
   }, [transactions]);
 
@@ -609,7 +610,7 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
             <div className="form-actions" style={{ padding: '0 20px 20px' }}>
               <button
                 className="btn-danger"
-                style={{ marginRight: 'auto' }}
+                style={{ marginRight: 'auto', flex: 'none', padding: '8px 14px', fontSize: '13px' }}
                 onClick={() => {
                   if (!window.confirm('이 거래를 삭제하시겠습니까?')) return;
                   onDelete(selectedDetail.id);
