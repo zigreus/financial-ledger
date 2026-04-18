@@ -1,11 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import {
   getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories,
-  setMasterItemHidden, moveItemToPosition, moveTripToPosition,
+  setMasterItemHidden, moveItemToPosition,
   addPaymentMethod, addBudgetCategory, addSubCategory,
   cleanupHiddenPaymentMethods,
-  getAllTrips, getTripCountries, addTrip, updateTripName, deleteTrip,
-  addTripCountry, updateTripCountry, deleteTripCountry, moveTripCountryToPosition,
   getSubCategoryTxCount, deleteSubCategory, getBudgetCategoryTxCount, deleteBudgetCategory,
   renameBudgetCategory, renameSubCategory,
   getDiscountRules, addDiscountRule, deleteDiscountRule,
@@ -83,18 +81,6 @@ function SettingsView({ db, onChanged, activeSection, drilldownCategory, drilldo
   const [error, setError] = useState('');
 const [dragId, setDragId] = useState(null);
   const [dropIdx, setDropIdx] = useState(null);
-  const [addingTripName, setAddingTripName] = useState('');
-  const [addingTripSchedule, setAddingTripSchedule] = useState('');
-  const [addingCountry, setAddingCountry] = useState('');
-  const [addingCurrency, setAddingCurrency] = useState('');
-  const [editingTripId, setEditingTripId] = useState(null);
-  const [editingTripName, setEditingTripName] = useState('');
-  const [editingTripSchedule, setEditingTripSchedule] = useState('');
-  const [editingCountryId, setEditingCountryId] = useState(null);
-  const [editingCountryName, setEditingCountryName] = useState('');
-  const [editingCountryCurrency, setEditingCountryCurrency] = useState('');
-  const [countryDragId, setCountryDragId] = useState(null);
-  const [countryDropIdx, setCountryDropIdx] = useState(null);
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingSubCategoryId, setEditingSubCategoryId] = useState(null);
@@ -174,13 +160,6 @@ const [dragId, setDragId] = useState(null);
     }
   }, [drilldownCategory]);
 
-  React.useEffect(() => {
-    if (!drilldownTrip) {
-      setAddingCountry('');
-      setAddingCurrency('');
-    }
-  }, [drilldownTrip]);
-
   const handleToggleHidden = (table, id, currentHidden) => {
     try {
       setMasterItemHidden(db, table, id, !currentHidden);
@@ -197,20 +176,6 @@ const [dragId, setDragId] = useState(null);
     const targetGroupIdx = items.slice(0, dropIdx).filter(i => i.is_hidden === dragItem.is_hidden && i.id !== dragId).length;
     try {
       moveItemToPosition(db, table, dragId, targetGroupIdx, drilldownCategory?.name);
-      onChanged();
-      setError('');
-    } catch (e) { setError(e.message); }
-    setDragId(null);
-    setDropIdx(null);
-  };
-
-  const handleTripDrop = (items) => {
-    if (dragId === null || dropIdx === null) { setDragId(null); setDropIdx(null); return; }
-    const dragItem = items.find(i => i.id === dragId);
-    if (!dragItem) { setDragId(null); setDropIdx(null); return; }
-    const targetGroupIdx = items.slice(0, dropIdx).filter(i => i.is_hidden === dragItem.is_hidden && i.id !== dragId).length;
-    try {
-      moveTripToPosition(db, dragId, targetGroupIdx);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
@@ -282,11 +247,6 @@ const [dragId, setDragId] = useState(null);
   const switchSection = (sec) => {
     onSectionChange(sec); // App.js에서 드릴다운 초기화 + history push 처리
     setAddingName('');
-    setAddingTripName('');
-    setAddingCountry('');
-    setAddingCurrency('');
-    setEditingTripId(null);
-    setEditingTripName('');
     setEditingCategoryId(null);
     setEditingCategoryName('');
     setEditingSubCategoryId(null);
@@ -395,55 +355,6 @@ const [dragId, setDragId] = useState(null);
     } catch (e) { setError(e.message); }
   };
 
-  const handleAddTrip = () => {
-    if (!addingTripName.trim()) { setError('여행 이름을 입력하세요.'); return; }
-    try {
-      addTrip(db, addingTripName, addingTripSchedule);
-      onChanged();
-      setAddingTripName('');
-      setAddingTripSchedule('');
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleUpdateTripName = (id) => {
-    if (!editingTripName.trim()) { setError('여행 이름을 입력하세요.'); return; }
-    try {
-      updateTripName(db, id, editingTripName, editingTripSchedule);
-      onChanged();
-      setEditingTripId(null);
-      setEditingTripName('');
-      setEditingTripSchedule('');
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleDeleteTrip = (id, name) => {
-    try {
-      const res = db.exec('SELECT COUNT(*) FROM transactions WHERE trip_id = ?', [id]);
-      const count = res[0]?.values[0][0] || 0;
-      const msg = count > 0
-        ? `"${name}"을(를) 삭제하면 연결된 거래 ${count}건의 여행 태그가 해제됩니다.\n정말 삭제하시겠습니까?`
-        : `"${name}"을(를) 삭제하시겠습니까?`;
-      if (!window.confirm(msg)) return;
-      deleteTrip(db, id);
-      onChanged();
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleAddTripCountry = () => {
-    if (!drilldownTrip) return;
-    if (!addingCurrency.trim()) { setError('화폐 단위를 입력하세요.'); return; }
-    try {
-      addTripCountry(db, drilldownTrip.id, addingCountry, addingCurrency);
-      onChanged();
-      setAddingCountry('');
-      setAddingCurrency('');
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
   const handleDeleteSubCategory = (name) => {
     try {
       const count = getSubCategoryTxCount(db, drilldownCategory.name, name);
@@ -488,37 +399,6 @@ const [dragId, setDragId] = useState(null);
       onChanged();
       setEditingSubCategoryId(null);
       setEditingSubCategoryName('');
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleCountryDrop = (countries) => {
-    if (countryDragId === null || countryDropIdx === null) { setCountryDragId(null); setCountryDropIdx(null); return; }
-    const targetIdx = countries.slice(0, countryDropIdx).filter(c => c.id !== countryDragId).length;
-    try {
-      moveTripCountryToPosition(db, countryDragId, drilldownTrip.id, targetIdx);
-      onChanged();
-      setError('');
-    } catch (e) { setError(e.message); }
-    setCountryDragId(null);
-    setCountryDropIdx(null);
-  };
-
-  const handleUpdateTripCountry = (id) => {
-    try {
-      updateTripCountry(db, id, editingCountryName, editingCountryCurrency);
-      onChanged();
-      setEditingCountryId(null);
-      setEditingCountryName('');
-      setEditingCountryCurrency('');
-      setError('');
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleDeleteTripCountry = (id) => {
-    try {
-      deleteTripCountry(db, id);
-      onChanged();
       setError('');
     } catch (e) { setError(e.message); }
   };

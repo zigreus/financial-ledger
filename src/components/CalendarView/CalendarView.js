@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import './CalendarView.css';
 import {
   getCalendarEventsInRange,
@@ -394,13 +394,6 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
     if (onAddTransaction) onAddTransaction();
   }
 
-  function openEventFormFromSheet() {
-    setSelectedDate(null);
-    setFormInitialDate(selectedDate || '');
-    setEditingEvent(null);
-    setInternalEventForm(true);
-  }
-
   const showForm = showEventForm || internalEventForm;
 
   async function handleFormSave() {
@@ -428,7 +421,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
       setEditingEvent(null);
       setFormInitialDate('');
     }
-  }, [showEventForm]);
+  }, [showEventForm, internalEventForm]);
 
   // picker years: current ±5
   const pickerYears = useMemo(() => {
