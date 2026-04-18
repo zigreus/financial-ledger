@@ -307,10 +307,23 @@
   flex-shrink: 0;
 }
 
+.cv-bs-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .cv-bs-title {
   font-size: 15px;
   font-weight: 700;
   color: var(--text);
+}
+
+.cv-bs-header-total {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1.1;
 }
 
 .cv-bs-close {
@@ -360,41 +373,84 @@
 .cv-bs-event-info { flex: 1; min-width: 0; }
 .cv-bs-event-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .cv-bs-event-dates { font-size: 11px; color: var(--text-muted); }
+.cv-bs-event-arrow { font-size: 16px; color: var(--text-muted); flex-shrink: 0; }
 
 .cv-bs-tx-item {
   display: flex;
   align-items: center;
-  padding: 7px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
-  gap: 8px;
+  gap: 10px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.cv-bs-tx-item:hover { background: var(--bg); }
+
+.cv-bs-tx-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.cv-bs-tx-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cv-bs-tx-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .cv-bs-tx-cat {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
-  flex: 1;
-  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.cv-bs-tx-pay {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .cv-bs-tx-detail {
   font-size: 11px;
   color: var(--text-muted);
-  flex: 1;
-  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cv-bs-tx-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  gap: 2px;
 }
 
 .cv-bs-tx-amount {
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
-  flex-shrink: 0;
+}
+
+.cv-bs-tx-discount {
+  font-size: 10px;
+  color: #10B981;
 }
 
 .cv-bs-empty {
@@ -407,10 +463,12 @@
   padding: 10px 16px 4px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
 }
 
 .cv-bs-add-btn {
-  width: 100%;
+  flex: 1;
   padding: 11px;
   background: var(--primary);
   color: white;
@@ -422,6 +480,114 @@
   transition: filter .12s;
 }
 .cv-bs-add-btn:hover { filter: brightness(1.08); }
+
+.cv-bs-add-btn-secondary {
+  background: none;
+  border: 1.5px solid var(--primary);
+  color: var(--primary);
+  flex: 0 0 auto;
+  padding: 11px 14px;
+}
+.cv-bs-add-btn-secondary:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); filter: none; }
+
+/* ── 거래 세부 모달 ──────────────────────────────────────── */
+.cv-tx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.cv-tx-modal {
+  background: var(--surface);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  animation: cvFadeIn .15s ease;
+}
+
+.cv-tx-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cv-tx-modal-cat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cv-tx-modal-cat-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cv-tx-modal-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cv-tx-modal-amount {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.cv-tx-modal-unit {
+  font-size: 18px;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.cv-tx-modal-discount {
+  font-size: 13px;
+  color: #10B981;
+  font-weight: 600;
+}
+
+.cv-tx-modal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.cv-tx-modal-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 52px;
+  padding-top: 1px;
+}
+
+.cv-tx-modal-value {
+  font-size: 14px;
+  color: var(--text);
+  flex: 1;
+}
+
+.cv-tx-modal-footer {
+  padding: 10px 16px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
 
 /* ── 이벤트 폼 모달 ──────────────────────────────────────── */
 .cv-form-overlay {

@@ -11,7 +11,31 @@ import {
   addEventCountry,
   updateEventCountry,
   deleteEventCountry,
+  deleteTransaction,
 } from '../../services/dbManager';
+
+// ── 카테고리 컬러 ──────────────────────────────────────────
+const DEFAULT_CATEGORY_COLORS = {
+  '식비': '#FF6B6B',
+  '쇼핑': '#4ECDC4',
+  '차량교통비': '#45B7D1',
+  '의류/미용': '#F7DC6F',
+  '의료/건강': '#82E0AA',
+  '교육': '#BB8FCE',
+  '여행/문화': '#F0A500',
+  '반려동물': '#A3C4F3',
+  '기타': '#AAB7B8',
+};
+function stringToHue(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return Math.abs(hash) % 360;
+}
+function categoryColor(cat) {
+  if (!cat) return '#AAB7B8';
+  if (DEFAULT_CATEGORY_COLORS[cat]) return DEFAULT_CATEGORY_COLORS[cat];
+  return `hsl(${stringToHue(cat)}, 55%, 52%)`;
+}
 
 // ── 상수 ───────────────────────────────────────────────────
 const EVENT_TYPES = [
@@ -299,7 +323,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
 }
 
 // ── 메인 컴포넌트 ──────────────────────────────────────────
-export default function CalendarView({ db, onChanged, showEventForm, onOpenEventForm, onCloseEventForm, onAddTransaction }) {
+export default function CalendarView({ db, onChanged, showEventForm, onOpenEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
   const today = todayStr();
   const [currentMonth, setCurrentMonth] = useState(() => today.slice(0, 7));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -307,6 +331,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
   const [editingEvent, setEditingEvent] = useState(null);
   const [internalEventForm, setInternalEventForm] = useState(false);
   const [formInitialDate, setFormInitialDate] = useState('');
+  const [selectedTx, setSelectedTx] = useState(null);
 
   const { year, mon, days, firstDow } = useMemo(() => {
     const [y, m] = currentMonth.split('-').map(Number);
@@ -392,6 +417,20 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
   function openAddFromSheet() {
     setSelectedDate(null);
     if (onAddTransaction) onAddTransaction();
+  }
+
+  function openAddEventFromSheet(date) {
+    setSelectedDate(null);
+    setFormInitialDate(date || '');
+    setEditingEvent(null);
+    setInternalEventForm(true);
+  }
+
+  async function handleTxDelete(txId) {
+    if (!window.confirm('이 거래를 삭제할까요?')) return;
+    deleteTransaction(db, txId);
+    setSelectedTx(null);
+    await onChanged();
   }
 
   const showForm = showEventForm || internalEventForm;
@@ -557,9 +596,16 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
         <div className="cv-bs-overlay" onClick={() => setSelectedDate(null)}>
           <div className="cv-bs" onClick={e => e.stopPropagation()}>
             <div className="cv-bs-header">
-              <span className="cv-bs-title">
-                {formatDateKo(selectedDate)} ({WEEKDAYS[new Date(selectedDate + 'T00:00:00').getDay()]})
-              </span>
+              <div className="cv-bs-header-left">
+                <span className="cv-bs-title">
+                  {formatDateKo(selectedDate)} ({WEEKDAYS[new Date(selectedDate + 'T00:00:00').getDay()]})
+                </span>
+                {bottomSheetTx.length > 0 && (
+                  <span className="cv-bs-header-total">
+                    {bottomSheetTx.reduce((s, t) => s + t.amount - (t.discount_amount||0), 0).toLocaleString()}원
+                  </span>
+                )}
+              </div>
               <button className="cv-bs-close" onClick={() => setSelectedDate(null)}>✕</button>
             </div>
             <div className="cv-bs-body">
@@ -574,6 +620,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
                         <div className="cv-bs-event-title">{ev.title}</div>
                         <div className="cv-bs-event-dates">{eventDateRange(ev)}</div>
                       </div>
+                      <span className="cv-bs-event-arrow">›</span>
                     </div>
                   ))}
                 </>
@@ -582,16 +629,23 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
               {/* 거래 */}
               {bottomSheetTx.length > 0 ? (
                 <>
-                  <div className="cv-bs-section-title">
-                    거래 {bottomSheetTx.length}건 · {bottomSheetTx.reduce((s, t) => s + t.amount - (t.discount_amount||0), 0).toLocaleString()}원
-                  </div>
+                  <div className="cv-bs-section-title">거래 {bottomSheetTx.length}건</div>
                   {bottomSheetTx.map(tx => (
-                    <div key={tx.id} className="cv-bs-tx-item">
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="cv-bs-tx-cat">{tx.budget_category}</div>
+                    <div key={tx.id} className="cv-bs-tx-item" onClick={() => setSelectedTx(tx)}>
+                      <div className="cv-bs-tx-dot" style={{ background: categoryColor(tx.budget_category) }} />
+                      <div className="cv-bs-tx-info">
+                        <div className="cv-bs-tx-top">
+                          <span className="cv-bs-tx-cat">{tx.budget_category}</span>
+                          {tx.payment_method && <span className="cv-bs-tx-pay">{tx.payment_method}</span>}
+                        </div>
                         {tx.detail && <div className="cv-bs-tx-detail">{tx.detail}</div>}
                       </div>
-                      <div className="cv-bs-tx-amount">{tx.amount.toLocaleString()}</div>
+                      <div className="cv-bs-tx-right">
+                        <div className="cv-bs-tx-amount">{tx.amount.toLocaleString()}</div>
+                        {tx.discount_amount > 0 && (
+                          <div className="cv-bs-tx-discount">-{tx.discount_amount.toLocaleString()}</div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </>
@@ -600,7 +654,54 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
               )}
             </div>
             <div className="cv-bs-footer">
+              <button className="cv-bs-add-btn cv-bs-add-btn-secondary" onClick={() => openAddEventFromSheet(selectedDate)}>+ 일정</button>
               <button className="cv-bs-add-btn" onClick={openAddFromSheet}>+ 거래 추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 거래 세부 모달 ── */}
+      {selectedTx && (
+        <div className="cv-tx-modal-overlay" onClick={() => setSelectedTx(null)}>
+          <div className="cv-tx-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-tx-modal-header">
+              <div className="cv-tx-modal-cat-badge" style={{ background: categoryColor(selectedTx.budget_category) + '22', color: categoryColor(selectedTx.budget_category) }}>
+                <span className="cv-tx-modal-cat-dot" style={{ background: categoryColor(selectedTx.budget_category) }} />
+                {selectedTx.budget_category}
+                {selectedTx.sub_category && ` / ${selectedTx.sub_category}`}
+              </div>
+              <button className="cv-bs-close" onClick={() => setSelectedTx(null)}>✕</button>
+            </div>
+            <div className="cv-tx-modal-body">
+              <div className="cv-tx-modal-amount">
+                {selectedTx.amount.toLocaleString()}<span className="cv-tx-modal-unit">원</span>
+              </div>
+              {selectedTx.discount_amount > 0 && (
+                <div className="cv-tx-modal-discount">
+                  할인 -{selectedTx.discount_amount.toLocaleString()}원
+                  {selectedTx.discount_note && ` (${selectedTx.discount_note})`}
+                </div>
+              )}
+              {selectedTx.detail && (
+                <div className="cv-tx-modal-row">
+                  <span className="cv-tx-modal-label">내용</span>
+                  <span className="cv-tx-modal-value">{selectedTx.detail}</span>
+                </div>
+              )}
+              {selectedTx.payment_method && (
+                <div className="cv-tx-modal-row">
+                  <span className="cv-tx-modal-label">결제수단</span>
+                  <span className="cv-tx-modal-value">{selectedTx.payment_method}</span>
+                </div>
+              )}
+            </div>
+            <div className="cv-tx-modal-footer">
+              <button className="cv-form-delete-btn" onClick={() => handleTxDelete(selectedTx.id)}>삭제</button>
+              <button className="cv-form-cancel-btn" onClick={() => setSelectedTx(null)}>닫기</button>
+              {onEditTransaction && (
+                <button className="cv-form-save-btn" onClick={() => { setSelectedTx(null); setSelectedDate(null); onEditTransaction(selectedTx); }}>수정</button>
+              )}
             </div>
           </div>
         </div>

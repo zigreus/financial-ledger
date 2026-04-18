@@ -304,6 +304,7 @@ function App() {
             onOpenEventForm={() => navigate({ showEventForm: true })}
             onCloseEventForm={() => { setShowEventForm(false); window.history.back(); }}
             onAddTransaction={openAdd}
+            onEditTransaction={openEdit}
           />
         )}
         {activeTab === 'settings' && (
