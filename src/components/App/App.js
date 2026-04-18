@@ -9,6 +9,7 @@ import TransactionForm from '../TransactionForm/TransactionForm';
 import SummaryView from '../SummaryView/SummaryView';
 import SettingsView from '../SettingsView/SettingsView';
 import ImportModal from '../ImportModal/ImportModal';
+import CalendarView from '../CalendarView/CalendarView';
 
 import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister } from '../../services/dbManager';
 import { readDbFromOneDrive, writeDbToOneDrive } from '../../services/oneDriveService';
@@ -22,9 +23,10 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'settings'
+  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showEventForm, setShowEventForm] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
@@ -39,7 +41,7 @@ function App() {
   const [settingsDrilldownPayment, setSettingsDrilldownPayment] = useState(null);
 
   const navRef = React.useRef({
-    activeTab: 'list', showForm: false, showImport: false, editingTx: null,
+    activeTab: 'list', showForm: false, showImport: false, showEventForm: false, editingTx: null,
     summaryTab: 'monthly', summaryDrilldown: null,
     settingsSection: 'payment',
     settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
@@ -56,6 +58,7 @@ function App() {
     if ('activeTab' in s) setActiveTab(s.activeTab);
     if ('showForm' in s) setShowForm(s.showForm);
     if ('showImport' in s) setShowImport(s.showImport);
+    if ('showEventForm' in s) setShowEventForm(s.showEventForm);
     if ('editingTx' in s) setEditingTx(s.editingTx);
     if ('summaryTab' in s) setSummaryTab(s.summaryTab);
     if ('summaryDrilldown' in s) setSummaryDrilldown(s.summaryDrilldown);
@@ -289,6 +292,20 @@ function App() {
             onDrilldownChange={(d) => navigate({ summaryDrilldown: d })}
           />
         )}
+        {activeTab === 'calendar' && (
+          <CalendarView
+            db={db}
+            onChanged={async () => {
+              showToast('저장 중…');
+              await saveAndReload(db);
+              showToast('✓ 저장됨');
+            }}
+            showEventForm={showEventForm}
+            onOpenEventForm={() => navigate({ showEventForm: true })}
+            onCloseEventForm={() => { setShowEventForm(false); window.history.back(); }}
+            onAddTransaction={openAdd}
+          />
+        )}
         {activeTab === 'settings' && (
           <SettingsView
             db={db}
@@ -330,12 +347,18 @@ function App() {
           <span className="nav-icon">📊</span>
           <span className="nav-label">요약</span>
         </button>
-        <button className="nav-item nav-add" onClick={openAdd}>
-          <span className="nav-icon-add">+</span>
+        <button
+          className={`nav-item nav-add${activeTab === 'calendar' ? ' nav-add--event' : ''}`}
+          onClick={activeTab === 'calendar' ? () => navigate({ showEventForm: true }) : openAdd}
+        >
+          <span className="nav-icon-add">{activeTab === 'calendar' ? '📅' : '+'}</span>
         </button>
-        <button className="nav-item" onClick={() => navigate({ showImport: true })}>
-          <span className="nav-icon">📥</span>
-          <span className="nav-label">가져오기</span>
+        <button
+          className={activeTab === 'calendar' ? 'nav-item active' : 'nav-item'}
+          onClick={() => { navigate({ activeTab: 'calendar' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+        >
+          <span className="nav-icon">🗓️</span>
+          <span className="nav-label">캘린더</span>
         </button>
         <button
           className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}

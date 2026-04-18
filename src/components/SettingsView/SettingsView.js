@@ -112,6 +112,9 @@ const [dragId, setDragId] = useState(null);
   const [defaultGoalInput, setDefaultGoalInput] = useState('');
   const showGoalPc = useMemo(() => getSetting(db, 'show_goal_display_pc', '1') !== '0', [db]);
   const showGoalMobile = useMemo(() => getSetting(db, 'show_goal_display_mobile', '1') !== '0', [db]);
+  const showCalBtnPc = useMemo(() => getSetting(db, 'show_calendar_btn_pc', '1') !== '0', [db]);
+  const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
+  const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
 
   // 정기지출 섹션
   const emptyRecurringForm = {
@@ -128,8 +131,6 @@ const [dragId, setDragId] = useState(null);
   const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
   const subCategories = useMemo(() => getAllSubCategories(db, drilldownCategory?.name || ''), [db, drilldownCategory]);
-  const trips = useMemo(() => getAllTrips(db), [db]);
-  const tripCountries = useMemo(() => drilldownTrip ? getTripCountries(db, drilldownTrip.id) : [], [db, drilldownTrip]);
   const discountRules = useMemo(() => drilldownPayment ? getDiscountRules(db, drilldownPayment.name) : [], [db, drilldownPayment]);
   const ruleCategories = useMemo(() => getBudgetCategories(db), [db]);
   const ruleSubCategories = useMemo(() => addingRuleCategory ? getSubCategories(db, addingRuleCategory) : [], [db, addingRuleCategory]);
@@ -277,11 +278,6 @@ const [dragId, setDragId] = useState(null);
       return a.sort_order - b.sort_order;
     });
   }, [activeSection, drilldownCategory, paymentMethods, budgetCategories, subCategories]);
-
-  const sortedTrips = useMemo(() => [...trips].sort((a, b) => {
-    if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
-    return a.sort_order - b.sort_order;
-  }), [trips]);
 
   const switchSection = (sec) => {
     onSectionChange(sec); // App.js에서 드릴다운 초기화 + history push 처리
@@ -678,109 +674,9 @@ const [dragId, setDragId] = useState(null);
     );
   };
 
-  // 여행 목록 (드래그 가능)
-  const renderTripList = () => {
-    const dragItem = dragId ? sortedTrips.find(i => i.id === dragId) : null;
-    return (
-      <div
-        onDrop={(e) => { e.preventDefault(); handleTripDrop(sortedTrips); }}
-        onDragEnd={() => { setDragId(null); setDropIdx(null); }}
-        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropIdx(null); }}
-      >
-        {sortedTrips.map((trip, idx) => {
-          const isDragging = dragId === trip.id;
-          const sameGroup = dragItem && trip.is_hidden === dragItem.is_hidden;
-          const showIndicator = dropIdx === idx && dragId !== null && sameGroup;
-          const isEditing = editingTripId === trip.id;
-          return (
-            <React.Fragment key={trip.id}>
-              {showIndicator && <div className="drop-indicator" />}
-              <div
-                className={`settings-item ${isDragging ? 'settings-item-dragging' : ''} ${!isEditing ? 'settings-item-clickable' : ''}`}
-                draggable={!isEditing}
-                onDragStart={(e) => { if (isEditing) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; setDragId(trip.id); setDropIdx(null); }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (isEditing || !dragItem || trip.is_hidden !== dragItem.is_hidden) { setDropIdx(null); return; }
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
-                }}
-                onClick={!isEditing ? () => { onDrilldownTripChange({ id: trip.id, name: trip.name, schedule: trip.schedule || '' }); setAddingCountry(''); setAddingCurrency(''); setError(''); } : undefined}
-              >
-                <div className="drag-handle" title="드래그해서 순서 변경" onClick={(e) => e.stopPropagation()}>
-                  <IconGrip />
-                </div>
 
-                {isEditing ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }} onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="text"
-                      value={editingTripName}
-                      onChange={e => setEditingTripName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') handleUpdateTripName(trip.id);
-                        if (e.key === 'Escape') { setEditingTripId(null); setEditingTripName(''); setEditingTripSchedule(''); }
-                      }}
-                      autoFocus
-                      className="settings-inline-input"
-                      placeholder="여행이름 (지역)"
-                    />
-                    <input
-                      type="text"
-                      value={editingTripSchedule}
-                      onChange={e => setEditingTripSchedule(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') handleUpdateTripName(trip.id);
-                        if (e.key === 'Escape') { setEditingTripId(null); setEditingTripName(''); setEditingTripSchedule(''); }
-                      }}
-                      className="settings-inline-input"
-                      placeholder="여행일정 (예: 2026.01.10~15)"
-                    />
-                  </div>
-                ) : (
-                  <span className="settings-item-name">
-                    {trip.name}
-                    {trip.schedule && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'normal' }}>{trip.schedule}</span>}
-                  </span>
-                )}
-
-                {isEditing ? (
-                  <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
-                    <button className="btn-icon btn-icon--success" onClick={() => handleUpdateTripName(trip.id)} title="저장">
-                      <IconCheck />
-                    </button>
-                    <button className="btn-icon" onClick={() => { setEditingTripId(null); setEditingTripName(''); setEditingTripSchedule(''); }} title="취소">
-                      <IconClose />
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
-                    <button className="btn-icon" onClick={() => { setEditingTripId(trip.id); setEditingTripName(trip.name); setEditingTripSchedule(trip.schedule || ''); setError(''); }} title="수정">
-                      <IconEdit />
-                    </button>
-                    <button className="btn-icon btn-icon--danger" onClick={() => handleDeleteTrip(trip.id, trip.name)} title="삭제">
-                      <IconTrash />
-                    </button>
-                    <button className="btn-drilldown" onClick={() => { onDrilldownTripChange({ id: trip.id, name: trip.name, schedule: trip.schedule || '' }); setAddingCountry(''); setAddingCurrency(''); setError(''); }} title="나라/화폐 관리">
-                      <IconChevronRight />
-                    </button>
-                  </div>
-                )}
-              </div>
-            </React.Fragment>
-          );
-        })}
-        {dropIdx === sortedTrips.length && dragId !== null && dragItem && (
-          <div className="drop-indicator" />
-        )}
-      </div>
-    );
-  };
-
-  const drilldownBackLabel = drilldownCategory?.name
-    || (drilldownTrip ? (drilldownTrip.schedule ? `${drilldownTrip.name} (${drilldownTrip.schedule})` : drilldownTrip.name) : null)
-    || drilldownPayment?.name;
-  const showDrilldownBack = (activeSection === 'category' && drilldownCategory) || (activeSection === 'travel' && drilldownTrip) || (activeSection === 'payment' && drilldownPayment);
+  const drilldownBackLabel = drilldownCategory?.name || drilldownPayment?.name;
+  const showDrilldownBack = (activeSection === 'category' && drilldownCategory) || (activeSection === 'payment' && drilldownPayment);
 
   return (
     <div className="settings-page">
@@ -788,7 +684,6 @@ const [dragId, setDragId] = useState(null);
       <div className="settings-tabs">
         <button className={activeSection === 'payment' ? 'tab active' : 'tab'} onClick={() => switchSection('payment')}>결제수단</button>
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
-        <button className={activeSection === 'travel' ? 'tab active' : 'tab'} onClick={() => switchSection('travel')}>여행</button>
         <button className={activeSection === 'budget' ? 'tab active' : 'tab'} onClick={() => switchSection('budget')}>예산</button>
         <button className={activeSection === 'recurring' ? 'tab active' : 'tab'} onClick={() => { switchSection('recurring'); setShowRecurringForm(false); }}>정기지출</button>
       </div>
@@ -884,6 +779,55 @@ const [dragId, setDragId] = useState(null);
             </div>
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
               개별 월 목표금액은 거래내역 화면의 월 헤더에서 설정할 수 있습니다.
+            </div>
+
+            {/* 달력 버튼 표시 */}
+            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 버튼 표시 (거래내역)</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '13px' }}>PC</div>
+                  <button
+                    className={`goal-display-toggle${showCalBtnPc ? ' goal-display-toggle--on' : ''}`}
+                    onClick={() => { setSetting(db, 'show_calendar_btn_pc', showCalBtnPc ? '0' : '1'); onChanged(); }}
+                  >
+                    <span className="goal-display-toggle-knob" />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '13px' }}>모바일</div>
+                  <button
+                    className={`goal-display-toggle${showCalBtnMobile ? ' goal-display-toggle--on' : ''}`}
+                    onClick={() => { setSetting(db, 'show_calendar_btn_mobile', showCalBtnMobile ? '0' : '1'); onChanged(); }}
+                  >
+                    <span className="goal-display-toggle-knob" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 달력 금액 단위 */}
+            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 금액 단위</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {[['만', '만원'], ['k', 'k (천)'], ['hidden', '숨김']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => { setSetting(db, 'calendar_mini_amount_unit', val); onChanged(); }}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      border: `1px solid ${calAmountUnit === val ? 'var(--primary)' : 'var(--border)'}`,
+                      borderRadius: '8px',
+                      background: calAmountUnit === val ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'var(--bg)',
+                      color: calAmountUnit === val ? 'var(--primary)' : 'var(--text)',
+                      fontWeight: calAmountUnit === val ? '700' : '400',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -1128,143 +1072,8 @@ const [dragId, setDragId] = useState(null);
           </div>
         )}
 
-        {/* ── 여행 탭 ── */}
-        {activeSection === 'travel' ? (
-          drilldownTrip ? (
-            /* 나라/화폐 목록 */
-            <>
-              <div className="trip-country-info">
-                국내 여행의 경우, 나라를 입력하지 않아도 됩니다.
-              </div>
-              {tripCountries.length === 0 ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px', fontSize: '13px' }}>등록된 나라가 없습니다.</div>
-              ) : (
-                <div
-                  onDrop={(e) => { e.preventDefault(); handleCountryDrop(tripCountries); }}
-                  onDragEnd={() => { setCountryDragId(null); setCountryDropIdx(null); }}
-                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setCountryDropIdx(null); }}
-                >
-                  {tripCountries.map((c, idx) => {
-                    const isEditingThis = editingCountryId === c.id;
-                    const isDragging = countryDragId === c.id;
-                    const showIndicator = countryDropIdx === idx && countryDragId !== null;
-                    return (
-                      <React.Fragment key={c.id}>
-                        {showIndicator && <div className="drop-indicator" />}
-                        <div
-                          className={`settings-item ${isDragging ? 'settings-item-dragging' : ''}`}
-                          draggable={!isEditingThis}
-                          onDragStart={(e) => { if (isEditingThis) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; setCountryDragId(c.id); setCountryDropIdx(null); }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            if (isEditingThis) return;
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            setCountryDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
-                          }}
-                        >
-                          {isEditingThis ? (
-                            <>
-                              <input
-                                type="text"
-                                value={editingCountryName}
-                                onChange={e => setEditingCountryName(e.target.value)}
-                                placeholder="나라 (예: 일본)"
-                                className="settings-inline-input"
-                                style={{ flex: 2 }}
-                              />
-                              <input
-                                type="text"
-                                value={editingCountryCurrency}
-                                onChange={e => setEditingCountryCurrency(e.target.value.toUpperCase())}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleUpdateTripCountry(c.id);
-                                  if (e.key === 'Escape') { setEditingCountryId(null); }
-                                }}
-                                placeholder="화폐 (예: JPY)"
-                                className="settings-inline-input"
-                                style={{ flex: 1 }}
-                                autoFocus
-                              />
-                              <button className="btn-icon btn-icon--success" onClick={() => handleUpdateTripCountry(c.id)} title="저장">
-                                <IconCheck />
-                              </button>
-                              <button className="btn-icon" onClick={() => setEditingCountryId(null)} title="취소" style={{ marginLeft: '4px' }}>
-                                <IconClose />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <div className="drag-handle" title="드래그해서 순서 변경">
-                                <IconGrip />
-                              </div>
-                              <span className="settings-item-name">{c.country || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>국내</span>}</span>
-                              <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginRight: '8px' }}>{c.currency}</span>
-                              <button className="btn-icon" onClick={() => { setEditingCountryId(c.id); setEditingCountryName(c.country); setEditingCountryCurrency(c.currency); setError(''); }} title="수정">
-                                <IconEdit />
-                              </button>
-                              <button className="btn-icon btn-icon--danger" onClick={() => handleDeleteTripCountry(c.id)} title="삭제" style={{ marginLeft: '4px' }}>
-                                <IconTrash />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </React.Fragment>
-                    );
-                  })}
-                  {countryDropIdx === tripCountries.length && countryDragId !== null && (
-                    <div className="drop-indicator" />
-                  )}
-                </div>
-              )}
-              <div className="settings-add-row" style={{ marginTop: '8px' }}>
-                <input
-                  type="text"
-                  value={addingCountry}
-                  onChange={e => setAddingCountry(e.target.value)}
-                  placeholder="나라 (예: 일본, 비워두면 국내)"
-                  style={{ flex: 2 }}
-                />
-                <input
-                  type="text"
-                  value={addingCurrency}
-                  onChange={e => setAddingCurrency(e.target.value.toUpperCase())}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddTripCountry(); }}
-                  placeholder="화폐 (예: JPY)"
-                  style={{ flex: 1 }}
-                />
-                <button className="btn-primary" onClick={handleAddTripCountry}>+ 추가</button>
-              </div>
-            </>
-          ) : (
-            /* 여행 목록 */
-            <>
-              <div className="settings-add-row" style={{ marginBottom: '4px', flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  value={addingTripName}
-                  onChange={e => setAddingTripName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddTrip(); }}
-                  placeholder="여행이름 (지역) *필수"
-                  style={{ flex: '1 1 140px' }}
-                />
-                <input
-                  type="text"
-                  value={addingTripSchedule}
-                  onChange={e => setAddingTripSchedule(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddTrip(); }}
-                  placeholder="여행일정 (예: 2026.01.10~15)"
-                  style={{ flex: '1 1 140px' }}
-                />
-                <button className="btn-primary" onClick={handleAddTrip}>+ 추가</button>
-              </div>
-              {sortedTrips.length === 0 ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px' }}>등록된 여행이 없습니다.</div>
-              ) : renderTripList()}
-            </>
-          )
-
-/* ── 결제수단 / 카테고리 탭 ── */
-        ) : activeSection === 'payment' && drilldownPayment ? (
+        {/* ── 결제수단 / 카테고리 탭 ── */}
+        {activeSection === 'payment' && drilldownPayment ? (
           /* ── 결제수단 할인규칙 드릴다운 ── */
           <>
             <div className="rule-section-info">

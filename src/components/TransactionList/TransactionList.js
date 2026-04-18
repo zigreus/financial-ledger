@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getTrips, getAllMonthlyGoals, setMonthlyGoal, getSetting } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount } from '../../services/formulaEvaluator';
+import CalendarMini from './CalendarMini';
 import './TransactionList.css';
 
 const DEFAULT_CATEGORY_COLORS = {
@@ -42,6 +43,10 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   const [editingGoalMonth, setEditingGoalMonth] = useState(null);
   const [editingGoalValue, setEditingGoalValue] = useState('');
 
+  const [calendarOpenMonths, setCalendarOpenMonths] = useState(new Set());
+  const [focusedDate, setFocusedDate] = useState(null);
+  const txDateRefs = useRef({}); // { 'YYYY-MM-DD': [domNode, ...] }
+
   const currentMonthRef = useRef(null);
   const filterBarRef = useRef(null);
   const [filterBarHeight, setFilterBarHeight] = useState(58);
@@ -63,6 +68,14 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
     [db, isMobile]
   );
+  const showCalendarBtn = useMemo(
+    () => getSetting(db, isMobile ? 'show_calendar_btn_mobile' : 'show_calendar_btn_pc', '1') !== '0',
+    [db, isMobile]
+  );
+  const calendarAmountUnit = useMemo(
+    () => getSetting(db, 'calendar_mini_amount_unit', '만'),
+    [db]
+  );
 
   const getGoalForMonth = (yearMonth) => {
     if (monthlyGoalsMap[yearMonth] !== undefined) return monthlyGoalsMap[yearMonth];
@@ -79,9 +92,9 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
   }, [db]);
 
   const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
-  const tripMap = useMemo(() => {
+  const eventMap = useMemo(() => {
     const map = {};
-    getTrips(db).forEach(t => { map[t.id] = { name: t.name, schedule: t.schedule || '' }; });
+    getCalendarEvents(db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
     return map;
   }, [db]);
 
@@ -169,6 +182,40 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     }
     setExpandedMonths(newExpanded);
   };
+
+  const toggleCalendar = (month) => {
+    setCalendarOpenMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(month)) next.delete(month); else next.add(month);
+      return next;
+    });
+  };
+
+  // 날짜별 지출 합계 (열려 있는 달력 월만 계산)
+  const dailyTotalsCache = useMemo(() => {
+    const cache = {};
+    calendarOpenMonths.forEach(month => {
+      cache[month] = getDailyTotals(db, month);
+    });
+    return cache;
+  }, [db, calendarOpenMonths]);
+
+  const handleCalendarDateClick = useCallback((dateStr) => {
+    setFocusedDate(dateStr);
+    const month = dateStr.substring(0, 7);
+    // 해당 월이 닫혀 있으면 열기
+    setExpandedMonths(prev => {
+      if (prev.has(month)) return prev;
+      return new Set([...prev, month]);
+    });
+    // DOM에서 해당 날짜 첫 번째 거래 항목으로 스크롤
+    setTimeout(() => {
+      const node = txDateRefs.current[dateStr];
+      if (node) {
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 80);
+  }, []);
 
 
   const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
@@ -292,6 +339,15 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                   {month}
                   {month === currentMonth && ' 📍'}
                 </span>
+                {showCalendarBtn && (
+                  <button
+                    className={`cal-toggle-btn${calendarOpenMonths.has(month) ? ' active' : ''}`}
+                    title="달력 보기"
+                    onClick={e => { e.stopPropagation(); toggleCalendar(month); }}
+                  >
+                    📅
+                  </button>
+                )}
                 {(() => {
                   const txs = groupedTransactions[month];
                   const spend = txs.reduce((s, t) => s + t.amount, 0);
@@ -365,12 +421,27 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                   );
                 })()}
               </div>
+              {expandedMonths.has(month) && calendarOpenMonths.has(month) && (
+                <CalendarMini
+                  month={month}
+                  dailyTotals={dailyTotalsCache[month] || {}}
+                  onDateClick={handleCalendarDateClick}
+                  focusedDate={focusedDate}
+                  amountUnit={calendarAmountUnit}
+                />
+              )}
               {expandedMonths.has(month) && (
                 <ul className="tx-list-items">
-                  {groupedTransactions[month].map(tx => (
+                  {groupedTransactions[month].map((tx, txIdx) => (
                     <li
                       key={tx.id}
-                      className={`tx-item ${deleteMode && selectedForDelete.has(tx.id) ? 'tx-item-selected' : ''} ${hasIssue(tx, validationCtx) ? 'tx-item-issue' : ''}`}
+                      ref={el => {
+                        // 각 날짜의 첫 번째 거래만 ref에 등록
+                        if (el && txIdx === groupedTransactions[month].findIndex(t => t.date === tx.date)) {
+                          txDateRefs.current[tx.date] = el;
+                        }
+                      }}
+                      className={`tx-item${deleteMode && selectedForDelete.has(tx.id) ? ' tx-item-selected' : ''}${hasIssue(tx, validationCtx) ? ' tx-item-issue' : ''}${focusedDate === tx.date ? ' tx-item-date-focused' : ''}`}
                       onClick={() => {
                         if (deleteMode) {
                           toggleSelectForDelete(tx.id);
@@ -406,10 +477,9 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                               🔄{tx.recurring_frequency === 'annual' ? '연' : '월'}
                             </span>
                           ) : null}
-                          {tx.trip_id && tripMap[tx.trip_id] && (
+                          {tx.event_id && eventMap[tx.event_id] && (
                             <span className="tx-trip-badge">
-                              {tripMap[tx.trip_id].name}
-                              {tripMap[tx.trip_id].schedule && <span style={{ display: 'block', fontSize: '11px', opacity: 0.8 }}>{tripMap[tx.trip_id].schedule}</span>}
+                              {eventMap[tx.event_id].name}
                             </span>
                           )}
                           {tx.sub_category && (
@@ -485,12 +555,9 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
                     }}
                   />
                   <span style={{ fontSize: '15px' }}>{selectedDetail.budget_category}</span>
-                  {selectedDetail.trip_id && tripMap[selectedDetail.trip_id] && (
+                  {selectedDetail.event_id && eventMap[selectedDetail.event_id] && (
                     <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                      / {tripMap[selectedDetail.trip_id].name}
-                      {tripMap[selectedDetail.trip_id].schedule && (
-                        <span style={{ display: 'block', fontSize: '12px' }}>{tripMap[selectedDetail.trip_id].schedule}</span>
-                      )}
+                      / {eventMap[selectedDetail.event_id].name}
                     </span>
                   )}
                   {selectedDetail.sub_category && (
@@ -540,6 +607,17 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
               )}
             </div>
             <div className="form-actions" style={{ padding: '0 20px 20px' }}>
+              <button
+                className="btn-danger"
+                style={{ marginRight: 'auto' }}
+                onClick={() => {
+                  if (!window.confirm('이 거래를 삭제하시겠습니까?')) return;
+                  onDelete(selectedDetail.id);
+                  setSelectedDetail(null);
+                }}
+              >
+                삭제
+              </button>
               <button className="btn-secondary" onClick={() => setSelectedDetail(null)}>닫기</button>
               <button className="btn-primary" onClick={() => { onEdit(selectedDetail); setSelectedDetail(null); }}>
                 수정

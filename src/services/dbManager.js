@@ -99,6 +99,27 @@ CREATE TABLE IF NOT EXISTS recurring_registration_log (
   registered_at TEXT DEFAULT (datetime('now', 'localtime')),
   UNIQUE(recurring_id, registered_for_month)
 );
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  date_from TEXT DEFAULT '',
+  date_to TEXT DEFAULT '',
+  event_type TEXT DEFAULT 'general',
+  color TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  is_hidden INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS event_countries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  country TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  sort_order INTEGER DEFAULT 0
+);
 `;
 
 
@@ -146,6 +167,73 @@ export function createDatabase(SQL, existingData = null) {
       db.run(`INSERT INTO trips_new SELECT id, name, COALESCE(schedule, ''), sort_order, is_hidden FROM trips`);
       db.run(`DROP TABLE trips`);
       db.run(`ALTER TABLE trips_new RENAME TO trips`);
+      didMigrate = true;
+    }
+  } catch (e) {}
+
+  // transactions에 event_id 컬럼 추가
+  try { db.run('ALTER TABLE transactions ADD COLUMN event_id INTEGER DEFAULT NULL'); didMigrate = true; } catch (e) {}
+
+  // ── trips → calendar_events 마이그레이션 ──────────────────────────
+  // trips 테이블이 존재하면 마이그레이션 실행 후 DROP
+  try {
+    const tripsExist = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='trips'");
+    if (tripsExist.length && tripsExist[0].values.length > 0) {
+      const trips = db.exec('SELECT id, name, schedule, sort_order FROM trips ORDER BY sort_order, id');
+      if (trips.length) {
+        trips[0].values.forEach(([tripId, name, schedule, sortOrder]) => {
+          // calendar_events에 여행 이벤트 삽입 (중복 방지: migrated_from_trip_id로 체크)
+          const alreadyMigrated = db.exec(
+            'SELECT id FROM calendar_events WHERE note LIKE ? AND event_type = ?',
+            [`%[trip_id:${tripId}]%`, 'trip']
+          );
+          if (alreadyMigrated.length && alreadyMigrated[0].values.length > 0) return;
+
+          const noteVal = schedule
+            ? `${schedule} [trip_id:${tripId}]`
+            : `[trip_id:${tripId}]`;
+
+          db.run(
+            `INSERT INTO calendar_events (title, date_from, date_to, event_type, color, note, sort_order)
+             VALUES (?, '', '', 'trip', '#F0A500', ?, ?)`,
+            [name, noteVal, sortOrder]
+          );
+          const newEventRes = db.exec('SELECT last_insert_rowid()');
+          const newEventId = newEventRes[0].values[0][0];
+
+          // trip_countries → event_countries
+          const countries = db.exec(
+            'SELECT country, currency, sort_order FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
+            [tripId]
+          );
+          if (countries.length) {
+            countries[0].values.forEach(([country, currency, cSort]) => {
+              db.run(
+                'INSERT INTO event_countries (event_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
+                [newEventId, country, currency, cSort]
+              );
+            });
+          }
+
+          // transactions.event_id 매핑
+          db.run(
+            'UPDATE transactions SET event_id = ? WHERE trip_id = ? AND event_id IS NULL',
+            [newEventId, tripId]
+          );
+        });
+      }
+
+      // row count 검증 후 DROP
+      const ecCount = db.exec('SELECT COUNT(*) FROM event_countries');
+      const tcCount = db.exec("SELECT COUNT(*) FROM trip_countries");
+      const evtCount = db.exec('SELECT COUNT(*) FROM calendar_events WHERE event_type = ?', ['trip']);
+      const trCount = db.exec('SELECT COUNT(*) FROM trips');
+      const ecOk = (ecCount[0]?.values[0][0] || 0) >= (tcCount[0]?.values[0][0] || 0);
+      const evtOk = (evtCount[0]?.values[0][0] || 0) >= (trCount[0]?.values[0][0] || 0);
+      if (ecOk && evtOk) {
+        db.run('DROP TABLE IF EXISTS trip_countries');
+        db.run('DROP TABLE IF EXISTS trips');
+      }
       didMigrate = true;
     }
   } catch (e) {}
@@ -204,13 +292,13 @@ export function getTransactions(db, filters = {}) {
 export function addTransaction(db, tx) {
   db.run(
     `INSERT INTO transactions
-       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, trip_id, foreign_amounts)
+       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, event_id, foreign_amounts)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tx.payment_method, tx.date, tx.budget_category,
       tx.sub_category || '', tx.detail || '',
       tx.amount, tx.discount_amount || 0, tx.discount_note || '',
-      tx.trip_id || null,
+      tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
     ]
   );
@@ -221,14 +309,14 @@ export function updateTransaction(db, id, tx) {
     `UPDATE transactions
      SET payment_method=?, date=?, budget_category=?, sub_category=?,
          detail=?, amount=?, discount_amount=?, discount_note=?,
-         trip_id=?, foreign_amounts=?,
+         event_id=?, foreign_amounts=?,
          updated_at=datetime('now','localtime')
      WHERE id=?`,
     [
       tx.payment_method, tx.date, tx.budget_category,
       tx.sub_category || '', tx.detail || '',
       tx.amount, tx.discount_amount || 0, tx.discount_note || '',
-      tx.trip_id || null,
+      tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
       id,
     ]
@@ -267,6 +355,222 @@ export function getAvailableMonths(db) {
     "SELECT DISTINCT strftime('%Y-%m', date) as month FROM transactions ORDER BY month DESC"
   );
   return result.length ? result[0].values.map(r => r[0]) : [];
+}
+
+// 특정 월의 날짜별 지출 합계 반환 { 'YYYY-MM-DD': { total, discount, count } }
+export function getDailyTotals(db, month) {
+  if (!db || !month) return {};
+  const result = db.exec(
+    `SELECT date, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as count
+     FROM transactions WHERE strftime('%Y-%m', date) = ?
+     GROUP BY date`,
+    [month]
+  );
+  if (!result.length) return {};
+  const map = {};
+  result[0].values.forEach(row => {
+    map[row[0]] = { total: row[1] || 0, discount: row[2] || 0, count: row[3] || 0 };
+  });
+  return map;
+}
+
+// ── 캘린더 이벤트 ──────────────────────────────────────────────────
+
+export function getCalendarEvents(db, opts = {}) {
+  if (!db) return [];
+  let q = 'SELECT * FROM calendar_events WHERE 1=1';
+  const params = [];
+  if (!opts.includeHidden) { q += ' AND is_hidden = 0'; }
+  if (opts.eventType) { q += ' AND event_type = ?'; params.push(opts.eventType); }
+  q += ' ORDER BY sort_order, id';
+  const res = db.exec(q, params);
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    obj.countries = getEventCountries(db, obj.id);
+    return obj;
+  });
+}
+
+export function getCalendarEventsInRange(db, dateFrom, dateTo) {
+  if (!db) return [];
+  // date_from이 비어있지 않고, 기간이 겹치는 이벤트
+  const res = db.exec(
+    `SELECT * FROM calendar_events
+     WHERE is_hidden = 0
+       AND date_from != ''
+       AND date_from <= ?
+       AND (date_to >= ? OR (date_to = '' AND date_from >= ?))
+     ORDER BY date_from, id`,
+    [dateTo, dateFrom, dateFrom]
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    obj.countries = getEventCountries(db, obj.id);
+    return obj;
+  });
+}
+
+export function getUndatedCalendarEvents(db) {
+  if (!db) return [];
+  const res = db.exec(
+    "SELECT * FROM calendar_events WHERE is_hidden = 0 AND (date_from = '' OR date_from IS NULL) ORDER BY sort_order, id"
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    obj.countries = getEventCountries(db, obj.id);
+    return obj;
+  });
+}
+
+export function getEventCountries(db, eventId) {
+  if (!db || !eventId) return [];
+  const res = db.exec(
+    'SELECT id, country, currency, sort_order FROM event_countries WHERE event_id = ? ORDER BY sort_order, id',
+    [eventId]
+  );
+  if (!res.length) return [];
+  return res[0].values.map(([id, country, currency, sort_order]) => ({ id, country, currency, sort_order }));
+}
+
+export function addCalendarEvent(db, ev) {
+  if (!db || !ev.title?.trim()) throw new Error('제목을 입력하세요');
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM calendar_events');
+  const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
+  db.run(
+    `INSERT INTO calendar_events (title, date_from, date_to, event_type, color, note, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [ev.title.trim(), ev.date_from || '', ev.date_to || '', ev.event_type || 'general',
+     ev.color || '', ev.note || '', nextSort]
+  );
+  const res = db.exec('SELECT last_insert_rowid()');
+  return res[0].values[0][0];
+}
+
+export function updateCalendarEvent(db, id, ev) {
+  if (!db || !ev.title?.trim()) throw new Error('제목을 입력하세요');
+  db.run(
+    `UPDATE calendar_events SET title=?, date_from=?, date_to=?, event_type=?, color=?, note=?, is_hidden=?
+     WHERE id=?`,
+    [ev.title.trim(), ev.date_from || '', ev.date_to || '', ev.event_type || 'general',
+     ev.color || '', ev.note || '', ev.is_hidden ? 1 : 0, id]
+  );
+}
+
+export function deleteCalendarEvent(db, id) {
+  db.run('DELETE FROM event_countries WHERE event_id = ?', [id]);
+  db.run('UPDATE transactions SET event_id = NULL WHERE event_id = ?', [id]);
+  db.run('DELETE FROM calendar_events WHERE id = ?', [id]);
+}
+
+export function addEventCountry(db, eventId, country, currency) {
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM event_countries WHERE event_id = ?', [eventId]);
+  const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
+  db.run('INSERT INTO event_countries (event_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
+    [eventId, country, currency, nextSort]);
+}
+
+export function updateEventCountry(db, id, country, currency) {
+  db.run('UPDATE event_countries SET country=?, currency=? WHERE id=?', [country, currency, id]);
+}
+
+export function deleteEventCountry(db, id) {
+  db.run('DELETE FROM event_countries WHERE id = ?', [id]);
+}
+
+// ── 캘린더 이벤트 요약 (요약 탭 일정별) ────────────────────────────
+
+function aggregateEventRows(rows, keyField) {
+  const map = {};
+  const order = [];
+  rows.forEach(obj => {
+    const key = obj[keyField];
+    if (!map[key]) {
+      map[key] = {
+        event_id: obj.event_id, event_title: obj.event_title,
+        date_from: obj.date_from || '', date_to: obj.date_to || '',
+        event_type: obj.event_type, color: obj.color,
+        total: 0, discount: 0, cnt: 0, foreignTotals: {},
+      };
+      order.push(key);
+    }
+    const e = map[key];
+    e.total += obj.amount || 0;
+    e.discount += obj.discount_amount || 0;
+    e.cnt += 1;
+    if (obj.foreign_amounts) {
+      try {
+        Object.entries(JSON.parse(obj.foreign_amounts)).forEach(([cur, amt]) => {
+          e.foreignTotals[cur] = (e.foreignTotals[cur] || 0) + Number(amt);
+        });
+      } catch {}
+    }
+  });
+  return order.map(k => map[k]).sort((a, b) => b.total - a.total);
+}
+
+export function getEventSummary(db, eventType = null) {
+  if (!db) return [];
+  let q = `SELECT ce.id as event_id, ce.title as event_title,
+                  ce.date_from, ce.date_to, ce.event_type, ce.color,
+                  t.amount, t.discount_amount, t.foreign_amounts
+           FROM transactions t
+           JOIN calendar_events ce ON t.event_id = ce.id
+           WHERE t.event_id IS NOT NULL`;
+  const params = [];
+  if (eventType) { q += ' AND ce.event_type = ?'; params.push(eventType); }
+  const res = db.exec(q, params);
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  const rows = values.map(row => { const o = {}; columns.forEach((c, i) => o[c] = row[i]); return o; });
+  return aggregateEventRows(rows, 'event_id');
+}
+
+export function getEventDetailSummary(db, eventId) {
+  if (!db || !eventId) return [];
+  const res = db.exec(
+    'SELECT sub_category, amount, discount_amount, foreign_amounts FROM transactions WHERE event_id = ?',
+    [eventId]
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  const subMap = {};
+  const subOrder = [];
+  values.forEach(row => {
+    const obj = {}; columns.forEach((c, i) => obj[c] = row[i]);
+    const key = obj.sub_category || '(미분류)';
+    if (!subMap[key]) { subMap[key] = { sub_category: key, total: 0, discount: 0, cnt: 0, foreignTotals: {} }; subOrder.push(key); }
+    const s = subMap[key];
+    s.total += obj.amount || 0;
+    s.discount += obj.discount_amount || 0;
+    s.cnt += 1;
+    if (obj.foreign_amounts) {
+      try { Object.entries(JSON.parse(obj.foreign_amounts)).forEach(([cur, amt]) => { s.foreignTotals[cur] = (s.foreignTotals[cur] || 0) + Number(amt); }); } catch {}
+    }
+  });
+  return subOrder.map(k => subMap[k]).sort((a, b) => b.total - a.total);
+}
+
+export function getEventPaymentMethodSummary(db, eventId = null) {
+  if (!db) return [];
+  const where = eventId ? 'event_id = ?' : 'event_id IS NOT NULL';
+  const params = eventId ? [eventId] : [];
+  const res = db.exec(
+    `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+     FROM transactions WHERE ${where} GROUP BY payment_method ORDER BY total DESC`,
+    params
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => { const o = {}; columns.forEach((c, i) => o[c] = row[i]); return o; });
 }
 
 export function getMonthlySummary(db, month) {

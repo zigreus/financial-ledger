@@ -5,8 +5,8 @@ import {
   getPaymentMethodSummary, getAvailableMonths,
   getYearlySummary, getYearlyPaymentMethodSummary, getYearlySubCategorySummary,
   getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
-  getAvailableYears, getTripSummary, getTripDetailSummary, getTripPaymentMethodSummary,
-  getTrips, getMonthlyTotalsWithGoals, getSetting,
+  getAvailableYears, getEventSummary, getEventDetailSummary, getEventPaymentMethodSummary,
+  getCalendarEvents, getMonthlyTotalsWithGoals, getSetting,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './SummaryView.css';
@@ -24,7 +24,8 @@ const _filterState = {
   selectedYear: String(_initNow.getFullYear()),
   dateFrom: _fmt(_initWeekAgo),
   dateTo: _fmt(_initNow),
-  selectedTripId: '',
+  selectedEventId: '',
+  eventTypeFilter: '',
 };
 
 const CATEGORY_COLORS = {
@@ -92,7 +93,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const [selectedYear, setSelectedYear] = useState(() => _filterState.selectedYear);
   const [dateFrom, setDateFrom] = useState(() => _filterState.dateFrom);
   const [dateTo, setDateTo] = useState(() => _filterState.dateTo);
-  const [selectedTripId, setSelectedTripId] = useState(() => _filterState.selectedTripId);
+  const [selectedEventId, setSelectedEventId] = useState(() => _filterState.selectedEventId);
+  const [eventTypeFilter, setEventTypeFilter] = useState(() => _filterState.eventTypeFilter);
 
   const currentMonth = useMemo(() => {
     const now = new Date();
@@ -107,7 +109,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   useEffect(() => { _filterState.selectedYear = selectedYear; }, [selectedYear]);
   useEffect(() => { _filterState.dateFrom = dateFrom; }, [dateFrom]);
   useEffect(() => { _filterState.dateTo = dateTo; }, [dateTo]);
-  useEffect(() => { _filterState.selectedTripId = selectedTripId; }, [selectedTripId]);
+  useEffect(() => { _filterState.selectedEventId = selectedEventId; }, [selectedEventId]);
+  useEffect(() => { _filterState.eventTypeFilter = eventTypeFilter; }, [eventTypeFilter]);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const years = useMemo(() => getAvailableYears(db), [db]);
@@ -117,7 +120,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
     () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
     [db, isMobile]
   );
-  const trips = useMemo(() => getTrips(db), [db]);
+  const calendarEvents = useMemo(() => getCalendarEvents(db), [db]);
 
   const categorySummary = useMemo(() => {
     if (filterType === 'month') return getMonthlySummary(db, selectedMonth);
@@ -138,36 +141,36 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
     if (filterType === 'month') return getPaymentMethodSummary(db, selectedMonth);
     if (filterType === 'year') return selectedYear ? getYearlyPaymentMethodSummary(db, selectedYear) : [];
     if (filterType === 'range') return dateFrom && dateTo ? getRangePaymentMethodSummary(db, dateFrom, dateTo) : [];
-    if (filterType === 'trip') return getTripPaymentMethodSummary(db, selectedTripId ? Number(selectedTripId) : null);
+    if (filterType === 'event') return getEventPaymentMethodSummary(db, selectedEventId ? Number(selectedEventId) : null);
     return [];
-  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedTripId]);
+  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId]);
 
-  const tripSummary = useMemo(() => getTripSummary(db), [db]);
-  const tripDetailSummary = useMemo(
-    () => selectedTripId ? getTripDetailSummary(db, Number(selectedTripId)) : [],
-    [db, selectedTripId]
+  const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, eventTypeFilter]);
+  const eventDetailSummary = useMemo(
+    () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
+    [db, selectedEventId]
   );
 
   const totalSpend = useMemo(() => categorySummary.reduce((s, r) => s + r.total, 0), [categorySummary]);
   const totalDiscount = useMemo(() => categorySummary.reduce((s, r) => s + (r.discount || 0), 0), [categorySummary]);
 
-  const tripTotalSpend = useMemo(() => tripSummary.reduce((s, r) => s + r.total, 0), [tripSummary]);
-  const tripTotalDiscount = useMemo(() => tripSummary.reduce((s, r) => s + (r.discount || 0), 0), [tripSummary]);
+  const eventTotalSpend = useMemo(() => eventSummary.reduce((s, r) => s + r.total, 0), [eventSummary]);
+  const eventTotalDiscount = useMemo(() => eventSummary.reduce((s, r) => s + (r.discount || 0), 0), [eventSummary]);
 
-  const detailTotalSpend = useMemo(() => tripDetailSummary.reduce((s, r) => s + r.total, 0), [tripDetailSummary]);
-  const detailTotalDiscount = useMemo(() => tripDetailSummary.reduce((s, r) => s + (r.discount || 0), 0), [tripDetailSummary]);
+  const detailTotalSpend = useMemo(() => eventDetailSummary.reduce((s, r) => s + r.total, 0), [eventDetailSummary]);
+  const detailTotalDiscount = useMemo(() => eventDetailSummary.reduce((s, r) => s + (r.discount || 0), 0), [eventDetailSummary]);
 
   const showFilter = tab === 'category' || tab === 'payment';
   const hasDateFilter = (filterType === 'month' && selectedMonth) ||
     (filterType === 'year' && selectedYear) ||
     (filterType === 'range' && dateFrom && dateTo);
 
-  // 현재 여행 모드의 총액 (전체 또는 특정 여행)
-  const tripDisplaySpend = selectedTripId ? detailTotalSpend : tripTotalSpend;
-  const tripDisplayDiscount = selectedTripId ? detailTotalDiscount : tripTotalDiscount;
-  const tripDisplayForeign = selectedTripId
-    ? aggregateForeign(tripDetailSummary)
-    : aggregateForeign(tripSummary);
+  // 현재 일정 모드의 총액 (전체 또는 특정 일정)
+  const eventDisplaySpend = selectedEventId ? detailTotalSpend : eventTotalSpend;
+  const eventDisplayDiscount = selectedEventId ? detailTotalDiscount : eventTotalDiscount;
+  const eventDisplayForeign = selectedEventId
+    ? aggregateForeign(eventDetailSummary)
+    : aggregateForeign(eventSummary);
 
   return (
     <div className="summary-page">
@@ -204,10 +207,10 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               기간별
             </button>
             <button
-              className={`filter-type-btn ${filterType === 'trip' ? 'active' : ''}`}
-              onClick={() => { setFilterType('trip'); setSelectedTripId(''); if (drilldownCategory) onDrilldownChange(null); }}
+              className={`filter-type-btn ${filterType === 'event' ? 'active' : ''}`}
+              onClick={() => { setFilterType('event'); setSelectedEventId(''); setEventTypeFilter(''); if (drilldownCategory) onDrilldownChange(null); }}
             >
-              여행별
+              일정별
             </button>
           </div>
 
@@ -230,24 +233,45 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                 <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} placeholder="종료일" />
               </div>
             )}
-            {filterType === 'trip' && trips.length > 0 && (
-              <select value={selectedTripId} onChange={e => setSelectedTripId(e.target.value)}>
-                <option value="">전체 여행</option>
-                {trips.map(t => <option key={t.id} value={String(t.id)}>{t.name}{t.schedule ? ` (${t.schedule})` : ''}</option>)}
-              </select>
+            {filterType === 'event' && (
+              <>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {[['', '전체'], ['trip', '여행'], ['occasion', '경조사'], ['holiday', '명절'], ['medical', '의료'], ['general', '기타']].map(([val, label]) => (
+                    <button
+                      key={val}
+                      className={`filter-type-btn${eventTypeFilter === val ? ' active' : ''}`}
+                      style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={() => { setEventTypeFilter(val); setSelectedEventId(''); }}
+                    >{label}</button>
+                  ))}
+                </div>
+                {calendarEvents.length > 0 && (
+                  <select value={selectedEventId} onChange={e => setSelectedEventId(e.target.value)}>
+                    <option value="">전체 일정</option>
+                    {calendarEvents
+                      .filter(ev => !eventTypeFilter || ev.event_type === eventTypeFilter)
+                      .map(ev => (
+                        <option key={ev.id} value={String(ev.id)}>
+                          {ev.title}{ev.date_from ? ` (${ev.date_from.slice(5)})` : ''}
+                        </option>
+                      ))
+                    }
+                  </select>
+                )}
+              </>
             )}
           </div>
 
           {/* 총액 요약 */}
-          {filterType === 'trip' ? (
-            (tripSummary.length > 0 || tripDetailSummary.length > 0) && (
+          {filterType === 'event' ? (
+            (eventSummary.length > 0 || eventDetailSummary.length > 0) && (
               <div className="summary-total-row">
-                <span>총액: <strong>{formatAmount(tripDisplaySpend - tripDisplayDiscount)}원</strong></span>
-                <span className="amount-secondary">지출 {formatAmount(tripDisplaySpend)}원</span>
-                {tripDisplayDiscount > 0 && (
-                  <span className="discount-tag">할인 -{formatAmount(tripDisplayDiscount)}원</span>
+                <span>총액: <strong>{formatAmount(eventDisplaySpend - eventDisplayDiscount)}원</strong></span>
+                <span className="amount-secondary">지출 {formatAmount(eventDisplaySpend)}원</span>
+                {eventDisplayDiscount > 0 && (
+                  <span className="discount-tag">할인 -{formatAmount(eventDisplayDiscount)}원</span>
                 )}
-                {Object.entries(tripDisplayForeign).map(([c, a]) => (
+                {Object.entries(eventDisplayForeign).map(([c, a]) => (
                   <span key={c} className="foreign-amount-tag" style={{ marginLeft: 4 }}>
                     {c} {a % 1 === 0 ? formatAmount(a) : a.toFixed(2)}
                   </span>
@@ -342,18 +366,17 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
       {/* 카테고리별 탭 */}
       {tab === 'category' && (
         <div className="summary-section">
-          {filterType === 'trip' ? (
-            /* 여행별 모드 */
-            selectedTripId ? (
-              /* 특정 여행 선택 → 세부카테고리별 */
+          {filterType === 'event' ? (
+            /* 일정별 모드 */
+            selectedEventId ? (
+              /* 특정 일정 선택 → 세부카테고리별 */
               <>
-                <button className="drilldown-back-btn" onClick={() => setSelectedTripId('')}>
-                  {(() => { const t = trips.find(t => String(t.id) === selectedTripId); return t ? `← ${t.name}${t.schedule ? ` (${t.schedule})` : ''}` : '← 전체 여행'; })()}
+                <button className="drilldown-back-btn" onClick={() => setSelectedEventId('')}>
+                  {(() => { const ev = calendarEvents.find(e => String(e.id) === selectedEventId); return ev ? `← ${ev.title}` : '← 전체 일정'; })()}
                 </button>
-                {tripDetailSummary.length === 0 ? (
-                <p className="empty-state">데이터가 없습니다.</p>
-              ) : (
-                <>
+                {eventDetailSummary.length === 0 ? (
+                  <p className="empty-state">데이터가 없습니다.</p>
+                ) : (
                   <table className="summary-table">
                     <thead>
                       <tr>
@@ -364,7 +387,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       </tr>
                     </thead>
                     <tbody>
-                      {tripDetailSummary.map(r => (
+                      {eventDetailSummary.map(r => (
                         <tr key={r.sub_category}>
                           <td className="nowrap-cell">{r.sub_category}</td>
                           <td>{r.cnt}</td>
@@ -382,57 +405,54 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                           <strong>{formatAmount(detailTotalSpend - detailTotalDiscount)}원</strong>
                         </td>
                         <td className="foreign-amounts-cell">
-                          <ForeignAmountsCell foreignTotals={aggregateForeign(tripDetailSummary)} />
+                          <ForeignAmountsCell foreignTotals={aggregateForeign(eventDetailSummary)} />
                         </td>
                       </tr>
                     </tfoot>
                   </table>
-                </>
-              )}
+                )}
               </>
             ) : (
-              /* 전체 여행 → 여행별 */
-              tripSummary.length === 0 ? (
-                <p className="empty-state">여행 데이터가 없습니다.</p>
+              /* 전체 일정 목록 */
+              eventSummary.length === 0 ? (
+                <p className="empty-state">일정 데이터가 없습니다.</p>
               ) : (
-                <>
-                  <table className="summary-table">
-                    <thead>
-                      <tr>
-                        <th>여행</th>
-                        <th>건수</th>
-                        <th>총액(원)</th>
-                        <th>현지 금액</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tripSummary.map(r => (
-                        <tr key={r.trip_id} className="clickable-row" onClick={() => setSelectedTripId(String(r.trip_id))}>
-                          <td className="nowrap-cell">
-                            {r.trip_name}<span className="drilldown-arrow">›</span>
-                            {r.trip_schedule && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>{r.trip_schedule}</span>}
-                          </td>
-                          <td>{r.cnt}</td>
-                          <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
-                          <td className="foreign-amounts-cell">
-                            <ForeignAmountsCell foreignTotals={r.foreignTotals} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan="2"><strong>합계</strong></td>
-                        <td className="total-cell">
-                          <strong>{formatAmount(tripTotalSpend - tripTotalDiscount)}원</strong>
+                <table className="summary-table">
+                  <thead>
+                    <tr>
+                      <th>일정</th>
+                      <th>건수</th>
+                      <th>총액(원)</th>
+                      <th>현지 금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eventSummary.map(r => (
+                      <tr key={r.event_id} className="clickable-row" onClick={() => setSelectedEventId(String(r.event_id))}>
+                        <td className="nowrap-cell">
+                          {r.event_title}<span className="drilldown-arrow">›</span>
+                          {r.date_from && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>{r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</span>}
                         </td>
+                        <td>{r.cnt}</td>
+                        <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                         <td className="foreign-amounts-cell">
-                          <ForeignAmountsCell foreignTotals={aggregateForeign(tripSummary)} />
+                          <ForeignAmountsCell foreignTotals={r.foreignTotals} />
                         </td>
                       </tr>
-                    </tfoot>
-                  </table>
-                </>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan="2"><strong>합계</strong></td>
+                      <td className="total-cell">
+                        <strong>{formatAmount(eventTotalSpend - eventTotalDiscount)}원</strong>
+                      </td>
+                      <td className="foreign-amounts-cell">
+                        <ForeignAmountsCell foreignTotals={aggregateForeign(eventSummary)} />
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               )
             )
           ) : drilldownCategory ? (

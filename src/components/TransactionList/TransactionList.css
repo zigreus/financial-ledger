@@ -265,6 +265,93 @@
 .btn-icon:hover { background: var(--bg); }
 .btn-delete:hover { background: #FEE2E2; }
 
+/* ── 달력 미니 ───────────────────────────────────────────── */
+.cal-mini-toggle-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  gap: 6px;
+}
+.cal-mini-toggle-btn:hover { background: var(--bg); }
+.cal-mini-toggle-label { font-weight: 500; color: var(--text); }
+
+.cal-mini {
+  padding: 8px 12px 4px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+}
+
+.cal-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal-mini-wd {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0 2px;
+}
+.cal-mini-wd.cal-sun { color: #ef4444; }
+.cal-mini-wd.cal-sat { color: #3b82f6; }
+
+.cal-mini-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 3px 1px 4px;
+  min-height: 40px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: default;
+  transition: background .12s, border-color .12s;
+}
+.cal-mini-cell.cal-mini-empty { cursor: default; }
+.cal-mini-cell.cal-mini-has-tx {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--primary) calc(var(--heat, 0) * 18%), transparent);
+}
+.cal-mini-cell.cal-mini-has-tx:hover {
+  background: color-mix(in srgb, var(--primary) calc(var(--heat, 0) * 28% + 6%), transparent);
+  border-color: var(--primary);
+}
+.cal-mini-cell.cal-mini-focused {
+  border-color: var(--primary) !important;
+  background: color-mix(in srgb, var(--primary) calc(var(--heat, 0) * 28% + 10%), transparent) !important;
+}
+.cal-mini-cell.cal-sun .cal-mini-day { color: #ef4444; }
+.cal-mini-cell.cal-sat .cal-mini-day { color: #3b82f6; }
+
+.cal-mini-day {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+.cal-mini-amount {
+  font-size: 9px;
+  color: var(--primary);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 /* ── 빈 상태 ─────────────────────────────────────────────── */
 .empty-state {
   text-align: center;
@@ -274,6 +361,26 @@
 .empty-state p { margin-bottom: 16px; font-size: 15px; }
 
 /* ── 정기지출 배지 ─────────────────────────────────────────── */
+.cal-toggle-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity .15s, border-color .15s;
+  line-height: 1;
+}
+.cal-toggle-btn:hover { opacity: 0.9; border-color: var(--border); }
+.cal-toggle-btn.active { opacity: 1; border-color: var(--primary); }
+
+.tx-item-date-focused {
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface)) !important;
+  border-left: 3px solid var(--primary);
+}
+
 .tx-recurring-badge {
   font-size: 11px;
   color: #7C3AED;

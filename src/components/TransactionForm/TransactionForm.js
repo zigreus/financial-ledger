@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getTrips } from '../../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
+
+const EVENT_TYPE_COLORS = {
+  trip: '#F0A500', occasion: '#EC4899', holiday: '#10B981',
+  medical: '#3B82F6', general: '#6366F1',
+};
 
 const EMPTY_FORM = {
   payment_method: '',
@@ -11,7 +16,7 @@ const EMPTY_FORM = {
   detail: '',
   amount: '',
   discount_amount: '',
-  trip_id: '',
+  event_id: '',
   foreign_amounts: {},
 };
 
@@ -150,14 +155,14 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
-  const [trips, setTrips] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
   const skipAutoDiscountRef = React.useRef(false);
   const skipSubResetRef = React.useRef(false);
 
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
     setBudgetCategories(getBudgetCategories(db));
-    setTrips(getTrips(db));
+    setCalendarEvents(getCalendarEvents(db));
   }, [db]);
 
   useEffect(() => {
@@ -174,7 +179,7 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
         detail: editingTx.detail || '',
         amount: editingTx.amount != null ? String(editingTx.amount) : '',
         discount_amount: editingTx.discount_amount ? String(editingTx.discount_amount) : '',
-        trip_id: editingTx.trip_id ? String(editingTx.trip_id) : '',
+        event_id: editingTx.event_id ? String(editingTx.event_id) : '',
         foreign_amounts,
       });
     } else {
@@ -220,12 +225,7 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
   };
 
   const handleCategoryChange = (value) => {
-    setForm(prev => ({
-      ...prev,
-      budget_category: value,
-      sub_category: '',
-      ...(value !== '여행' ? { trip_id: '', foreign_amounts: {} } : {}),
-    }));
+    setForm(prev => ({ ...prev, budget_category: value, sub_category: '' }));
   };
 
   const handleSubmit = (e) => {
@@ -236,7 +236,7 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
     const discountAmount = form.discount_amount ? evaluateFormula(form.discount_amount) : 0;
 
     const foreign_amounts = {};
-    if (form.trip_id) {
+    if (form.event_id) {
       Object.entries(form.foreign_amounts).forEach(([currency, val]) => {
         const num = parseFloat(val);
         if (!isNaN(num) && num > 0) foreign_amounts[currency] = num;
@@ -251,7 +251,7 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
       detail: form.detail,
       amount,
       discount_amount: discountAmount || 0,
-      trip_id: form.trip_id ? Number(form.trip_id) : null,
+      event_id: form.event_id ? Number(form.event_id) : null,
       foreign_amounts,
     });
   };
@@ -344,32 +344,42 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
             />
           </div>
 
-          {/* 여행 정보 (카테고리가 여행일 때만 표시) */}
-          {form.budget_category === '여행' && trips.length > 0 && (
+          {/* 일정 연결 */}
+          {calendarEvents.length > 0 && (
             <div className="form-group">
-              <label>여행 <span className="optional">(선택)</span></label>
+              <label>일정 <span className="optional">(선택)</span></label>
               <select
-                value={form.trip_id}
-                onChange={e => setForm(prev => ({ ...prev, trip_id: e.target.value, foreign_amounts: {} }))}
+                value={form.event_id}
+                onChange={e => setForm(prev => ({ ...prev, event_id: e.target.value, foreign_amounts: {} }))}
               >
-                <option value="">선택 안함</option>
-                {trips.map(t => (
-                  <option key={t.id} value={String(t.id)}>{t.name}{t.schedule ? ` (${t.schedule})` : ''}</option>
-                ))}
+                <option value="">없음</option>
+                {calendarEvents.map(ev => {
+                  const color = ev.color || EVENT_TYPE_COLORS[ev.event_type] || '#6366F1';
+                  const dateLabel = ev.date_from
+                    ? ev.date_to && ev.date_to !== ev.date_from
+                      ? ` (${ev.date_from.slice(5)} ~ ${ev.date_to.slice(5)})`
+                      : ` (${ev.date_from.slice(5)})`
+                    : '';
+                  return (
+                    <option key={ev.id} value={String(ev.id)} style={{ color }}>
+                      {ev.title}{dateLabel}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
 
-          {/* 현지 금액 (여행 선택 시 나라별 화폐 입력) */}
-          {form.budget_category === '여행' && form.trip_id && (() => {
-            const selectedTrip = trips.find(t => String(t.id) === form.trip_id);
-            if (!selectedTrip?.countries.length) return null;
+          {/* 현지 금액 (여행 유형 일정 선택 시) */}
+          {form.event_id && (() => {
+            const selectedEvent = calendarEvents.find(e => String(e.id) === form.event_id);
+            if (selectedEvent?.event_type !== 'trip' || !selectedEvent?.countries?.length) return null;
             return (
               <>
                 <div className="form-section-title">
                   현지 금액 <span className="optional">(선택)</span>
                 </div>
-                {selectedTrip.countries.map(c => (
+                {selectedEvent.countries.map(c => (
                   <div key={c.id} className="form-group">
                     <label>{c.country} ({c.currency})</label>
                     <input

@@ -127,3 +127,5 @@
   margin-bottom: 8px;
 }
 .nav-icon-add { font-size: 28px; line-height: 1; }
+.nav-add--event { background: #7C3AED; box-shadow: 0 4px 12px rgba(124,58,237,.4); }
+.nav-add--event .nav-icon-add { font-size: 22px; }
