@@ -258,41 +258,32 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               </div>
             )}
             {filterType === 'event' && (
-              <>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-                  <button
-                    className={`filter-type-btn${eventTypeFilter === '' ? ' active' : ''}`}
-                    style={{ fontSize: 11, padding: '3px 8px' }}
-                    onClick={() => { setEventTypeFilter(''); setSelectedEventId(''); }}
-                  >전체</button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={eventTypeFilter}
+                  onChange={e => { setEventTypeFilter(e.target.value); setSelectedEventId(''); }}
+                  style={{ flex: '0 0 auto' }}
+                >
+                  <option value="">전체 유형</option>
                   {eventTypes.map(t => (
-                    <button
-                      key={t.value}
-                      className={`filter-type-btn${eventTypeFilter === t.value ? ' active' : ''}`}
-                      style={{ fontSize: 11, padding: '3px 8px' }}
-                      onClick={() => { setEventTypeFilter(t.value); setSelectedEventId(''); }}
-                    >
-                      {t.value !== 'general' && (
-                        <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: t.color, marginRight: 4, verticalAlign: 'middle' }} />
-                      )}
-                      {t.label}
-                    </button>
+                    <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
-                </div>
+                </select>
                 {calendarEvents.length > 0 && (
-                  <select value={selectedEventId} onChange={e => setSelectedEventId(e.target.value)}>
+                  <select value={selectedEventId} onChange={e => setSelectedEventId(e.target.value)} style={{ flex: 1, minWidth: 0 }}>
                     <option value="">전체 일정</option>
                     {calendarEvents
                       .filter(ev => !eventTypeFilter || ev.event_type === eventTypeFilter)
+                      .sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''))
                       .map(ev => (
                         <option key={ev.id} value={String(ev.id)}>
-                          {ev.title}{ev.date_from ? ` (${ev.date_from.slice(5)})` : ''}
+                          {ev.title}{ev.date_from ? ` (${ev.date_from})` : ''}
                         </option>
                       ))
                     }
                   </select>
                 )}
-              </>
+              </div>
             )}
           </div>
 
