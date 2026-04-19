@@ -192,13 +192,12 @@
 
 .cv-cell {
   position: relative;
-  min-height: 40px;
-  padding: 3px 2px 4px;
+  min-height: 28px;
+  padding: 4px 2px;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   transition: background .12s;
   border-radius: 0;
 }
@@ -215,24 +214,18 @@
   display: flex; align-items: center; justify-content: center;
 }
 
-.cv-cell-selected .cv-cell-day-num {
-  background: color-mix(in srgb, var(--primary) 20%, transparent);
-  border-radius: 50%;
-  width: 22px;
-  height: 22px;
-  display: flex; align-items: center; justify-content: center;
-}
-
 .cv-cell-day-num {
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 .cv-cell.cv-sun .cv-cell-day-num { color: #ef4444; }
 .cv-cell.cv-sat .cv-cell-day-num { color: #3b82f6; }
-.cv-cell-today .cv-cell-day-num,
-.cv-cell-selected .cv-cell-day-num { color: inherit; }
+.cv-cell-today .cv-cell-day-num { color: inherit; }
 
 .cv-cell-heat {
   width: 5px; height: 5px;

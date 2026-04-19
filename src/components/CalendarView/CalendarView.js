@@ -532,32 +532,10 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
         {weekRows.map((row, wi) => {
           const bars = weekBarData[wi];
           const maxLane = bars.length ? Math.max(...bars.map(b => b.lane)) : -1;
-          const barsHeight = maxLane >= 0 ? (maxLane + 1) * 16 + 4 : 0;
+          const barsHeight = Math.max((maxLane + 1) * 16 + 4, 20);
 
           return (
             <div className="cv-week-row" key={wi}>
-              {/* 이벤트 바 */}
-              {barsHeight > 0 && (
-                <div className="cv-event-bars" style={{ height: barsHeight }}>
-                  {bars.map(({ ev, startCol, endCol, lane }, bi) => {
-                    const colW = 100 / 7;
-                    const left = `${startCol * colW}%`;
-                    const width = `${(endCol - startCol + 1) * colW}%`;
-                    const top = lane * 16 + 2;
-                    const color = resolveEventColor(ev, eventTypeMap);
-                    return (
-                      <div
-                        key={bi}
-                        className="cv-event-bar"
-                        style={{ left, width, top, background: color }}
-                        onClick={e => handleEventBarClick(ev, e)}
-                      >
-                        <span className="cv-event-bar-label">{ev.title}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
               {/* 날짜 셀 */}
               <div className="cv-dates">
                 {row.map((dateStr, ci) => {
@@ -577,11 +555,33 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
 
                   return (
                     <div key={dateStr} className={cls} onClick={() => handleDateClick(dateStr)}>
-                      <span className="cv-cell-day-num">{parseInt(dateStr.slice(8))}</span>
-                      {info && <div className="cv-cell-heat" style={{ '--heat': ratio }} />}
+                      <span className="cv-cell-day-num">
+                        {parseInt(dateStr.slice(8))}
+                        {info && <div className="cv-cell-heat" style={{ '--heat': ratio }} />}
+                      </span>
                     </div>
                   );
                 })}
+              </div>
+              {/* 이벤트 바 */}
+              <div className="cv-event-bars" style={{ height: barsHeight }}>
+                  {bars.map(({ ev, startCol, endCol, lane }, bi) => {
+                    const colW = 100 / 7;
+                    const left = `${startCol * colW}%`;
+                    const width = `${(endCol - startCol + 1) * colW}%`;
+                    const top = lane * 16 + 2;
+                    const color = resolveEventColor(ev, eventTypeMap);
+                    return (
+                      <div
+                        key={bi}
+                        className="cv-event-bar"
+                        style={{ left, width, top, background: color }}
+                        onClick={e => handleEventBarClick(ev, e)}
+                      >
+                        <span className="cv-event-bar-label">{ev.title}</span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           );
