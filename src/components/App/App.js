@@ -28,6 +28,7 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
+  const [defaultFormDate, setDefaultFormDate] = useState(null);
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
 
@@ -207,7 +208,8 @@ function App() {
     showToast('✓ 거래가 삭제되었습니다');
   }, [db, showToast, saveAndReload]);
 
-  const openAdd = () => {
+  const openAdd = (date) => {
+    setDefaultFormDate(date || null);
     navigate({ showForm: true, editingTx: null });
   };
 
@@ -218,6 +220,7 @@ function App() {
   const closeForm = () => {
     setShowForm(false);
     setEditingTx(null);
+    setDefaultFormDate(null);
     window.history.back();
   };
 
@@ -375,6 +378,7 @@ function App() {
         <TransactionForm
           db={db}
           editingTx={editingTx}
+          defaultDate={defaultFormDate}
           onSave={editingTx ? handleUpdate : handleAdd}
           onCancel={closeForm}
         />

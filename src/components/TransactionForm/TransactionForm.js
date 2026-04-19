@@ -150,7 +150,7 @@ function FormulaInput({ label, value, onChange, required, placeholder }) {
   );
 }
 
-function TransactionForm({ db, editingTx, onSave, onCancel }) {
+function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -190,9 +190,9 @@ function TransactionForm({ db, editingTx, onSave, onCancel }) {
         foreign_amounts,
       });
     } else {
-      setForm(EMPTY_FORM);
+      setForm(defaultDate ? { ...EMPTY_FORM, date: defaultDate } : EMPTY_FORM);
     }
-  }, [editingTx]);
+  }, [editingTx, defaultDate]);
 
   useEffect(() => {
     const subs = getSubCategories(db, form.budget_category);

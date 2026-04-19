@@ -396,8 +396,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
       return dateStr >= f && dateStr <= (t || f);
     });
     if (!hasTx && !hasEv) {
-      // open add transaction
-      if (onAddTransaction) onAddTransaction();
+      if (onAddTransaction) onAddTransaction(dateStr);
       return;
     }
     setSelectedDate(dateStr);
@@ -415,8 +414,9 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
   }
 
   function openAddFromSheet() {
+    const date = selectedDate;
     setSelectedDate(null);
-    if (onAddTransaction) onAddTransaction();
+    if (onAddTransaction) onAddTransaction(date);
   }
 
   function openAddEventFromSheet(date) {
