@@ -387,3 +387,26 @@
 .rule-form-input:focus {
   border-color: var(--primary);
 }
+
+.settings-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.settings-subtab {
+  padding: 4px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  background: var(--bg-secondary, var(--surface));
+  border: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.settings-subtab.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}

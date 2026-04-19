@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents } from '../../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 
-const EVENT_TYPE_COLORS = {
-  trip: '#F0A500', occasion: '#EC4899', holiday: '#10B981',
-  medical: '#3B82F6', general: '#6366F1',
-};
 
 const EMPTY_FORM = {
   payment_method: '',
@@ -156,12 +152,15 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const [budgetCategories, setBudgetCategories] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
   const [calendarEvents, setCalendarEvents] = useState([]);
+  const [eventTypeMap, setEventTypeMap] = useState({});
   const skipAutoDiscountRef = React.useRef(false);
   const skipSubResetRef = React.useRef(false);
 
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
     setBudgetCategories(getBudgetCategories(db));
+    const types = getCalendarEventTypes(db);
+    setEventTypeMap(Object.fromEntries(types.map(t => [t.value, t])));
     const events = getCalendarEvents(db);
     events.sort((a, b) => {
       if (!a.date_from && !b.date_from) return 0;
@@ -361,7 +360,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
               >
                 <option value="">없음</option>
                 {calendarEvents.map(ev => {
-                  const color = ev.color || EVENT_TYPE_COLORS[ev.event_type] || '#6366F1';
+                  const color = ev.color || eventTypeMap[ev.event_type]?.color || '#9CA3AF';
                   const dateLabel = ev.date_from
                     ? ev.date_to && ev.date_to !== ev.date_from
                       ? ` (${ev.date_from.slice(0, 4)}, ${ev.date_from.slice(5)} ~ ${ev.date_to.slice(5)})`
@@ -380,7 +379,8 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
           {/* 현지 금액 (여행 유형 일정 선택 시) */}
           {form.event_id && (() => {
             const selectedEvent = calendarEvents.find(e => String(e.id) === form.event_id);
-            if (selectedEvent?.event_type !== 'trip' || !selectedEvent?.countries?.length) return null;
+            const selectedType = eventTypeMap[selectedEvent?.event_type];
+            if (!selectedType?.is_trip_type || !selectedEvent?.countries?.length) return null;
             return (
               <>
                 <div className="form-section-title">

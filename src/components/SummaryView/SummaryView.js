@@ -6,7 +6,7 @@ import {
   getYearlySummary, getYearlyPaymentMethodSummary, getYearlySubCategorySummary,
   getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
   getAvailableYears, getEventSummary, getEventDetailSummary, getEventPaymentMethodSummary,
-  getCalendarEvents, getMonthlyTotalsWithGoals, getSetting,
+  getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './SummaryView.css';
@@ -145,6 +145,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
     return [];
   }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId]);
 
+  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db]);
+  const eventTypeMap = useMemo(
+    () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
+    [eventTypes]
+  );
+
   const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, eventTypeFilter]);
   const eventDetailSummary = useMemo(
     () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
@@ -159,6 +165,24 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
 
   const detailTotalSpend = useMemo(() => eventDetailSummary.reduce((s, r) => s + r.total, 0), [eventDetailSummary]);
   const detailTotalDiscount = useMemo(() => eventDetailSummary.reduce((s, r) => s + (r.discount || 0), 0), [eventDetailSummary]);
+
+  // 결제수단 탭 일정 전체 모드: payment_method별로 event_type 소계 그룹핑
+  const groupedPaymentSummary = useMemo(() => {
+    if (filterType !== 'event' || selectedEventId) return null;
+    const groups = {};
+    const order = [];
+    paymentSummary.forEach(r => {
+      if (!groups[r.payment_method]) {
+        groups[r.payment_method] = { payment_method: r.payment_method, total: 0, discount: 0, cnt: 0, types: [] };
+        order.push(r.payment_method);
+      }
+      groups[r.payment_method].total += r.total || 0;
+      groups[r.payment_method].discount += r.discount || 0;
+      groups[r.payment_method].cnt += r.cnt || 0;
+      if (r.event_type) groups[r.payment_method].types.push(r);
+    });
+    return order.map(k => groups[k]).sort((a, b) => b.total - a.total);
+  }, [paymentSummary, filterType, selectedEventId]);
 
   const showFilter = tab === 'category' || tab === 'payment';
   const hasDateFilter = (filterType === 'month' && selectedMonth) ||
@@ -236,13 +260,23 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             {filterType === 'event' && (
               <>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-                  {[['', '전체'], ['trip', '여행'], ['occasion', '경조사'], ['holiday', '명절'], ['medical', '의료'], ['general', '기타']].map(([val, label]) => (
+                  <button
+                    className={`filter-type-btn${eventTypeFilter === '' ? ' active' : ''}`}
+                    style={{ fontSize: 11, padding: '3px 8px' }}
+                    onClick={() => { setEventTypeFilter(''); setSelectedEventId(''); }}
+                  >전체</button>
+                  {eventTypes.map(t => (
                     <button
-                      key={val}
-                      className={`filter-type-btn${eventTypeFilter === val ? ' active' : ''}`}
+                      key={t.value}
+                      className={`filter-type-btn${eventTypeFilter === t.value ? ' active' : ''}`}
                       style={{ fontSize: 11, padding: '3px 8px' }}
-                      onClick={() => { setEventTypeFilter(val); setSelectedEventId(''); }}
-                    >{label}</button>
+                      onClick={() => { setEventTypeFilter(t.value); setSelectedEventId(''); }}
+                    >
+                      {t.value !== 'general' && (
+                        <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: t.color, marginRight: 4, verticalAlign: 'middle' }} />
+                      )}
+                      {t.label}
+                    </button>
                   ))}
                 </div>
                 {calendarEvents.length > 0 && (
@@ -430,8 +464,26 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     {eventSummary.map(r => (
                       <tr key={r.event_id} className="clickable-row" onClick={() => setSelectedEventId(String(r.event_id))}>
                         <td className="nowrap-cell">
-                          {r.event_title}<span className="drilldown-arrow">›</span>
-                          {r.date_from && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>{r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</span>}
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                            {r.event_type !== 'general' && (
+                              <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
+                                background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
+                            )}
+                            <span>
+                              {r.event_title}<span className="drilldown-arrow">›</span>
+                              {r.event_type !== 'general' && (
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 4 }}>
+                                  {eventTypeMap[r.event_type]?.label ?? r.event_type}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          {r.date_from && (
+                            <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)',
+                              paddingLeft: r.event_type !== 'general' ? 15 : 0 }}>
+                              {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}
+                            </span>
+                          )}
                         </td>
                         <td>{r.cnt}</td>
                         <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
@@ -578,48 +630,110 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
       {/* 결제수단별 탭 */}
       {tab === 'payment' && (
         <div className="summary-section">
-          {paymentSummary.length === 0 ? (
-            <p className="empty-state">데이터가 없습니다.</p>
-          ) : (
-            <table className="summary-table">
-              <thead>
-                <tr>
-                  <th>결제수단</th>
-                  <th>건수</th>
-                  <th>지출/할인</th>
-                  <th>총액</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paymentSummary.map(r => (
-                  <tr key={r.payment_method}>
-                    <td>{r.payment_method}</td>
-                    <td>{r.cnt}</td>
+          {groupedPaymentSummary ? (
+            /* 일정 전체 모드: 유형별 소계 */
+            groupedPaymentSummary.length === 0 ? (
+              <p className="empty-state">데이터가 없습니다.</p>
+            ) : (
+              <table className="summary-table">
+                <thead>
+                  <tr>
+                    <th>결제수단</th>
+                    <th>건수</th>
+                    <th>지출/할인</th>
+                    <th>총액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupedPaymentSummary.map(g => (
+                    <React.Fragment key={g.payment_method}>
+                      <tr style={{ fontWeight: 600 }}>
+                        <td>{g.payment_method}</td>
+                        <td>{g.cnt}</td>
+                        <td className="amount-cell">
+                          {formatAmount(g.total)}원
+                          {g.discount > 0 && <div className="cell-sub-line cell-sub-discount">-{formatAmount(g.discount)}원</div>}
+                        </td>
+                        <td className="total-cell">{formatAmount(g.total - g.discount)}원</td>
+                      </tr>
+                      {g.types.length > 1 && g.types.map(t => (
+                        <tr key={t.event_type} style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          <td style={{ paddingLeft: 16 }}>
+                            {t.event_type !== 'general' && (
+                              <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                                background: eventTypeMap[t.event_type]?.color || '#9CA3AF', marginRight: 5, verticalAlign: 'middle' }} />
+                            )}
+                            {eventTypeMap[t.event_type]?.label ?? t.event_type}
+                          </td>
+                          <td>{t.cnt}</td>
+                          <td className="amount-cell">{formatAmount(t.total)}원</td>
+                          <td className="total-cell">{formatAmount(t.total - (t.discount || 0))}원</td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan="2"><strong>합계</strong></td>
                     <td className="amount-cell">
-                      {formatAmount(r.total)}원
-                      {r.discount > 0 && (
-                        <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                      <strong>{formatAmount(groupedPaymentSummary.reduce((s, r) => s + r.total, 0))}원</strong>
+                      {groupedPaymentSummary.reduce((s, r) => s + r.discount, 0) > 0 && (
+                        <div className="cell-sub-line cell-sub-discount">-{formatAmount(groupedPaymentSummary.reduce((s, r) => s + r.discount, 0))}원</div>
                       )}
                     </td>
-                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                    <td className="total-cell">
+                      <strong>{formatAmount(groupedPaymentSummary.reduce((s, r) => s + r.total - r.discount, 0))}원</strong>
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan="2"><strong>합계</strong></td>
-                  <td className="amount-cell">
-                    <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total, 0))}원</strong>
-                    {paymentSummary.reduce((s, r) => s + (r.discount || 0), 0) > 0 && (
-                      <div className="cell-sub-line cell-sub-discount">-{formatAmount(paymentSummary.reduce((s, r) => s + (r.discount || 0), 0))}원</div>
-                    )}
-                  </td>
-                  <td className="total-cell">
-                    <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total - (r.discount || 0), 0))}원</strong>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                </tfoot>
+              </table>
+            )
+          ) : (
+            /* 일반 모드 */
+            paymentSummary.length === 0 ? (
+              <p className="empty-state">데이터가 없습니다.</p>
+            ) : (
+              <table className="summary-table">
+                <thead>
+                  <tr>
+                    <th>결제수단</th>
+                    <th>건수</th>
+                    <th>지출/할인</th>
+                    <th>총액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentSummary.map(r => (
+                    <tr key={r.payment_method}>
+                      <td>{r.payment_method}</td>
+                      <td>{r.cnt}</td>
+                      <td className="amount-cell">
+                        {formatAmount(r.total)}원
+                        {r.discount > 0 && (
+                          <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>
+                        )}
+                      </td>
+                      <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan="2"><strong>합계</strong></td>
+                    <td className="amount-cell">
+                      <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total, 0))}원</strong>
+                      {paymentSummary.reduce((s, r) => s + (r.discount || 0), 0) > 0 && (
+                        <div className="cell-sub-line cell-sub-discount">-{formatAmount(paymentSummary.reduce((s, r) => s + (r.discount || 0), 0))}원</div>
+                      )}
+                    </td>
+                    <td className="total-cell">
+                      <strong>{formatAmount(paymentSummary.reduce((s, r) => s + r.total - (r.discount || 0), 0))}원</strong>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )
           )}
         </div>
       )}

@@ -120,6 +120,16 @@ CREATE TABLE IF NOT EXISTS event_countries (
   currency TEXT NOT NULL,
   sort_order INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS calendar_event_types (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  value        TEXT    NOT NULL UNIQUE,
+  label        TEXT    NOT NULL,
+  color        TEXT    NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  is_system    INTEGER NOT NULL DEFAULT 0,
+  is_trip_type INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 
@@ -236,6 +246,21 @@ export function createDatabase(SQL, existingData = null) {
       }
       didMigrate = true;
     }
+  } catch (e) {}
+
+  // ── calendar_event_types 초기화 및 데이터 정규화 ────────────────────
+  try {
+    db.run(`INSERT OR IGNORE INTO calendar_event_types (value, label, color, sort_order, is_system, is_trip_type)
+      VALUES
+        ('trip',     '여행',   '#F0A500', 0,   1, 1),
+        ('occasion', '경조사', '#EC4899', 1,   0, 0),
+        ('general',  '기타',   '#9CA3AF', 999, 1, 0)`);
+    // 구 유형(holiday, medical) → general 이전
+    db.run(`UPDATE calendar_events SET event_type = 'general' WHERE event_type IN ('holiday', 'medical')`);
+    // 미정의 event_type 방어
+    db.run(`UPDATE calendar_events SET event_type = 'general'
+            WHERE event_type NOT IN (SELECT value FROM calendar_event_types)`);
+    didMigrate = true;
   } catch (e) {}
 
   return { db, didMigrate };
@@ -486,6 +511,71 @@ export function deleteEventCountry(db, id) {
   db.run('DELETE FROM event_countries WHERE id = ?', [id]);
 }
 
+// ── 캘린더 일정 유형 ────────────────────────────────────────────────
+
+export function getCalendarEventTypes(db) {
+  if (!db) return [];
+  const res = db.exec(
+    'SELECT id, value, label, color, sort_order, is_system, is_trip_type FROM calendar_event_types ORDER BY sort_order, id'
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => { const o = {}; columns.forEach((c, i) => o[c] = row[i]); return o; });
+}
+
+export function addCalendarEventType(db, { label, color }) {
+  if (!label?.trim()) throw new Error('유형 이름을 입력하세요');
+  const slug = label.trim().replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+  const value = (slug.replace(/_/g, '').length >= 2) ? slug : 'type_' + Date.now();
+  const maxSort = db.exec(
+    "SELECT COALESCE(MAX(sort_order), 0) FROM calendar_event_types WHERE value != 'general'"
+  );
+  const nextSort = (maxSort[0]?.values[0][0] ?? 0) + 1;
+  db.run(
+    'INSERT INTO calendar_event_types (value, label, color, sort_order, is_system, is_trip_type) VALUES (?, ?, ?, ?, 0, 0)',
+    [value, label.trim(), color || '#9CA3AF', nextSort]
+  );
+}
+
+export function updateCalendarEventType(db, id, { label, color }) {
+  if (!label?.trim()) throw new Error('유형 이름을 입력하세요');
+  db.run('UPDATE calendar_event_types SET label=?, color=? WHERE id=?', [label.trim(), color, id]);
+}
+
+export function deleteCalendarEventType(db, id) {
+  const row = db.exec('SELECT value, is_system FROM calendar_event_types WHERE id = ?', [id]);
+  if (!row.length || !row[0].values.length) throw new Error('유형을 찾을 수 없습니다');
+  const [value, isSystem] = row[0].values[0];
+  if (isSystem) throw new Error('시스템 유형은 삭제할 수 없습니다');
+  const usage = db.exec('SELECT COUNT(*) FROM calendar_events WHERE event_type = ?', [value]);
+  const cnt = usage[0]?.values[0][0] || 0;
+  if (cnt > 0) throw new Error(`${cnt}개 일정에서 사용 중입니다`);
+  db.run('DELETE FROM calendar_event_types WHERE id = ?', [id]);
+}
+
+export function moveCalendarEventType(db, id, targetIndex) {
+  const all = getCalendarEventTypes(db).filter(t => t.value !== 'general');
+  const fromIdx = all.findIndex(t => t.id === id);
+  if (fromIdx === -1) return;
+  const reordered = [...all];
+  const [moved] = reordered.splice(fromIdx, 1);
+  reordered.splice(targetIndex, 0, moved);
+  reordered.forEach((t, i) => {
+    db.run('UPDATE calendar_event_types SET sort_order=? WHERE id=?', [i, t.id]);
+  });
+  db.run("UPDATE calendar_event_types SET sort_order=999 WHERE value='general'");
+}
+
+export function getCalendarEventTypeUsageCount(db, value) {
+  if (!db) return 0;
+  const res = db.exec('SELECT COUNT(*) FROM calendar_events WHERE event_type = ?', [value]);
+  return res[0]?.values[0][0] || 0;
+}
+
+export function setCalendarEventTypeTripFlag(db, id, isTripType) {
+  db.run('UPDATE calendar_event_types SET is_trip_type=? WHERE id=?', [isTripType ? 1 : 0, id]);
+}
+
 // ── 캘린더 이벤트 요약 (요약 탭 일정별) ────────────────────────────
 
 function aggregateEventRows(rows, keyField) {
@@ -561,13 +651,24 @@ export function getEventDetailSummary(db, eventId) {
 
 export function getEventPaymentMethodSummary(db, eventId = null) {
   if (!db) return [];
-  const where = eventId ? 'event_id = ?' : 'event_id IS NOT NULL';
-  const params = eventId ? [eventId] : [];
-  const res = db.exec(
-    `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-     FROM transactions WHERE ${where} GROUP BY payment_method ORDER BY total DESC`,
-    params
-  );
+  let q, params;
+  if (eventId) {
+    q = `SELECT t.payment_method, '' as event_type,
+                SUM(t.amount) as total, SUM(t.discount_amount) as discount, COUNT(*) as cnt
+         FROM transactions t WHERE t.event_id = ?
+         GROUP BY t.payment_method ORDER BY total DESC`;
+    params = [eventId];
+  } else {
+    q = `SELECT t.payment_method, ce.event_type,
+                SUM(t.amount) as total, SUM(t.discount_amount) as discount, COUNT(*) as cnt
+         FROM transactions t
+         JOIN calendar_events ce ON t.event_id = ce.id
+         WHERE t.event_id IS NOT NULL
+         GROUP BY t.payment_method, ce.event_type
+         ORDER BY t.payment_method, total DESC`;
+    params = [];
+  }
+  const res = db.exec(q, params);
   if (!res.length) return [];
   const { columns, values } = res[0];
   return values.map(row => { const o = {}; columns.forEach((c, i) => o[c] = row[i]); return o; });

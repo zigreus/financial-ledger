@@ -12,6 +12,7 @@ import {
   updateEventCountry,
   deleteEventCountry,
   deleteTransaction,
+  getCalendarEventTypes,
 } from '../../services/dbManager';
 
 // ── 카테고리 컬러 ──────────────────────────────────────────
@@ -38,14 +39,6 @@ function categoryColor(cat) {
 }
 
 // ── 상수 ───────────────────────────────────────────────────
-const EVENT_TYPES = [
-  { value: 'trip',      label: '여행',   color: '#F0A500' },
-  { value: 'occasion',  label: '경조사', color: '#EC4899' },
-  { value: 'holiday',   label: '명절',   color: '#10B981' },
-  { value: 'medical',   label: '의료',   color: '#3B82F6' },
-  { value: 'general',   label: '기타',   color: '#6366F1' },
-];
-const EVENT_TYPE_MAP = Object.fromEntries(EVENT_TYPES.map(t => [t.value, t]));
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 function todayStr() {
@@ -65,8 +58,9 @@ function eventDateRange(ev) {
   return `${formatDateKo(ev.date_from)} ~ ${formatDateKo(ev.date_to)}`;
 }
 
-function eventColor(ev) {
-  return ev.color || EVENT_TYPE_MAP[ev.event_type]?.color || '#6366F1';
+function resolveEventColor(ev, eventTypeMap) {
+  if (ev.color) return ev.color;
+  return eventTypeMap[ev.event_type]?.color ?? '#9CA3AF';
 }
 
 // ── 주 행 레이아웃 계산 ────────────────────────────────────
@@ -117,7 +111,7 @@ const EMPTY_FORM = {
   countries: [], // [{id, country, currency}]
 };
 
-function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel }) {
+function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, eventTypes = [], eventTypeMap = {} }) {
   const [form, setForm] = useState(() => {
     if (editingEvent) {
       return {
@@ -140,7 +134,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
   const [error, setError] = useState('');
   const colorRef = useRef(null);
 
-  const typeInfo = EVENT_TYPE_MAP[form.event_type] || EVENT_TYPE_MAP.general;
+  const typeInfo = eventTypeMap[form.event_type] || eventTypeMap['general'] || { color: '#9CA3AF' };
   const displayColor = form.color || typeInfo.color;
 
   function setField(key, val) {
@@ -148,7 +142,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
   }
 
   function handleTypeChange(t) {
-    const tc = EVENT_TYPE_MAP[t];
+    const tc = eventTypeMap[t];
     setForm(f => ({ ...f, event_type: t, color: tc ? tc.color : '' }));
   }
 
@@ -229,7 +223,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
           <div className="cv-form-field">
             <label className="cv-form-label">유형</label>
             <div className="cv-form-type-chips">
-              {EVENT_TYPES.map(t => (
+              {eventTypes.filter(t => t.value !== 'general').map(t => (
                 <button
                   key={t.value}
                   className={`cv-form-type-chip${form.event_type === t.value ? ' active' : ''}`}
@@ -237,6 +231,13 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
                   onClick={() => handleTypeChange(t.value)}
                 >{t.label}</button>
               ))}
+              {eventTypes.find(t => t.value === 'general') && (
+                <button
+                  className={`cv-form-type-chip${form.event_type === 'general' ? ' active' : ''}`}
+                  style={form.event_type === 'general' ? { background: eventTypeMap['general']?.color || '#9CA3AF' } : {}}
+                  onClick={() => handleTypeChange('general')}
+                >{eventTypeMap['general']?.label || '기타'}</button>
+              )}
             </div>
           </div>
 
@@ -275,7 +276,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
             </div>
           </div>
 
-          {form.event_type === 'trip' && (
+          {eventTypeMap[form.event_type]?.is_trip_type === 1 && (
             <div className="cv-form-field">
               <label className="cv-form-label">여행 국가/화폐</label>
               {form.countries.map((c, i) => (
@@ -342,6 +343,12 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
 
   const monthStart = currentMonth + '-01';
   const monthEnd   = `${currentMonth}-${String(days).padStart(2,'0')}`;
+
+  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db]);
+  const eventTypeMap = useMemo(
+    () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
+    [eventTypes]
+  );
 
   const events = useMemo(() => db ? getCalendarEventsInRange(db, monthStart, monthEnd) : [], [db, monthStart, monthEnd]);
   const undatedEvents = useMemo(() => db ? getUndatedCalendarEvents(db) : [], [db]);
@@ -544,7 +551,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
                     const left = `${startCol * colW}%`;
                     const width = `${(endCol - startCol + 1) * colW}%`;
                     const top = lane * 16 + 2;
-                    const color = eventColor(ev);
+                    const color = resolveEventColor(ev, eventTypeMap);
                     return (
                       <div
                         key={bi}
@@ -594,9 +601,9 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
           <div className="cv-undated-title">날짜 미정</div>
           {undatedEvents.map(ev => (
             <div key={ev.id} className="cv-undated-item" onClick={() => handleUndatedClick(ev)}>
-              <div className="cv-event-dot" style={{ background: eventColor(ev) }} />
+              <div className="cv-event-dot" style={{ background: resolveEventColor(ev, eventTypeMap) }} />
               <span className="cv-undated-item-title">{ev.title}</span>
-              <span className="cv-undated-item-type">{EVENT_TYPE_MAP[ev.event_type]?.label || ''}</span>
+              <span className="cv-undated-item-type">{eventTypeMap[ev.event_type]?.label || ''}</span>
             </div>
           ))}
         </div>
@@ -626,7 +633,7 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
                   <div className="cv-bs-section-title">일정</div>
                   {bottomSheetEvents.map(ev => (
                     <div key={ev.id} className="cv-bs-event-item" onClick={() => { setSelectedDate(null); setEditingEvent(ev); setInternalEventForm(true); }}>
-                      <div className="cv-bs-event-bar" style={{ background: eventColor(ev) }} />
+                      <div className="cv-bs-event-bar" style={{ background: resolveEventColor(ev, eventTypeMap) }} />
                       <div className="cv-bs-event-info">
                         <div className="cv-bs-event-title">{ev.title}</div>
                         <div className="cv-bs-event-dates">{eventDateRange(ev)}</div>
@@ -727,6 +734,8 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
           onSave={handleFormSave}
           onDelete={handleFormDelete}
           onCancel={handleFormCancel}
+          eventTypes={eventTypes}
+          eventTypeMap={eventTypeMap}
         />
       )}
     </div>

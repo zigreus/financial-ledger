@@ -12,6 +12,9 @@ import {
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
   deleteRecurringTransaction, getRegistrationLog,
   evaluateDiscountRule,
+  getCalendarEventTypes, addCalendarEventType, updateCalendarEventType,
+  deleteCalendarEventType, moveCalendarEventType,
+  getCalendarEventTypeUsageCount, setCalendarEventTypeTripFlag,
 } from '../../services/dbManager';
 import './SettingsView.css';
 
@@ -101,6 +104,21 @@ const [dragId, setDragId] = useState(null);
   const showCalBtnPc = useMemo(() => getSetting(db, 'show_calendar_btn_pc', '1') !== '0', [db]);
   const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
   const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
+
+  // 캘린더 섹션
+  const [calendarSubTab, setCalendarSubTab] = useState('types');
+  const [eventTypes, setEventTypes] = useState(() => getCalendarEventTypes(db) || []);
+  const [editingTypeId, setEditingTypeId] = useState(null);
+  const [editingTypeLabel, setEditingTypeLabel] = useState('');
+  const [editingTypeColor, setEditingTypeColor] = useState('');
+  const [deletingTypeId, setDeletingTypeId] = useState(null);
+  const [newTypeLabel, setNewTypeLabel] = useState('');
+  const [newTypeColor, setNewTypeColor] = useState('#4ECDC4');
+  const [typeError, setTypeError] = useState('');
+  const [typeDragId, setTypeDragId] = useState(null);
+  const [typeDragOver, setTypeDragOver] = useState(null);
+
+  const refreshEventTypes = () => setEventTypes(getCalendarEventTypes(db) || []);
 
   // 정기지출 섹션
   const emptyRecurringForm = {
@@ -566,6 +584,7 @@ const [dragId, setDragId] = useState(null);
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={activeSection === 'budget' ? 'tab active' : 'tab'} onClick={() => switchSection('budget')}>예산</button>
         <button className={activeSection === 'recurring' ? 'tab active' : 'tab'} onClick={() => { switchSection('recurring'); setShowRecurringForm(false); }}>정기지출</button>
+        <button className={activeSection === 'calendar' ? 'tab active' : 'tab'} onClick={() => switchSection('calendar')}>캘린더</button>
       </div>
 
       {/* 드릴다운 뒤로가기 */}
@@ -661,54 +680,236 @@ const [dragId, setDragId] = useState(null);
               개별 월 목표금액은 거래내역 화면의 월 헤더에서 설정할 수 있습니다.
             </div>
 
-            {/* 달력 버튼 표시 */}
-            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 버튼 표시 (거래내역)</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: '13px' }}>PC</div>
-                  <button
-                    className={`goal-display-toggle${showCalBtnPc ? ' goal-display-toggle--on' : ''}`}
-                    onClick={() => { setSetting(db, 'show_calendar_btn_pc', showCalBtnPc ? '0' : '1'); onChanged(); }}
-                  >
-                    <span className="goal-display-toggle-knob" />
-                  </button>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: '13px' }}>모바일</div>
-                  <button
-                    className={`goal-display-toggle${showCalBtnMobile ? ' goal-display-toggle--on' : ''}`}
-                    onClick={() => { setSetting(db, 'show_calendar_btn_mobile', showCalBtnMobile ? '0' : '1'); onChanged(); }}
-                  >
-                    <span className="goal-display-toggle-knob" />
-                  </button>
-                </div>
-              </div>
+          </div>
+        )}
+
+        {/* ── 캘린더 탭 ── */}
+        {activeSection === 'calendar' && (
+          <div>
+            {/* 서브탭 */}
+            <div className="settings-subtabs">
+              <button
+                className={`settings-subtab${calendarSubTab === 'types' ? ' active' : ''}`}
+                onClick={() => { setCalendarSubTab('types'); setTypeError(''); }}
+              >일정 유형</button>
+              <button
+                className={`settings-subtab${calendarSubTab === 'display' ? ' active' : ''}`}
+                onClick={() => setCalendarSubTab('display')}
+              >표시 설정</button>
             </div>
 
-            {/* 달력 금액 단위 */}
-            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 금액 단위</div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {[['만', '만원'], ['k', 'k (천)'], ['hidden', '숨김']].map(([val, label]) => (
-                  <button
-                    key={val}
-                    onClick={() => { setSetting(db, 'calendar_mini_amount_unit', val); onChanged(); }}
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      border: `1px solid ${calAmountUnit === val ? 'var(--primary)' : 'var(--border)'}`,
-                      borderRadius: '8px',
-                      background: calAmountUnit === val ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'var(--bg)',
-                      color: calAmountUnit === val ? 'var(--primary)' : 'var(--text)',
-                      fontWeight: calAmountUnit === val ? '700' : '400',
-                      fontSize: '13px',
-                      cursor: 'pointer',
+            {/* 일정 유형 서브탭 */}
+            {calendarSubTab === 'types' && (
+              <div>
+                {typeError && <div className="error-msg" style={{ marginBottom: '10px' }}>{typeError}</div>}
+
+                {/* 유형 목록 */}
+                <div style={{ marginBottom: '16px' }}>
+                  {eventTypes.filter(t => t.value !== 'general').map((t, idx) => {
+                    const usageCount = deletingTypeId === t.id ? getCalendarEventTypeUsageCount(db, t.value) : 0;
+                    return (
+                      <div key={t.id}>
+                        {editingTypeId === t.id ? (
+                          /* 편집 행 */
+                          <div className="settings-item" style={{ gap: '8px' }}>
+                            <div style={{ position: 'relative', flexShrink: 0 }}>
+                              <div style={{ width: 28, height: 28, borderRadius: '50%', background: editingTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
+                              <input
+                                type="color"
+                                value={editingTypeColor}
+                                onChange={e => setEditingTypeColor(e.target.value)}
+                                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }}
+                              />
+                            </div>
+                            <input
+                              className="settings-inline-input"
+                              style={{ flex: 1 }}
+                              value={editingTypeLabel}
+                              onChange={e => setEditingTypeLabel(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  try { updateCalendarEventType(db, t.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); }
+                                  catch(err) { setTypeError(err.message); }
+                                }
+                                if (e.key === 'Escape') setEditingTypeId(null);
+                              }}
+                              autoFocus
+                            />
+                            <button className="btn-icon btn-icon--success" onClick={() => {
+                              try { updateCalendarEventType(db, t.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); }
+                              catch(err) { setTypeError(err.message); }
+                            }} title="저장"><IconCheck /></button>
+                            <button className="btn-icon" onClick={() => setEditingTypeId(null)} title="취소"><IconClose /></button>
+                          </div>
+                        ) : deletingTypeId === t.id ? (
+                          /* 삭제 확인 행 */
+                          <div className="settings-item" style={{ gap: '8px' }}>
+                            <span style={{ flex: 1, fontSize: '13px' }}>
+                              {usageCount > 0
+                                ? `${usageCount}개 일정에서 사용 중 — 삭제 불가`
+                                : `"${t.label}" 유형을 삭제할까요?`
+                              }
+                            </span>
+                            {usageCount === 0 && (
+                              <button className="btn-icon btn-icon--danger" onClick={() => {
+                                try { deleteCalendarEventType(db, t.id); refreshEventTypes(); onChanged(); setDeletingTypeId(null); setTypeError(''); }
+                                catch(err) { setTypeError(err.message); setDeletingTypeId(null); }
+                              }} title="삭제 확인"><IconTrash /></button>
+                            )}
+                            <button className="btn-icon" onClick={() => setDeletingTypeId(null)} title="취소"><IconClose /></button>
+                          </div>
+                        ) : (
+                          /* 기본 행 */
+                          <div
+                            className="settings-item"
+                            draggable
+                            onDragStart={() => setTypeDragId(t.id)}
+                            onDragOver={e => { e.preventDefault(); setTypeDragOver(idx); }}
+                            onDrop={() => {
+                              if (typeDragId !== null && typeDragOver !== null) {
+                                const fromIdx = eventTypes.filter(x => x.value !== 'general').findIndex(x => x.id === typeDragId);
+                                if (fromIdx !== -1) { moveCalendarEventType(db, typeDragId, typeDragOver); refreshEventTypes(); onChanged(); }
+                              }
+                              setTypeDragId(null); setTypeDragOver(null);
+                            }}
+                            onDragEnd={() => { setTypeDragId(null); setTypeDragOver(null); }}
+                            style={{ opacity: typeDragId === t.id ? 0.5 : 1 }}
+                          >
+                            <span className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-muted)', marginRight: '4px' }}><IconGrip /></span>
+                            <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ flex: 1, fontSize: '14px' }}>{t.label}</span>
+                            <button
+                              className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
+                              style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
+                              onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
+                              title="국가/통화 입력 활성화"
+                            >
+                              <span className="goal-display-toggle-knob" />
+                            </button>
+                            <button className="btn-icon" onClick={() => { setEditingTypeId(t.id); setEditingTypeLabel(t.label); setEditingTypeColor(t.color); }} title="수정"><IconEdit /></button>
+                            {!t.is_system && (
+                              <button className="btn-icon btn-icon--danger" onClick={() => setDeletingTypeId(t.id)} title="삭제"><IconTrash /></button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* general 구분선 + 행 */}
+                  {(() => {
+                    const g = eventTypes.find(t => t.value === 'general');
+                    if (!g) return null;
+                    return (
+                      <>
+                        <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
+                        {editingTypeId === g.id ? (
+                          <div className="settings-item" style={{ gap: '8px' }}>
+                            <div style={{ position: 'relative', flexShrink: 0 }}>
+                              <div style={{ width: 28, height: 28, borderRadius: '50%', background: editingTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
+                              <input type="color" value={editingTypeColor} onChange={e => setEditingTypeColor(e.target.value)}
+                                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                            </div>
+                            <input
+                              className="settings-inline-input" style={{ flex: 1 }}
+                              value={editingTypeLabel} onChange={e => setEditingTypeLabel(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') { try { updateCalendarEventType(db, g.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); } catch(err) { setTypeError(err.message); } }
+                                if (e.key === 'Escape') setEditingTypeId(null);
+                              }}
+                              autoFocus
+                            />
+                            <button className="btn-icon btn-icon--success" onClick={() => { try { updateCalendarEventType(db, g.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); } catch(err) { setTypeError(err.message); } }} title="저장"><IconCheck /></button>
+                            <button className="btn-icon" onClick={() => setEditingTypeId(null)} title="취소"><IconClose /></button>
+                          </div>
+                        ) : (
+                          <div className="settings-item">
+                            <span style={{ width: 14, height: 14, borderRadius: '50%', background: g.color, flexShrink: 0, display: 'inline-block', opacity: 0.5 }} />
+                            <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-muted)' }}>{g.label} <span style={{ fontSize: '12px' }}>(분류 없음)</span></span>
+                            <button className="btn-icon" onClick={() => { setEditingTypeId(g.id); setEditingTypeLabel(g.label); setEditingTypeColor(g.color); }} title="수정"><IconEdit /></button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* 추가 폼 */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: newTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
+                    <input type="color" value={newTypeColor} onChange={e => setNewTypeColor(e.target.value)}
+                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                  </div>
+                  <input
+                    className="settings-inline-input"
+                    style={{ flex: 1 }}
+                    value={newTypeLabel}
+                    onChange={e => setNewTypeLabel(e.target.value)}
+                    placeholder="새 유형 이름"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
+                        catch(err) { setTypeError(err.message); }
+                      }
                     }}
-                  >{label}</button>
-                ))}
+                  />
+                  <button className="btn-primary" onClick={() => {
+                    try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
+                    catch(err) { setTypeError(err.message); }
+                  }}>+ 추가</button>
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  슬라이더 ON = 해당 유형 일정 선택 시 국가/통화 입력 활성화
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* 표시 설정 서브탭 */}
+            {calendarSubTab === 'display' && (
+              <div>
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 버튼 표시 (거래내역)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: '13px' }}>PC</div>
+                      <button
+                        className={`goal-display-toggle${showCalBtnPc ? ' goal-display-toggle--on' : ''}`}
+                        onClick={() => { setSetting(db, 'show_calendar_btn_pc', showCalBtnPc ? '0' : '1'); onChanged(); }}
+                      ><span className="goal-display-toggle-knob" /></button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: '13px' }}>모바일</div>
+                      <button
+                        className={`goal-display-toggle${showCalBtnMobile ? ' goal-display-toggle--on' : ''}`}
+                        onClick={() => { setSetting(db, 'show_calendar_btn_mobile', showCalBtnMobile ? '0' : '1'); onChanged(); }}
+                      ><span className="goal-display-toggle-knob" /></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 금액 단위</div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {[['만', '만원'], ['k', 'k (천)'], ['hidden', '숨김']].map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => { setSetting(db, 'calendar_mini_amount_unit', val); onChanged(); }}
+                        style={{
+                          flex: 1, padding: '8px',
+                          border: `1px solid ${calAmountUnit === val ? 'var(--primary)' : 'var(--border)'}`,
+                          borderRadius: '8px',
+                          background: calAmountUnit === val ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'var(--bg)',
+                          color: calAmountUnit === val ? 'var(--primary)' : 'var(--text)',
+                          fontWeight: calAmountUnit === val ? '700' : '400',
+                          fontSize: '13px', cursor: 'pointer',
+                        }}
+                      >{label}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
