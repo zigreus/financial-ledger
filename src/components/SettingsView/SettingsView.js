@@ -105,6 +105,9 @@ const [dragId, setDragId] = useState(null);
   const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
   const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
 
+  // 지출계획 섹션
+  const [financeSubTab, setFinanceSubTab] = useState('budget');
+
   // 캘린더 섹션
   const [calendarSubTab, setCalendarSubTab] = useState('types');
   const [eventTypes, setEventTypes] = useState(() => getCalendarEventTypes(db) || []);
@@ -582,8 +585,7 @@ const [dragId, setDragId] = useState(null);
       <div className="settings-tabs">
         <button className={activeSection === 'payment' ? 'tab active' : 'tab'} onClick={() => switchSection('payment')}>결제수단</button>
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
-        <button className={activeSection === 'budget' ? 'tab active' : 'tab'} onClick={() => switchSection('budget')}>예산</button>
-        <button className={activeSection === 'recurring' ? 'tab active' : 'tab'} onClick={() => { switchSection('recurring'); setShowRecurringForm(false); }}>정기지출</button>
+        <button className={(activeSection === 'budget' || activeSection === 'recurring') ? 'tab active' : 'tab'} onClick={() => { switchSection(financeSubTab); setShowRecurringForm(false); }}>지출계획</button>
         <button className={activeSection === 'calendar' ? 'tab active' : 'tab'} onClick={() => switchSection('calendar')}>캘린더</button>
       </div>
 
@@ -604,6 +606,20 @@ const [dragId, setDragId] = useState(null);
 
       <div className="settings-section">
         {error && <div className="error-msg" style={{ marginBottom: '12px' }}>{error}</div>}
+
+        {/* ── 지출계획 서브탭 ── */}
+        {(activeSection === 'budget' || activeSection === 'recurring') && (
+          <div className="settings-subtabs">
+            <button
+              className={`settings-subtab${activeSection === 'budget' ? ' active' : ''}`}
+              onClick={() => { setFinanceSubTab('budget'); switchSection('budget'); }}
+            >예산</button>
+            <button
+              className={`settings-subtab${activeSection === 'recurring' ? ' active' : ''}`}
+              onClick={() => { setFinanceSubTab('recurring'); switchSection('recurring'); setShowRecurringForm(false); }}
+            >정기지출</button>
+          </div>
+        )}
 
         {/* ── 예산 탭 ── */}
         {activeSection === 'budget' && (
