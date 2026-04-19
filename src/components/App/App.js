@@ -40,6 +40,8 @@ function App() {
   const [settingsDrilldownCategory, setSettingsDrilldownCategory] = useState(null);
   const [settingsDrilldownTrip, setSettingsDrilldownTrip] = useState(null);
   const [settingsDrilldownPayment, setSettingsDrilldownPayment] = useState(null);
+  const [calendarGoTodayKey, setCalendarGoTodayKey] = useState(0);
+  const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
   const navRef = React.useRef({
     activeTab: 'list', showForm: false, showImport: false, showEventForm: false, editingTx: null,
@@ -278,6 +280,7 @@ function App() {
         {activeTab === 'list' && (
           <TransactionList
             db={db}
+            goTodayKey={listGoTodayKey}
             onAdd={openAdd}
             onEdit={openEdit}
             onDelete={handleDelete}
@@ -298,6 +301,7 @@ function App() {
         {activeTab === 'calendar' && (
           <CalendarView
             db={db}
+            goTodayKey={calendarGoTodayKey}
             onChanged={async () => {
               showToast('저장 중…');
               await saveAndReload(db);
@@ -339,7 +343,13 @@ function App() {
       <nav className="bottom-nav">
         <button
           className={activeTab === 'list' ? 'nav-item active' : 'nav-item'}
-          onClick={() => navigate({ activeTab: 'list' })}
+          onClick={() => {
+            if (activeTab === 'list') {
+              setListGoTodayKey(k => k + 1);
+            } else {
+              navigate({ activeTab: 'list' });
+            }
+          }}
         >
           <span className="nav-icon">📋</span>
           <span className="nav-label">거래내역</span>
@@ -359,7 +369,15 @@ function App() {
         </button>
         <button
           className={activeTab === 'calendar' ? 'nav-item active' : 'nav-item'}
-          onClick={() => { navigate({ activeTab: 'calendar' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+          onClick={() => {
+            if (activeTab === 'calendar') {
+              setCalendarGoTodayKey(k => k + 1);
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            } else {
+              navigate({ activeTab: 'calendar' });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }
+          }}
         >
           <span className="nav-icon">🗓️</span>
           <span className="nav-label">캘린더</span>

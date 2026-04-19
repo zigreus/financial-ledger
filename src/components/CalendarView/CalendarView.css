@@ -206,7 +206,7 @@
 .cv-cell-empty:hover { background: none; }
 
 .cv-cell-today .cv-cell-day-num {
-  background: var(--primary);
+  background: #60a5fa;
   color: white;
   border-radius: 50%;
   width: 22px;

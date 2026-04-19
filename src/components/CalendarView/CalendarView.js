@@ -317,7 +317,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
 }
 
 // ── 메인 컴포넌트 ──────────────────────────────────────────
-export default function CalendarView({ db, onChanged, showEventForm, onOpenEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
+export default function CalendarView({ db, goTodayKey, onChanged, showEventForm, onOpenEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
   const today = todayStr();
   const [currentMonth, setCurrentMonth] = useState(() => today.slice(0, 7));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -326,6 +326,14 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
   const [internalEventForm, setInternalEventForm] = useState(false);
   const [formInitialDate, setFormInitialDate] = useState('');
   const [selectedTx, setSelectedTx] = useState(null);
+
+  useEffect(() => {
+    if (goTodayKey > 0) {
+      setCurrentMonth(today.slice(0, 7));
+      setSelectedDate(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goTodayKey]);
 
   const { year, mon, days, firstDow } = useMemo(() => {
     const [y, m] = currentMonth.split('-').map(Number);

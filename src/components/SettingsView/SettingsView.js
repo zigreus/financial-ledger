@@ -839,42 +839,44 @@ const [dragId, setDragId] = useState(null);
                 </div>
 
                 {/* 추가 폼 */}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: newTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
-                    <input type="color" value={newTypeColor} onChange={e => setNewTypeColor(e.target.value)}
-                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: newTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
+                      <input type="color" value={newTypeColor} onChange={e => setNewTypeColor(e.target.value)}
+                        style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
+                    </div>
+                    <input
+                      className="settings-inline-input"
+                      style={{ width: 80, flexShrink: 0, flexGrow: 0, fontFamily: 'monospace', fontSize: 13 }}
+                      value={newTypeColor}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setNewTypeColor(v);
+                      }}
+                      onBlur={e => {
+                        const v = e.target.value.trim();
+                        const hex = v.startsWith('#') ? v : '#' + v;
+                        if (/^#[0-9a-fA-F]{6}$/.test(hex)) setNewTypeColor(hex);
+                      }}
+                      maxLength={7}
+                      placeholder="#000000"
+                    />
+                    <input
+                      className="settings-inline-input"
+                      style={{ flex: 1, minWidth: 0 }}
+                      value={newTypeLabel}
+                      onChange={e => setNewTypeLabel(e.target.value)}
+                      placeholder="새 유형 이름"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
+                          catch(err) { setTypeError(err.message); }
+                        }
+                      }}
+                    />
                   </div>
-                  <input
-                    className="settings-inline-input"
-                    style={{ width: 80, flexShrink: 0, fontFamily: 'monospace', fontSize: 13 }}
-                    value={newTypeColor}
-                    onChange={e => {
-                      const v = e.target.value;
-                      setNewTypeColor(v);
-                    }}
-                    onBlur={e => {
-                      const v = e.target.value.trim();
-                      const hex = v.startsWith('#') ? v : '#' + v;
-                      if (/^#[0-9a-fA-F]{6}$/.test(hex)) setNewTypeColor(hex);
-                    }}
-                    maxLength={7}
-                    placeholder="#000000"
-                  />
-                  <input
-                    className="settings-inline-input"
-                    style={{ flex: 1 }}
-                    value={newTypeLabel}
-                    onChange={e => setNewTypeLabel(e.target.value)}
-                    placeholder="새 유형 이름"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
-                        catch(err) { setTypeError(err.message); }
-                      }
-                    }}
-                  />
-                  <button className="btn-primary" onClick={() => {
+                  <button className="btn-primary" style={{ width: '100%' }} onClick={() => {
                     try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
                     catch(err) { setTypeError(err.message); }
                   }}>+ 추가</button>

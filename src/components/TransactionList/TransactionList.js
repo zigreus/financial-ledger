@@ -33,7 +33,7 @@ function categoryColor(cat) {
   return `hsl(${hue}, 55%, 52%)`;
 }
 
-function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
+function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
@@ -156,6 +156,27 @@ function TransactionList({ db, onAdd, onEdit, onDelete, onChanged }) {
     }, 150);
     return () => clearTimeout(timer);
   }, []);
+
+  // 거래내역 탭 버튼 재클릭 시 오늘 날짜로 포커스
+  useEffect(() => {
+    if (goTodayKey === 0) return;
+    const todayStr = (() => {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    })();
+    setFilters(f => ({ ...f, month: '' }));
+    setFocusedDate(todayStr);
+    setExpandedMonths(prev => prev.has(currentMonth) ? prev : new Set([...prev, currentMonth]));
+    setTimeout(() => {
+      const node = txDateRefs.current[todayStr];
+      if (node) {
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (currentMonthRef.current) {
+        currentMonthRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 80);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goTodayKey]);
 
   // 필터바 높이 측정 (스티키 월 헤더 offset용)
   useEffect(() => {
