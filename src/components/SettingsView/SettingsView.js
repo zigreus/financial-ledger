@@ -704,7 +704,10 @@ const [dragId, setDragId] = useState(null);
                 {typeError && <div className="error-msg" style={{ marginBottom: '10px' }}>{typeError}</div>}
 
                 {/* 유형 목록 */}
-                <div style={{ marginBottom: '16px' }}>
+                <div
+                  style={{ marginBottom: '16px' }}
+                  onDragOver={e => { e.preventDefault(); if (e.currentTarget === e.target) setTypeDragOver(eventTypes.length); }}
+                >
                   {eventTypes.map((t, idx) => {
                     const usageCount = deletingTypeId === t.id ? getCalendarEventTypeUsageCount(db, t.value) : 0;
                     return (
@@ -760,43 +763,50 @@ const [dragId, setDragId] = useState(null);
                           </div>
                         ) : (
                           /* 기본 행 */
-                          <div
-                            className="settings-item"
-                            draggable
-                            onDragStart={() => setTypeDragId(t.id)}
-                            onDragOver={e => { e.preventDefault(); setTypeDragOver(idx); }}
-                            onDrop={() => {
-                              if (typeDragId !== null && typeDragOver !== null) {
-                                const fromIdx = eventTypes.findIndex(x => x.id === typeDragId);
-                                if (fromIdx !== -1) { moveCalendarEventType(db, typeDragId, typeDragOver); refreshEventTypes(); onChanged(); }
-                              }
-                              setTypeDragId(null); setTypeDragOver(null);
-                            }}
-                            onDragEnd={() => { setTypeDragId(null); setTypeDragOver(null); }}
-                            style={{ opacity: typeDragId === t.id ? 0.5 : 1 }}
-                          >
-                            <span className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-muted)', marginRight: '4px' }}><IconGrip /></span>
-                            <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, flexShrink: 0, display: 'inline-block' }} />
-                            <span style={{ flex: 1, fontSize: '14px' }}>{t.label}</span>
-                            {t.value !== 'general' && (
-                              <button
-                                className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
-                                style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
-                                onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
-                                title="국가/통화 입력 활성화"
-                              >
-                                <span className="goal-display-toggle-knob" />
-                              </button>
+                          <React.Fragment>
+                            {typeDragOver === idx && typeDragId !== null && typeDragId !== t.id && (
+                              <div className="drop-indicator" />
                             )}
-                            <button className="btn-icon" onClick={() => { setEditingTypeId(t.id); setEditingTypeLabel(t.label); setEditingTypeColor(t.color); }} title="수정"><IconEdit /></button>
-                            {!t.is_system && (
-                              <button className="btn-icon btn-icon--danger" onClick={() => setDeletingTypeId(t.id)} title="삭제"><IconTrash /></button>
-                            )}
-                          </div>
+                            <div
+                              className={`settings-item${typeDragId === t.id ? ' settings-item-dragging' : ''}`}
+                              draggable
+                              onDragStart={() => setTypeDragId(t.id)}
+                              onDragOver={e => { e.preventDefault(); setTypeDragOver(idx); }}
+                              onDrop={() => {
+                                if (typeDragId !== null && typeDragOver !== null) {
+                                  const fromIdx = eventTypes.findIndex(x => x.id === typeDragId);
+                                  if (fromIdx !== -1) { moveCalendarEventType(db, typeDragId, typeDragOver); refreshEventTypes(); onChanged(); }
+                                }
+                                setTypeDragId(null); setTypeDragOver(null);
+                              }}
+                              onDragEnd={() => { setTypeDragId(null); setTypeDragOver(null); }}
+                            >
+                              <span className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-muted)', marginRight: '4px' }}><IconGrip /></span>
+                              <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, flexShrink: 0, display: 'inline-block' }} />
+                              <span style={{ flex: 1, fontSize: '14px' }}>{t.label}</span>
+                              {t.value !== 'general' && (
+                                <button
+                                  className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
+                                  style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
+                                  onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
+                                  title="국가/통화 입력 활성화"
+                                >
+                                  <span className="goal-display-toggle-knob" />
+                                </button>
+                              )}
+                              <button className="btn-icon" onClick={() => { setEditingTypeId(t.id); setEditingTypeLabel(t.label); setEditingTypeColor(t.color); }} title="수정"><IconEdit /></button>
+                              {!t.is_system && (
+                                <button className="btn-icon btn-icon--danger" onClick={() => setDeletingTypeId(t.id)} title="삭제"><IconTrash /></button>
+                              )}
+                            </div>
+                          </React.Fragment>
                         )}
                       </div>
                     );
                   })}
+                  {typeDragOver === eventTypes.length && typeDragId !== null && (
+                    <div className="drop-indicator" />
+                  )}
                 </div>
 
                 {/* 추가 폼 */}
