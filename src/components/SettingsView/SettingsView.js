@@ -726,6 +726,19 @@ const [dragId, setDragId] = useState(null);
                             </div>
                             <input
                               className="settings-inline-input"
+                              style={{ width: 80, flexShrink: 0, fontFamily: 'monospace', fontSize: 13 }}
+                              value={editingTypeColor}
+                              onChange={e => setEditingTypeColor(e.target.value)}
+                              onBlur={e => {
+                                const v = e.target.value.trim();
+                                const hex = v.startsWith('#') ? v : '#' + v;
+                                if (/^#[0-9a-fA-F]{6}$/.test(hex)) setEditingTypeColor(hex);
+                              }}
+                              maxLength={7}
+                              placeholder="#000000"
+                            />
+                            <input
+                              className="settings-inline-input"
                               style={{ flex: 1 }}
                               value={editingTypeLabel}
                               onChange={e => setEditingTypeLabel(e.target.value)}
@@ -816,6 +829,22 @@ const [dragId, setDragId] = useState(null);
                     <input type="color" value={newTypeColor} onChange={e => setNewTypeColor(e.target.value)}
                       style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
                   </div>
+                  <input
+                    className="settings-inline-input"
+                    style={{ width: 80, flexShrink: 0, fontFamily: 'monospace', fontSize: 13 }}
+                    value={newTypeColor}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setNewTypeColor(v);
+                    }}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      const hex = v.startsWith('#') ? v : '#' + v;
+                      if (/^#[0-9a-fA-F]{6}$/.test(hex)) setNewTypeColor(hex);
+                    }}
+                    maxLength={7}
+                    placeholder="#000000"
+                  />
                   <input
                     className="settings-inline-input"
                     style={{ flex: 1 }}
