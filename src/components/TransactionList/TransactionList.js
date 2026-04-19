@@ -107,6 +107,11 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged })
     [db, filters]
   );
 
+  const hasAnyIssue = useMemo(
+    () => allTransactions.some(tx => hasIssue(tx, validationCtx)),
+    [allTransactions, validationCtx]
+  );
+
   // 이슈 필터: 존재하지 않는 메인카테고리 또는 세부카테고리가 설정된 거래
   const transactions = useMemo(() => {
     if (!showIssueOnly) return allTransactions;
@@ -298,7 +303,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged })
                   onClick={() => setShowIssueOnly(v => !v)}
                   title="카테고리 이슈 거래만 보기"
                 >
-                  이슈
+                  이슈{hasAnyIssue && <span className="issue-dot" />}
                 </button>
                 <button
                   className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
