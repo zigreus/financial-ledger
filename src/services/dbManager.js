@@ -252,9 +252,11 @@ export function createDatabase(SQL, existingData = null) {
   try {
     db.run(`INSERT OR IGNORE INTO calendar_event_types (value, label, color, sort_order, is_system, is_trip_type)
       VALUES
-        ('trip',     '여행',   '#F0A500', 0,   1, 1),
-        ('occasion', '경조사', '#EC4899', 1,   0, 0),
-        ('general',  '기타',   '#9CA3AF', 999, 1, 0)`);
+        ('trip',     '여행',   '#F0A500', 0, 1, 1),
+        ('occasion', '경조사', '#EC4899', 1, 0, 0),
+        ('general',  '일상',   '#9CA3AF', 2, 1, 0)`);
+    // general: 이름 '기타'→'일상', sort_order 999→2 로 업데이트 (기존 DB 호환)
+    db.run(`UPDATE calendar_event_types SET label='일상', sort_order=2 WHERE value='general' AND (label='기타' OR sort_order=999)`);
     // 구 유형(holiday, medical) → general 이전
     db.run(`UPDATE calendar_events SET event_type = 'general' WHERE event_type IN ('holiday', 'medical')`);
     // 미정의 event_type 방어
@@ -554,7 +556,7 @@ export function deleteCalendarEventType(db, id) {
 }
 
 export function moveCalendarEventType(db, id, targetIndex) {
-  const all = getCalendarEventTypes(db).filter(t => t.value !== 'general');
+  const all = getCalendarEventTypes(db);
   const fromIdx = all.findIndex(t => t.id === id);
   if (fromIdx === -1) return;
   const reordered = [...all];
@@ -563,7 +565,6 @@ export function moveCalendarEventType(db, id, targetIndex) {
   reordered.forEach((t, i) => {
     db.run('UPDATE calendar_event_types SET sort_order=? WHERE id=?', [i, t.id]);
   });
-  db.run("UPDATE calendar_event_types SET sort_order=999 WHERE value='general'");
 }
 
 export function getCalendarEventTypeUsageCount(db, value) {

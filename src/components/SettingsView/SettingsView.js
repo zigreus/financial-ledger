@@ -705,7 +705,7 @@ const [dragId, setDragId] = useState(null);
 
                 {/* 유형 목록 */}
                 <div style={{ marginBottom: '16px' }}>
-                  {eventTypes.filter(t => t.value !== 'general').map((t, idx) => {
+                  {eventTypes.map((t, idx) => {
                     const usageCount = deletingTypeId === t.id ? getCalendarEventTypeUsageCount(db, t.value) : 0;
                     return (
                       <div key={t.id}>
@@ -767,7 +767,7 @@ const [dragId, setDragId] = useState(null);
                             onDragOver={e => { e.preventDefault(); setTypeDragOver(idx); }}
                             onDrop={() => {
                               if (typeDragId !== null && typeDragOver !== null) {
-                                const fromIdx = eventTypes.filter(x => x.value !== 'general').findIndex(x => x.id === typeDragId);
+                                const fromIdx = eventTypes.findIndex(x => x.id === typeDragId);
                                 if (fromIdx !== -1) { moveCalendarEventType(db, typeDragId, typeDragOver); refreshEventTypes(); onChanged(); }
                               }
                               setTypeDragId(null); setTypeDragOver(null);
@@ -778,14 +778,16 @@ const [dragId, setDragId] = useState(null);
                             <span className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-muted)', marginRight: '4px' }}><IconGrip /></span>
                             <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, flexShrink: 0, display: 'inline-block' }} />
                             <span style={{ flex: 1, fontSize: '14px' }}>{t.label}</span>
-                            <button
-                              className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
-                              style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
-                              onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
-                              title="국가/통화 입력 활성화"
-                            >
-                              <span className="goal-display-toggle-knob" />
-                            </button>
+                            {t.value !== 'general' && (
+                              <button
+                                className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
+                                style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
+                                onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
+                                title="국가/통화 입력 활성화"
+                              >
+                                <span className="goal-display-toggle-knob" />
+                              </button>
+                            )}
                             <button className="btn-icon" onClick={() => { setEditingTypeId(t.id); setEditingTypeLabel(t.label); setEditingTypeColor(t.color); }} title="수정"><IconEdit /></button>
                             {!t.is_system && (
                               <button className="btn-icon btn-icon--danger" onClick={() => setDeletingTypeId(t.id)} title="삭제"><IconTrash /></button>
@@ -795,43 +797,6 @@ const [dragId, setDragId] = useState(null);
                       </div>
                     );
                   })}
-
-                  {/* general 구분선 + 행 */}
-                  {(() => {
-                    const g = eventTypes.find(t => t.value === 'general');
-                    if (!g) return null;
-                    return (
-                      <>
-                        <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
-                        {editingTypeId === g.id ? (
-                          <div className="settings-item" style={{ gap: '8px' }}>
-                            <div style={{ position: 'relative', flexShrink: 0 }}>
-                              <div style={{ width: 28, height: 28, borderRadius: '50%', background: editingTypeColor, cursor: 'pointer', border: '2px solid var(--border)' }} />
-                              <input type="color" value={editingTypeColor} onChange={e => setEditingTypeColor(e.target.value)}
-                                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%' }} />
-                            </div>
-                            <input
-                              className="settings-inline-input" style={{ flex: 1 }}
-                              value={editingTypeLabel} onChange={e => setEditingTypeLabel(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') { try { updateCalendarEventType(db, g.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); } catch(err) { setTypeError(err.message); } }
-                                if (e.key === 'Escape') setEditingTypeId(null);
-                              }}
-                              autoFocus
-                            />
-                            <button className="btn-icon btn-icon--success" onClick={() => { try { updateCalendarEventType(db, g.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); } catch(err) { setTypeError(err.message); } }} title="저장"><IconCheck /></button>
-                            <button className="btn-icon" onClick={() => setEditingTypeId(null)} title="취소"><IconClose /></button>
-                          </div>
-                        ) : (
-                          <div className="settings-item">
-                            <span style={{ width: 14, height: 14, borderRadius: '50%', background: g.color, flexShrink: 0, display: 'inline-block', opacity: 0.5 }} />
-                            <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-muted)' }}>{g.label} <span style={{ fontSize: '12px' }}>(분류 없음)</span></span>
-                            <button className="btn-icon" onClick={() => { setEditingTypeId(g.id); setEditingTypeLabel(g.label); setEditingTypeColor(g.color); }} title="수정"><IconEdit /></button>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
                 </div>
 
                 {/* 추가 폼 */}

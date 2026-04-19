@@ -223,7 +223,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
           <div className="cv-form-field">
             <label className="cv-form-label">유형</label>
             <div className="cv-form-type-chips">
-              {eventTypes.filter(t => t.value !== 'general').map(t => (
+              {eventTypes.map(t => (
                 <button
                   key={t.value}
                   className={`cv-form-type-chip${form.event_type === t.value ? ' active' : ''}`}
@@ -231,13 +231,6 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
                   onClick={() => handleTypeChange(t.value)}
                 >{t.label}</button>
               ))}
-              {eventTypes.find(t => t.value === 'general') && (
-                <button
-                  className={`cv-form-type-chip${form.event_type === 'general' ? ' active' : ''}`}
-                  style={form.event_type === 'general' ? { background: eventTypeMap['general']?.color || '#9CA3AF' } : {}}
-                  onClick={() => handleTypeChange('general')}
-                >{eventTypeMap['general']?.label || '기타'}</button>
-              )}
             </div>
           </div>
 
