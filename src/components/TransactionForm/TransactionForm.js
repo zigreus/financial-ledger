@@ -190,7 +190,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         foreign_amounts,
       });
     } else {
-      setForm(defaultDate ? { ...EMPTY_FORM, date: defaultDate } : EMPTY_FORM);
+      setForm({ ...EMPTY_FORM, date: defaultDate || today() });
     }
   }, [editingTx, defaultDate]);
 
