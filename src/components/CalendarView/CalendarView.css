@@ -73,6 +73,18 @@
 }
 .cv-picker-years::-webkit-scrollbar { display: none; }
 
+.cv-picker-year-nav {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color .12s;
+}
+.cv-picker-year-nav:hover { color: var(--primary); }
+
 .cv-picker-year-btn {
   flex-shrink: 0;
   padding: 5px 12px;

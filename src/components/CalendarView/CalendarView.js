@@ -462,15 +462,24 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
     }
   }, [showEventForm, internalEventForm]);
 
-  // picker years: current ±5
+  const [pickerYear, setPickerYear] = useState(year);
+  const [yearRangeBase, setYearRangeBase] = useState(year);
+  useEffect(() => {
+    setPickerYear(year);
+    setYearRangeBase(year);
+  }, [year, pickerOpen]);
+
+  // picker years: yearRangeBase 중심 ±4 (9개)
   const pickerYears = useMemo(() => {
     const arr = [];
-    for (let y = year - 5; y <= year + 5; y++) arr.push(y);
+    for (let y = yearRangeBase - 4; y <= yearRangeBase + 4; y++) arr.push(y);
     return arr;
-  }, [year]);
+  }, [yearRangeBase]);
 
-  const [pickerYear, setPickerYear] = useState(year);
-  useEffect(() => { setPickerYear(year); }, [year, pickerOpen]);
+  function handlePickerYear(y) {
+    setPickerYear(y);
+    setYearRangeBase(y);
+  }
 
   return (
     <div className="cv-wrap">
@@ -488,15 +497,17 @@ export default function CalendarView({ db, onChanged, showEventForm, onOpenEvent
         <div className="cv-picker">
           <div className="cv-picker-year-row">
             <span className="cv-picker-year-label">연도</span>
+            <button className="cv-picker-year-nav" onClick={() => setYearRangeBase(b => b - 9)}>‹</button>
             <div className="cv-picker-years">
               {pickerYears.map(y => (
                 <button
                   key={y}
                   className={`cv-picker-year-btn${pickerYear === y ? ' active' : ''}`}
-                  onClick={() => setPickerYear(y)}
+                  onClick={() => handlePickerYear(y)}
                 >{y}</button>
               ))}
             </div>
+            <button className="cv-picker-year-nav" onClick={() => setYearRangeBase(b => b + 9)}>›</button>
           </div>
           <div className="cv-picker-months">
             {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
