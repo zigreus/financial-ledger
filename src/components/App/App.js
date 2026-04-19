@@ -209,7 +209,7 @@ function App() {
   }, [db, showToast, saveAndReload]);
 
   const openAdd = (date) => {
-    setDefaultFormDate(date || null);
+    setDefaultFormDate(typeof date === 'string' ? date : null);
     navigate({ showForm: true, editingTx: null });
   };
 
