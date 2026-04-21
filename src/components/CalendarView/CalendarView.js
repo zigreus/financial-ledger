@@ -506,6 +506,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   function handlePickerYear(y) {
     setPickerYear(y);
     setYearRangeBase(y);
+    setCurrentMonth(`${y}-${String(mon).padStart(2,'0')}`);
   }
 
   return (
