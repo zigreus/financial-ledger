@@ -510,7 +510,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   }
 
   return (
-    <div className="cv-wrap">
+    <div className="cv-wrap" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       {/* ── 헤더 ── */}
       <div className="cv-header">
         <button className="cv-header-btn" onClick={prevMonth}>‹</button>
@@ -550,7 +550,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       )}
 
       {/* ── 달력 그리드 ── */}
-      <div className="cv-grid" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <div className="cv-grid">
         <div className="cv-weekdays">
           {WEEKDAYS.map((wd, i) => (
             <div key={wd} className={`cv-wd${i===0?' cv-sun':i===6?' cv-sat':''}`}>{wd}</div>
