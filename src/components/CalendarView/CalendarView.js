@@ -13,6 +13,7 @@ import {
   deleteEventCountry,
   deleteTransaction,
   getCalendarEventTypes,
+  getSetting,
 } from '../../services/dbManager';
 
 // ── 카테고리 컬러 ──────────────────────────────────────────
@@ -356,6 +357,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   const dailyTotals   = useMemo(() => db ? getDailyTotals(db, currentMonth) : {}, [db, currentMonth]);
 
   const weekRows = useMemo(() => buildWeekRows(year, mon, days, firstDow), [year, mon, days, firstDow]);
+  const emptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
 
   // max total for heatmap intensity
   const maxTotal = useMemo(() => {
@@ -404,7 +406,11 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       return dateStr >= f && dateStr <= (t || f);
     });
     if (!hasTx && !hasEv) {
-      if (onAddTransaction) onAddTransaction(dateStr);
+      if (emptyDateAction === 'transaction') {
+        if (onAddTransaction) onAddTransaction(dateStr);
+      } else {
+        openAddEventFromSheet(dateStr);
+      }
       return;
     }
     setSelectedDate(dateStr);
@@ -470,6 +476,20 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
     }
   }, [showEventForm, internalEventForm]);
 
+  const touchStartX = useRef(null);
+
+  function handleTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX;
+  }
+  function handleTouchEnd(e) {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) < 50) return;
+    if (dx < 0) nextMonth();
+    else prevMonth();
+  }
+
   const [pickerYear, setPickerYear] = useState(year);
   const [yearRangeBase, setYearRangeBase] = useState(year);
   useEffect(() => {
@@ -530,7 +550,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       )}
 
       {/* ── 달력 그리드 ── */}
-      <div className="cv-grid">
+      <div className="cv-grid" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <div className="cv-weekdays">
           {WEEKDAYS.map((wd, i) => (
             <div key={wd} className={`cv-wd${i===0?' cv-sun':i===6?' cv-sat':''}`}>{wd}</div>

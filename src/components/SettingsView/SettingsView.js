@@ -104,6 +104,7 @@ const [dragId, setDragId] = useState(null);
   const showCalBtnPc = useMemo(() => getSetting(db, 'show_calendar_btn_pc', '1') !== '0', [db]);
   const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
   const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
+  const calEmptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
 
   // 지출계획 섹션
   const [financeSubTab, setFinanceSubTab] = useState('budget');
@@ -910,25 +911,31 @@ const [dragId, setDragId] = useState(null);
                   </div>
                 </div>
 
-                <div style={{ paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 금액 단위</div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {[['만', '만원'], ['k', 'k (천)'], ['hidden', '숨김']].map(([val, label]) => (
-                      <button
-                        key={val}
-                        onClick={() => { setSetting(db, 'calendar_mini_amount_unit', val); onChanged(); }}
-                        style={{
-                          flex: 1, padding: '8px',
-                          border: `1px solid ${calAmountUnit === val ? 'var(--primary)' : 'var(--border)'}`,
-                          borderRadius: '8px',
-                          background: calAmountUnit === val ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'var(--bg)',
-                          color: calAmountUnit === val ? 'var(--primary)' : 'var(--text)',
-                          fontWeight: calAmountUnit === val ? '700' : '400',
-                          fontSize: '13px', cursor: 'pointer',
-                        }}
-                      >{label}</button>
-                    ))}
-                  </div>
+                <div style={{ padding: '16px 0', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600' }}>달력 금액 단위</div>
+                  <select
+                    className="rule-form-select"
+                    style={{ flex: 'none', width: 'auto', minWidth: '100px' }}
+                    value={calAmountUnit}
+                    onChange={e => { setSetting(db, 'calendar_mini_amount_unit', e.target.value); onChanged(); }}
+                  >
+                    <option value="만">만원</option>
+                    <option value="k">k (천)</option>
+                    <option value="hidden">숨김</option>
+                  </select>
+                </div>
+
+                <div style={{ padding: '16px 0', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600' }}>빈 날짜 클릭 시</div>
+                  <select
+                    className="rule-form-select"
+                    style={{ flex: 'none', width: 'auto', minWidth: '120px' }}
+                    value={calEmptyDateAction}
+                    onChange={e => { setSetting(db, 'calendar_empty_date_action', e.target.value); onChanged(); }}
+                  >
+                    <option value="event">일정 추가</option>
+                    <option value="transaction">거래내역 추가</option>
+                  </select>
                 </div>
               </div>
             )}
