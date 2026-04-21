@@ -522,7 +522,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
 
       {/* ── 연·월 피커 ── */}
       {pickerOpen && (
-        <div className="cv-picker">
+        <div className="cv-picker" onTouchStart={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()}>
           <div className="cv-picker-year-row">
             <span className="cv-picker-year-label">연도</span>
             <button className="cv-picker-year-nav" onClick={() => setYearRangeBase(b => b - 9)}>‹</button>
