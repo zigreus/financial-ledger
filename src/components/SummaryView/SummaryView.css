@@ -106,8 +106,8 @@
   padding: 0 16px;
 }
 
-.summary-sub-tabs select,
-.event-sort-select {
+.summary-sub-tabs select {
+  margin-left: auto;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -117,8 +117,13 @@
   cursor: pointer;
 }
 
-.summary-sub-tabs select {
-  margin-left: auto;
+.summary-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.summary-table th.sortable:hover {
+  opacity: 0.75;
 }
 
 .sub-tab {

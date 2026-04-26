@@ -158,10 +158,23 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const sortedEventSummary = useMemo(() => {
     const arr = [...eventSummary];
     if (eventSortType === 'date_desc') return arr.sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
-    if (eventSortType === 'date_asc') return arr.sort((a, b) => (a.date_from || '').localeCompare(b.date_from || ''));
-    if (eventSortType === 'cnt_desc') return arr.sort((a, b) => b.cnt - a.cnt);
-    return arr; // amount_desc: getEventSummary가 이미 이 순서로 반환
+    if (eventSortType === 'date_asc')  return arr.sort((a, b) => (a.date_from || '').localeCompare(b.date_from || ''));
+    if (eventSortType === 'cnt_desc')  return arr.sort((a, b) => b.cnt - a.cnt);
+    if (eventSortType === 'cnt_asc')   return arr.sort((a, b) => a.cnt - b.cnt);
+    if (eventSortType === 'amount_asc') return arr.sort((a, b) => (a.total - (a.discount||0)) - (b.total - (b.discount||0)));
+    return arr.sort((a, b) => (b.total - (b.discount||0)) - (a.total - (a.discount||0))); // amount_desc
   }, [eventSummary, eventSortType]);
+
+  const handleEventSort = (col) => {
+    setEventSortType(prev =>
+      prev === `${col}_desc` ? `${col}_asc` : `${col}_desc`
+    );
+  };
+  const sortMark = (col) => {
+    if (eventSortType === `${col}_desc`) return ' ▼';
+    if (eventSortType === `${col}_asc`)  return ' ▲';
+    return '';
+  };
   const eventDetailSummary = useMemo(
     () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
     [db, selectedEventId]
@@ -456,25 +469,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               eventSummary.length === 0 ? (
                 <p className="empty-state">일정 데이터가 없습니다.</p>
               ) : (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-                    <select
-                      value={eventSortType}
-                      onChange={e => setEventSortType(e.target.value)}
-                      className="event-sort-select"
-                    >
-                      <option value="amount_desc">금액순</option>
-                      <option value="date_desc">최신 일정순</option>
-                      <option value="date_asc">오래된 일정순</option>
-                      <option value="cnt_desc">건수순</option>
-                    </select>
-                  </div>
                 <table className="summary-table">
                   <thead>
                     <tr>
-                      <th>일정</th>
-                      <th className="col-cnt">건수</th>
-                      <th>총액(원)</th>
+                      <th className="sortable" onClick={() => handleEventSort('date')}>일정{sortMark('date')}</th>
+                      <th className="sortable col-cnt" onClick={() => handleEventSort('cnt')}>건수{sortMark('cnt')}</th>
+                      <th className="sortable" onClick={() => handleEventSort('amount')}>총액(원){sortMark('amount')}</th>
                       <th>현지 금액</th>
                     </tr>
                   </thead>
@@ -516,7 +516,6 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     </tr>
                   </tfoot>
                 </table>
-                </>
               )
             )
           ) : drilldownCategory ? (
