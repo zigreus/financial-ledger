@@ -253,3 +253,20 @@
   margin-top: 2px;
   line-height: 1.2;
 }
+
+/* ── 일정별 테이블 모바일 최적화 ─────────────────────────────── */
+.mobile-sub-cnt { display: none; }
+.event-name-cell { white-space: nowrap; }
+
+@media (max-width: 480px) {
+  .col-cnt { display: none; }
+  .event-name-cell { white-space: normal; }
+  .mobile-sub-cnt {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-top: 3px;
+    padding-left: 15px;
+  }
+}

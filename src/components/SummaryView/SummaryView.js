@@ -26,6 +26,7 @@ const _filterState = {
   dateTo: _fmt(_initNow),
   selectedEventId: '',
   eventTypeFilter: '',
+  eventSortType: 'amount_desc',
 };
 
 const CATEGORY_COLORS = {
@@ -95,6 +96,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const [dateTo, setDateTo] = useState(() => _filterState.dateTo);
   const [selectedEventId, setSelectedEventId] = useState(() => _filterState.selectedEventId);
   const [eventTypeFilter, setEventTypeFilter] = useState(() => _filterState.eventTypeFilter);
+  const [eventSortType, setEventSortType] = useState(() => _filterState.eventSortType);
 
   const currentMonth = useMemo(() => {
     const now = new Date();
@@ -111,6 +113,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   useEffect(() => { _filterState.dateTo = dateTo; }, [dateTo]);
   useEffect(() => { _filterState.selectedEventId = selectedEventId; }, [selectedEventId]);
   useEffect(() => { _filterState.eventTypeFilter = eventTypeFilter; }, [eventTypeFilter]);
+  useEffect(() => { _filterState.eventSortType = eventSortType; }, [eventSortType]);
 
   const months = useMemo(() => getAvailableMonths(db), [db]);
   const years = useMemo(() => getAvailableYears(db), [db]);
@@ -152,6 +155,13 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   );
 
   const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, eventTypeFilter]);
+  const sortedEventSummary = useMemo(() => {
+    const arr = [...eventSummary];
+    if (eventSortType === 'date_desc') return arr.sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
+    if (eventSortType === 'date_asc') return arr.sort((a, b) => (a.date_from || '').localeCompare(b.date_from || ''));
+    if (eventSortType === 'cnt_desc') return arr.sort((a, b) => b.cnt - a.cnt);
+    return arr; // amount_desc: getEventSummary가 이미 이 순서로 반환
+  }, [eventSummary, eventSortType]);
   const eventDetailSummary = useMemo(
     () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
     [db, selectedEventId]
@@ -406,7 +416,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <thead>
                       <tr>
                         <th>세부카테고리</th>
-                        <th>건수</th>
+                        <th className="col-cnt">건수</th>
                         <th>총액(원)</th>
                         <th>현지 금액</th>
                       </tr>
@@ -414,8 +424,11 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <tbody>
                       {eventDetailSummary.map(r => (
                         <tr key={r.sub_category}>
-                          <td className="nowrap-cell">{r.sub_category}</td>
-                          <td>{r.cnt}</td>
+                          <td className="event-name-cell">
+                            {r.sub_category}
+                            <span className="mobile-sub-cnt">{r.cnt}건</span>
+                          </td>
+                          <td className="col-cnt">{r.cnt}</td>
                           <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                           <td className="foreign-amounts-cell">
                             <ForeignAmountsCell foreignTotals={r.foreignTotals} />
@@ -425,7 +438,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td colSpan="2"><strong>합계</strong></td>
+                        <td><strong>합계</strong></td>
+                        <td className="col-cnt"></td>
                         <td className="total-cell">
                           <strong>{formatAmount(detailTotalSpend - detailTotalDiscount)}원</strong>
                         </td>
@@ -442,41 +456,51 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               eventSummary.length === 0 ? (
                 <p className="empty-state">일정 데이터가 없습니다.</p>
               ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                    <select
+                      value={eventSortType}
+                      onChange={e => setEventSortType(e.target.value)}
+                      style={{ fontSize: '13px' }}
+                    >
+                      <option value="amount_desc">금액순</option>
+                      <option value="date_desc">최신 일정순</option>
+                      <option value="date_asc">오래된 일정순</option>
+                      <option value="cnt_desc">건수순</option>
+                    </select>
+                  </div>
                 <table className="summary-table">
                   <thead>
                     <tr>
                       <th>일정</th>
-                      <th>건수</th>
+                      <th className="col-cnt">건수</th>
                       <th>총액(원)</th>
                       <th>현지 금액</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {eventSummary.map(r => (
+                    {sortedEventSummary.map(r => (
                       <tr key={r.event_id} className="clickable-row" onClick={() => setSelectedEventId(String(r.event_id))}>
-                        <td className="nowrap-cell">
+                        <td className="event-name-cell">
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                            {r.event_type !== 'general' && (
-                              <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
-                                background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
-                            )}
+                            <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
+                              background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
                             <span>
                               {r.event_title}<span className="drilldown-arrow">›</span>
-                              {r.event_type !== 'general' && (
-                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 4 }}>
-                                  {eventTypeMap[r.event_type]?.label ?? r.event_type}
-                                </span>
-                              )}
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 4 }}>
+                                {eventTypeMap[r.event_type]?.label ?? r.event_type}
+                              </span>
                             </span>
                           </div>
                           {r.date_from && (
                             <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)',
-                              paddingLeft: r.event_type !== 'general' ? 15 : 0 }}>
+                              paddingLeft: 15 }}>
                               {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}
                             </span>
                           )}
+                          <span className="mobile-sub-cnt">{r.cnt}건</span>
                         </td>
-                        <td>{r.cnt}</td>
+                        <td className="col-cnt">{r.cnt}</td>
                         <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
                         <td className="foreign-amounts-cell">
                           <ForeignAmountsCell foreignTotals={r.foreignTotals} />
@@ -486,7 +510,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan="2"><strong>합계</strong></td>
+                      <td><strong>합계</strong></td>
+                      <td className="col-cnt"></td>
                       <td className="total-cell">
                         <strong>{formatAmount(eventTotalSpend - eventTotalDiscount)}원</strong>
                       </td>
@@ -496,6 +521,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     </tr>
                   </tfoot>
                 </table>
+                </>
               )
             )
           ) : drilldownCategory ? (
@@ -650,10 +676,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       {g.types.length > 1 && g.types.map(t => (
                         <tr key={t.event_type} style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                           <td style={{ paddingLeft: 16 }}>
-                            {t.event_type !== 'general' && (
-                              <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                                background: eventTypeMap[t.event_type]?.color || '#9CA3AF', marginRight: 5, verticalAlign: 'middle' }} />
-                            )}
+                            <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                              background: eventTypeMap[t.event_type]?.color || '#9CA3AF', marginRight: 5, verticalAlign: 'middle' }} />
                             {eventTypeMap[t.event_type]?.label ?? t.event_type}
                           </td>
                           <td>{t.cnt}</td>
