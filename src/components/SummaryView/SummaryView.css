@@ -277,7 +277,8 @@
 
 @media (max-width: 480px) {
   .col-cnt { display: none; }
-  .event-name-cell { white-space: normal; }
+  .event-name-cell { white-space: normal; width: auto; }
+  .summary-table .total-cell { width: 120px; }
   .mobile-sub-cnt {
     display: block;
     font-size: 11px;
