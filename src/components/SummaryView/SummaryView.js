@@ -97,6 +97,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const [selectedEventId, setSelectedEventId] = useState(() => _filterState.selectedEventId);
   const [eventTypeFilter, setEventTypeFilter] = useState(() => _filterState.eventTypeFilter);
   const [eventSortType, setEventSortType] = useState(() => _filterState.eventSortType || 'date_desc');
+  const [categorySortType, setCategorySortType] = useState('amount_desc');
 
   const currentMonth = useMemo(() => {
     const now = new Date();
@@ -166,13 +167,40 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   }, [eventSummary, eventSortType]);
 
   const handleEventSort = (col) => {
-    setEventSortType(prev =>
-      prev === `${col}_desc` ? `${col}_asc` : `${col}_desc`
-    );
+    setEventSortType(prev => prev === `${col}_desc` ? `${col}_asc` : `${col}_desc`);
   };
-  const sortMark = (col) => {
+  const eventSortMark = (col) => {
     if (eventSortType === `${col}_desc`) return ' ▼';
     if (eventSortType === `${col}_asc`)  return ' ▲';
+    return '';
+  };
+
+  const sortedCategorySummary = useMemo(() => {
+    const arr = [...categorySummary];
+    if (categorySortType === 'name_asc')    return arr.sort((a, b) => (a.budget_category || '').localeCompare(b.budget_category || ''));
+    if (categorySortType === 'name_desc')   return arr.sort((a, b) => (b.budget_category || '').localeCompare(a.budget_category || ''));
+    if (categorySortType === 'cnt_desc')    return arr.sort((a, b) => b.cnt - a.cnt);
+    if (categorySortType === 'cnt_asc')     return arr.sort((a, b) => a.cnt - b.cnt);
+    if (categorySortType === 'amount_asc')  return arr.sort((a, b) => (a.total - (a.discount||0)) - (b.total - (b.discount||0)));
+    return arr.sort((a, b) => (b.total - (b.discount||0)) - (a.total - (a.discount||0))); // amount_desc
+  }, [categorySummary, categorySortType]);
+
+  const sortedSubCategorySummary = useMemo(() => {
+    const arr = [...subCategorySummary];
+    if (categorySortType === 'name_asc')    return arr.sort((a, b) => (a.sub_category || '').localeCompare(b.sub_category || ''));
+    if (categorySortType === 'name_desc')   return arr.sort((a, b) => (b.sub_category || '').localeCompare(a.sub_category || ''));
+    if (categorySortType === 'cnt_desc')    return arr.sort((a, b) => b.cnt - a.cnt);
+    if (categorySortType === 'cnt_asc')     return arr.sort((a, b) => a.cnt - b.cnt);
+    if (categorySortType === 'amount_asc')  return arr.sort((a, b) => (a.total - (a.discount||0)) - (b.total - (b.discount||0)));
+    return arr.sort((a, b) => (b.total - (b.discount||0)) - (a.total - (a.discount||0))); // amount_desc
+  }, [subCategorySummary, categorySortType]);
+
+  const handleCategorySort = (col) => {
+    setCategorySortType(prev => prev === `${col}_desc` ? `${col}_asc` : `${col}_desc`);
+  };
+  const catSortMark = (col) => {
+    if (categorySortType === `${col}_desc`) return ' ▼';
+    if (categorySortType === `${col}_asc`)  return ' ▲';
     return '';
   };
   const eventDetailSummary = useMemo(
@@ -431,7 +459,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         <th>세부카테고리</th>
                         <th className="col-cnt">건수</th>
                         <th>총액(원)</th>
-                        <th>현지 금액</th>
+                        <th className="th-foreign">현지 금액</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -442,7 +470,10 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                             <span className="mobile-sub-cnt">{r.cnt}건</span>
                           </td>
                           <td className="col-cnt">{r.cnt}</td>
-                          <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                          <td className="total-cell">
+                            {formatAmount(r.total - (r.discount || 0))}원
+                            <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={r.foreignTotals} /></div>
+                          </td>
                           <td className="foreign-amounts-cell">
                             <ForeignAmountsCell foreignTotals={r.foreignTotals} />
                           </td>
@@ -455,6 +486,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         <td className="col-cnt"></td>
                         <td className="total-cell">
                           <strong>{formatAmount(detailTotalSpend - detailTotalDiscount)}원</strong>
+                          <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={aggregateForeign(eventDetailSummary)} /></div>
                         </td>
                         <td className="foreign-amounts-cell">
                           <ForeignAmountsCell foreignTotals={aggregateForeign(eventDetailSummary)} />
@@ -472,10 +504,10 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                 <table className="summary-table">
                   <thead>
                     <tr>
-                      <th className="sortable" onClick={() => handleEventSort('date')}>일정{sortMark('date')}</th>
-                      <th className="sortable col-cnt" onClick={() => handleEventSort('cnt')}>건수{sortMark('cnt')}</th>
-                      <th className="sortable" onClick={() => handleEventSort('amount')}>총액(원){sortMark('amount')}</th>
-                      <th>현지 금액</th>
+                      <th className="sortable" onClick={() => handleEventSort('date')}>일정{eventSortMark('date')}</th>
+                      <th className="sortable col-cnt" onClick={() => handleEventSort('cnt')}>건수{eventSortMark('cnt')}</th>
+                      <th className="sortable" onClick={() => handleEventSort('amount')}>총액(원){eventSortMark('amount')}</th>
+                      <th className="th-foreign">현지 금액</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -489,14 +521,17 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                               <span>{r.event_title}<span className="drilldown-arrow">›</span></span>
                               <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginTop: 1 }}>
                                 {eventTypeMap[r.event_type]?.label ?? r.event_type}
-                                {r.date_from && <>　{r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</>}
+                                {r.date_from && <> · {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</>}
                               </span>
                               <span className="mobile-sub-cnt">{r.cnt}건</span>
                             </div>
                           </div>
                         </td>
                         <td className="col-cnt">{r.cnt}</td>
-                        <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                        <td className="total-cell">
+                          {formatAmount(r.total - (r.discount || 0))}원
+                          <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={r.foreignTotals} /></div>
+                        </td>
                         <td className="foreign-amounts-cell">
                           <ForeignAmountsCell foreignTotals={r.foreignTotals} />
                         </td>
@@ -509,6 +544,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       <td className="col-cnt"></td>
                       <td className="total-cell">
                         <strong>{formatAmount(eventTotalSpend - eventTotalDiscount)}원</strong>
+                        <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={aggregateForeign(eventSummary)} /></div>
                       </td>
                       <td className="foreign-amounts-cell">
                         <ForeignAmountsCell foreignTotals={aggregateForeign(eventSummary)} />
@@ -529,23 +565,23 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               ) : (
                 <>
                   <BarChart
-                    data={subCategorySummary.map(r => ({ label: r.sub_category || '(미분류)', value: r.total }))}
-                    maxValue={subCategorySummary[0]?.total || 1}
+                    data={sortedSubCategorySummary.map(r => ({ label: r.sub_category || '(미분류)', value: r.total }))}
+                    maxValue={Math.max(...sortedSubCategorySummary.map(r => r.total), 1)}
                     color={CATEGORY_COLORS[drilldownCategory] || '#AAB7B8'}
                     formatLabel={v => `${formatAmount(v)}원`}
                   />
                   <table className="summary-table">
                     <thead>
                       <tr>
-                        <th>세부항목</th>
-                        <th>건수</th>
+                        <th className="sortable" onClick={() => handleCategorySort('name')}>세부항목{catSortMark('name')}</th>
+                        <th className="sortable" onClick={() => handleCategorySort('cnt')}>건수{catSortMark('cnt')}</th>
                         <th>지출</th>
                         <th>할인</th>
-                        <th>총액</th>
+                        <th className="sortable" onClick={() => handleCategorySort('amount')}>총액{catSortMark('amount')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {subCategorySummary.map(r => (
+                      {sortedSubCategorySummary.map(r => (
                         <tr key={r.sub_category || ''}>
                           <td>{r.sub_category || '(미분류)'}</td>
                           <td>{r.cnt}</td>
@@ -582,22 +618,22 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             ) : (
               <>
                 <BarChart
-                  data={categorySummary.map(r => ({ label: r.budget_category, value: r.total }))}
-                  maxValue={categorySummary[0]?.total || 1}
+                  data={sortedCategorySummary.map(r => ({ label: r.budget_category, value: r.total }))}
+                  maxValue={Math.max(...sortedCategorySummary.map(r => r.total), 1)}
                   color={null}
                   formatLabel={v => `${formatAmount(v)}원`}
                 />
                 <table className="summary-table">
                   <thead>
                     <tr>
-                      <th>카테고리</th>
-                      <th>건수</th>
+                      <th className="sortable" onClick={() => handleCategorySort('name')}>카테고리{catSortMark('name')}</th>
+                      <th className="sortable" onClick={() => handleCategorySort('cnt')}>건수{catSortMark('cnt')}</th>
                       <th>지출/할인</th>
-                      <th>총액</th>
+                      <th className="sortable" onClick={() => handleCategorySort('amount')}>총액{catSortMark('amount')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {categorySummary.map(r => (
+                    {sortedCategorySummary.map(r => (
                       <tr
                         key={r.budget_category}
                         className="clickable-row"
