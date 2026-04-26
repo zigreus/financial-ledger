@@ -106,8 +106,8 @@
   padding: 0 16px;
 }
 
-.summary-sub-tabs select {
-  margin-left: auto;
+.summary-sub-tabs select,
+.event-sort-select {
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -115,6 +115,10 @@
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+}
+
+.summary-sub-tabs select {
+  margin-left: auto;
 }
 
 .sub-tab {

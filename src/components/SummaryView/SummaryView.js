@@ -26,7 +26,7 @@ const _filterState = {
   dateTo: _fmt(_initNow),
   selectedEventId: '',
   eventTypeFilter: '',
-  eventSortType: 'amount_desc',
+  eventSortType: 'date_desc',
 };
 
 const CATEGORY_COLORS = {
@@ -96,7 +96,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   const [dateTo, setDateTo] = useState(() => _filterState.dateTo);
   const [selectedEventId, setSelectedEventId] = useState(() => _filterState.selectedEventId);
   const [eventTypeFilter, setEventTypeFilter] = useState(() => _filterState.eventTypeFilter);
-  const [eventSortType, setEventSortType] = useState(() => _filterState.eventSortType);
+  const [eventSortType, setEventSortType] = useState(() => _filterState.eventSortType || 'date_desc');
 
   const currentMonth = useMemo(() => {
     const now = new Date();
@@ -461,7 +461,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                     <select
                       value={eventSortType}
                       onChange={e => setEventSortType(e.target.value)}
-                      style={{ fontSize: '13px' }}
+                      className="event-sort-select"
                     >
                       <option value="amount_desc">금액순</option>
                       <option value="date_desc">최신 일정순</option>
@@ -485,20 +485,15 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                             <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
                               background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
-                            <span>
-                              {r.event_title}<span className="drilldown-arrow">›</span>
-                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 4 }}>
+                            <div>
+                              <span>{r.event_title}<span className="drilldown-arrow">›</span></span>
+                              <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginTop: 1 }}>
                                 {eventTypeMap[r.event_type]?.label ?? r.event_type}
+                                {r.date_from && <>　{r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</>}
                               </span>
-                            </span>
+                              <span className="mobile-sub-cnt">{r.cnt}건</span>
+                            </div>
                           </div>
-                          {r.date_from && (
-                            <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)',
-                              paddingLeft: 15 }}>
-                              {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}
-                            </span>
-                          )}
-                          <span className="mobile-sub-cnt">{r.cnt}건</span>
                         </td>
                         <td className="col-cnt">{r.cnt}</td>
                         <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
