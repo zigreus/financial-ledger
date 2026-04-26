@@ -513,13 +513,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                             <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
                               background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
-                            <div>
-                              <span>{r.event_title}<span className="drilldown-arrow">›</span></span>
+                            <div style={{ overflow: 'hidden' }}>
+                              <span style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.event_title}<span className="drilldown-arrow">›</span></span>
                               <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {eventTypeMap[r.event_type]?.label ?? r.event_type}
                                 {r.date_from && <> · {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</>}
                               </span>
-                              <span className="mobile-sub-cnt">{r.cnt}건</span>
                             </div>
                           </div>
                         </td>
