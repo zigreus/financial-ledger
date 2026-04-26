@@ -267,6 +267,14 @@
 .mobile-sub-cnt { display: none; }
 .event-name-cell { white-space: nowrap; }
 
+.foreign-tags-inline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 4px;
+}
+
 @media (max-width: 480px) {
   .col-cnt { display: none; }
   .event-name-cell { white-space: normal; }
@@ -277,5 +285,9 @@
     font-weight: 400;
     margin-top: 3px;
     padding-left: 15px;
+  }
+  .drilldown-arrow {
+    opacity: 1;
+    color: var(--text-muted);
   }
 }

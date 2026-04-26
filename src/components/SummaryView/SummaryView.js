@@ -66,14 +66,18 @@ function BarChart({ data, maxValue, color, formatLabel, currentMonth }) {
   );
 }
 
-function ForeignAmountsCell({ foreignTotals }) {
+function ForeignAmountsTags({ foreignTotals }) {
   const entries = Object.entries(foreignTotals);
-  if (entries.length === 0) return <span className="amount-secondary">-</span>;
-  return entries.map(([currency, amount]) => (
-    <span key={currency} className="foreign-amount-tag">
-      {currency} {amount % 1 === 0 ? formatAmount(amount) : amount.toFixed(2)}
-    </span>
-  ));
+  if (entries.length === 0) return null;
+  return (
+    <div className="foreign-tags-inline">
+      {entries.map(([currency, amount]) => (
+        <span key={currency} className="foreign-amount-tag">
+          {currency} {amount % 1 === 0 ? formatAmount(amount) : amount.toFixed(2)}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function aggregateForeign(rows) {
@@ -459,7 +463,6 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         <th>세부카테고리</th>
                         <th className="col-cnt">건수</th>
                         <th>총액(원)</th>
-                        <th className="th-foreign">현지 금액</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -472,10 +475,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                           <td className="col-cnt">{r.cnt}</td>
                           <td className="total-cell">
                             {formatAmount(r.total - (r.discount || 0))}원
-                            <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={r.foreignTotals} /></div>
-                          </td>
-                          <td className="foreign-amounts-cell">
-                            <ForeignAmountsCell foreignTotals={r.foreignTotals} />
+                            <ForeignAmountsTags foreignTotals={r.foreignTotals} />
                           </td>
                         </tr>
                       ))}
@@ -486,10 +486,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         <td className="col-cnt"></td>
                         <td className="total-cell">
                           <strong>{formatAmount(detailTotalSpend - detailTotalDiscount)}원</strong>
-                          <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={aggregateForeign(eventDetailSummary)} /></div>
-                        </td>
-                        <td className="foreign-amounts-cell">
-                          <ForeignAmountsCell foreignTotals={aggregateForeign(eventDetailSummary)} />
+                          <ForeignAmountsTags foreignTotals={aggregateForeign(eventDetailSummary)} />
                         </td>
                       </tr>
                     </tfoot>
@@ -507,7 +504,6 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       <th className="sortable" onClick={() => handleEventSort('date')}>일정{eventSortMark('date')}</th>
                       <th className="sortable col-cnt" onClick={() => handleEventSort('cnt')}>건수{eventSortMark('cnt')}</th>
                       <th className="sortable" onClick={() => handleEventSort('amount')}>총액(원){eventSortMark('amount')}</th>
-                      <th className="th-foreign">현지 금액</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -530,10 +526,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         <td className="col-cnt">{r.cnt}</td>
                         <td className="total-cell">
                           {formatAmount(r.total - (r.discount || 0))}원
-                          <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={r.foreignTotals} /></div>
-                        </td>
-                        <td className="foreign-amounts-cell">
-                          <ForeignAmountsCell foreignTotals={r.foreignTotals} />
+                          <ForeignAmountsTags foreignTotals={r.foreignTotals} />
                         </td>
                       </tr>
                     ))}
@@ -544,10 +537,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                       <td className="col-cnt"></td>
                       <td className="total-cell">
                         <strong>{formatAmount(eventTotalSpend - eventTotalDiscount)}원</strong>
-                        <div className="mobile-foreign-inline"><ForeignAmountsCell foreignTotals={aggregateForeign(eventSummary)} /></div>
-                      </td>
-                      <td className="foreign-amounts-cell">
-                        <ForeignAmountsCell foreignTotals={aggregateForeign(eventSummary)} />
+                        <ForeignAmountsTags foreignTotals={aggregateForeign(eventSummary)} />
                       </td>
                     </tr>
                   </tfoot>
