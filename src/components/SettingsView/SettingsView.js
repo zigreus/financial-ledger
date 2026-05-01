@@ -153,6 +153,20 @@ const [dragId, setDragId] = useState(null);
     [db, recurringForm.budget_category]
   );
 
+  // 즐겨찾기
+  const emptyFavoriteForm = {
+    name: '', payment_method: '', budget_category: '', sub_category: '', detail: '', amount: '',
+  };
+  const [showFavoriteForm, setShowFavoriteForm] = useState(false);
+  const [editingFavoriteId, setEditingFavoriteId] = useState(null);
+  const [favoriteForm, setFavoriteForm] = useState(emptyFavoriteForm);
+  const favoriteList = useMemo(() => getFavorites(db), [db]);
+  const favoriteFormSubCategories = useMemo(
+    () => favoriteForm.budget_category ? getSubCategories(db, favoriteForm.budget_category) : [],
+    [db, favoriteForm.budget_category]
+  );
+  const detectedPatterns = useMemo(() => getDetectedPatterns(db), [db]);
+
   // 정기지출 폼 - 자동 할인 계산 (결제수단/금액/카테고리/세부내역 변경 시)
   React.useEffect(() => {
     if (!showRecurringForm) return;
@@ -376,6 +390,71 @@ const [dragId, setDragId] = useState(null);
       deleteRecurringTransaction(db, id);
       onChanged();
       setError('');
+    } catch (e) { setError(e.message); }
+  };
+
+  // ── 즐겨찾기 핸들러 ──
+  const openFavoriteForm = (item = null) => {
+    if (item) {
+      setEditingFavoriteId(item.id);
+      setFavoriteForm({
+        name: item.name,
+        payment_method: item.payment_method,
+        budget_category: item.budget_category,
+        sub_category: item.sub_category || '',
+        detail: item.detail || '',
+        amount: String(item.amount),
+      });
+    } else {
+      setEditingFavoriteId(null);
+      setFavoriteForm(emptyFavoriteForm);
+    }
+    setShowFavoriteForm(true);
+    setError('');
+  };
+
+  const handleSaveFavorite = () => {
+    if (!favoriteForm.name.trim()) { setError('이름을 입력하세요.'); return; }
+    if (!favoriteForm.payment_method) { setError('결제수단을 선택하세요.'); return; }
+    if (!favoriteForm.budget_category) { setError('카테고리를 선택하세요.'); return; }
+    if (!favoriteForm.sub_category) { setError('세부카테고리를 선택하세요.'); return; }
+    const amount = parseInt(favoriteForm.amount, 10);
+    if (isNaN(amount) || amount <= 0) { setError('금액을 올바르게 입력하세요.'); return; }
+    const data = { ...favoriteForm, amount };
+    try {
+      if (editingFavoriteId !== null) {
+        updateFavorite(db, editingFavoriteId, data);
+      } else {
+        addFavorite(db, data);
+      }
+      onChanged();
+      setShowFavoriteForm(false);
+      setEditingFavoriteId(null);
+      setFavoriteForm(emptyFavoriteForm);
+      setError('');
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDeleteFavorite = (id) => {
+    if (!window.confirm('즐겨찾기를 삭제하시겠습니까?')) return;
+    try {
+      deleteFavorite(db, id);
+      onChanged();
+      setError('');
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleToggleAutoPattern = (subCategory, isDisabled) => {
+    try {
+      toggleAutoPattern(db, subCategory, !isDisabled);
+      onChanged();
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDeleteAutoPattern = (subCategory) => {
+    try {
+      deleteAutoPattern(db, subCategory);
+      onChanged();
     } catch (e) { setError(e.message); }
   };
 
@@ -611,16 +690,110 @@ const [dragId, setDragId] = useState(null);
         {error && <div className="error-msg" style={{ marginBottom: '12px' }}>{error}</div>}
 
         {/* ── 지출계획 서브탭 ── */}
-        {(activeSection === 'budget' || activeSection === 'recurring') && (
+        {(activeSection === 'favorites' || activeSection === 'recurring' || activeSection === 'budget') && (
           <div className="settings-subtabs">
             <button
-              className={`settings-subtab${activeSection === 'budget' ? ' active' : ''}`}
-              onClick={() => { setFinanceSubTab('budget'); switchSection('budget'); }}
-            >예산</button>
+              className={`settings-subtab${activeSection === 'favorites' ? ' active' : ''}`}
+              onClick={() => { setFinanceSubTab('favorites'); switchSection('favorites'); setShowFavoriteForm(false); }}
+            >즐겨찾기</button>
             <button
               className={`settings-subtab${activeSection === 'recurring' ? ' active' : ''}`}
               onClick={() => { setFinanceSubTab('recurring'); switchSection('recurring'); setShowRecurringForm(false); }}
             >정기지출</button>
+            <button
+              className={`settings-subtab${activeSection === 'budget' ? ' active' : ''}`}
+              onClick={() => { setFinanceSubTab('budget'); switchSection('budget'); }}
+            >예산</button>
+          </div>
+        )}
+
+        {/* ── 즐겨찾기 탭 ── */}
+        {activeSection === 'favorites' && (
+          <div>
+            {!showFavoriteForm ? (
+              <div>
+                {favoriteList.length > 0 ? (
+                  <div className="draggable-list">
+                    {favoriteList.map((item, idx) => (
+                      <div key={item.id} className="list-item draggable-item" draggable onDragStart={() => { setDragId(item.id); }} onDragOver={e => { e.preventDefault(); setDropIdx(idx); }} onDrop={() => { if (dragId !== item.id && dragId) { reorderFavorite(db, dragId, idx); onChanged(); setDragId(null); setDropIdx(null); } }}>
+                        <span className="drag-handle">≡</span>
+                        <div className="list-item-content" style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}/{item.sub_category}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount.toLocaleString()}원 · {item.use_count}회 사용</div>
+                        </div>
+                        <button className="btn-icon" onClick={() => openFavoriteForm(item)} title="수정">✏</button>
+                        <button className="btn-icon" onClick={() => handleDeleteFavorite(item.id)} title="삭제">🗑</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '24px' }}>등록된 즐겨찾기가 없습니다.</div>
+                )}
+                <button className="btn-secondary" style={{ width: '100%', marginTop: '12px' }} onClick={() => openFavoriteForm()}>+ 새 즐겨찾기 추가</button>
+              </div>
+            ) : (
+              <form style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="form-group">
+                  <label>이름 *</label>
+                  <input type="text" value={favoriteForm.name} onChange={e => setFavoriteForm({...favoriteForm, name: e.target.value})} placeholder="예: 출퇴근 교통비" required />
+                </div>
+                <div className="form-group">
+                  <label>결제수단 *</label>
+                  <select value={favoriteForm.payment_method} onChange={e => setFavoriteForm({...favoriteForm, payment_method: e.target.value})} required>
+                    <option value="">선택</option>
+                    {paymentMethods.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group">
+                    <label>카테고리 *</label>
+                    <select value={favoriteForm.budget_category} onChange={e => { setFavoriteForm({...favoriteForm, budget_category: e.target.value, sub_category: ''}); }} required>
+                      <option value="">선택</option>
+                      {budgetCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>세부카테고리 *</label>
+                    <select value={favoriteForm.sub_category} onChange={e => setFavoriteForm({...favoriteForm, sub_category: e.target.value})} required>
+                      <option value="">선택</option>
+                      {favoriteFormSubCategories.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>세부내역</label>
+                  <input type="text" value={favoriteForm.detail} onChange={e => setFavoriteForm({...favoriteForm, detail: e.target.value})} placeholder="선택사항" />
+                </div>
+                <div className="form-group">
+                  <label>금액 *</label>
+                  <input type="number" value={favoriteForm.amount} onChange={e => setFavoriteForm({...favoriteForm, amount: e.target.value})} placeholder="0" required />
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                  <button type="button" className="btn-secondary" onClick={() => { setShowFavoriteForm(false); setEditingFavoriteId(null); setFavoriteForm(emptyFavoriteForm); setError(''); }} style={{ flex: 1 }}>취소</button>
+                  <button type="button" className="btn-primary" onClick={handleSaveFavorite} style={{ flex: 1 }}>{editingFavoriteId !== null ? '수정' : '추가'}</button>
+                </div>
+              </form>
+            )}
+
+            {/* 자동 패턴 섹션 */}
+            {detectedPatterns.length > 0 && (
+              <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>자동 결제수단 패턴</div>
+                {detectedPatterns.map(pat => (
+                  <div key={pat.sub_category} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px', marginBottom: '8px', background: 'var(--bg)', borderRadius: '8px' }}>
+                    <div style={{ flex: 1, fontSize: '13px' }}>
+                      <div>{pat.sub_category} → {pat.payment_method}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({pat.count}건, {Math.round(pat.count / pat.total * 100)}%)</div>
+                    </div>
+                    <button type="button" className={`goal-display-toggle${pat.is_disabled ? '' : ' goal-display-toggle--on'}`} onClick={() => handleToggleAutoPattern(pat.sub_category, pat.is_disabled)} title={pat.is_disabled ? '켜기' : '끄기'} style={{ marginRight: '8px' }}>
+                      <span className="goal-display-toggle-knob" />
+                    </button>
+                    <button type="button" className="btn-icon" onClick={() => handleDeleteAutoPattern(pat.sub_category)} title="삭제">🗑</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
