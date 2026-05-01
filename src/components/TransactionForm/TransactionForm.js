@@ -279,8 +279,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
 
   // ── 즐겨찾기 로직 ──────────────────────────────────────────────
 
-  const starFields = [form.payment_method, form.budget_category, form.sub_category, amountParsed != null ? form.amount : ''].filter(Boolean);
-  const canStar = starFields.length >= 2;
+  const canStar = form.payment_method && form.budget_category && form.sub_category && amountParsed != null;
 
   // 현재 폼이 기존 즐겨찾기와 일치하는지 확인
   useEffect(() => {
@@ -302,11 +301,12 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   useEffect(() => {
     if (!form.sub_category || form.payment_method) return;
     const suggested = getAutoPaymentMethod(db, form.sub_category);
+    console.log('자동 결제수단:', form.sub_category, '→', suggested);
     if (suggested) {
       skipAutoDiscountRef.current = false;
       set('payment_method', suggested);
     }
-  }, [db, form.sub_category]);
+  }, [db, form.sub_category, form.payment_method]);
 
   const autoFavoriteName = () => form.detail || `${form.payment_method}-${form.sub_category}`;
 

@@ -11,7 +11,7 @@ import {
   getSetting, setSetting, changeDefaultMonthlyGoal,
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
   deleteRecurringTransaction, getRegistrationLog,
-  getFavorites, addFavorite, updateFavorite, deleteFavorite, reorderFavorite, recordFavoriteUse,
+  getFavorites, addFavorite, updateFavorite, deleteFavorite, reorderFavorite,
   getDetectedPatterns, toggleAutoPattern, deleteAutoPattern,
   evaluateDiscountRule,
   getCalendarEventTypes, addCalendarEventType, updateCalendarEventType,
@@ -713,19 +713,40 @@ const [dragId, setDragId] = useState(null);
             {!showFavoriteForm ? (
               <div>
                 {favoriteList.length > 0 ? (
-                  <div className="draggable-list">
-                    {favoriteList.map((item, idx) => (
-                      <div key={item.id} className="list-item draggable-item" draggable onDragStart={() => { setDragId(item.id); }} onDragOver={e => { e.preventDefault(); setDropIdx(idx); }} onDrop={() => { if (dragId !== item.id && dragId) { reorderFavorite(db, dragId, idx); onChanged(); setDragId(null); setDropIdx(null); } }}>
-                        <span className="drag-handle">≡</span>
-                        <div className="list-item-content" style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}/{item.sub_category}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount.toLocaleString()}원 · {item.use_count}회 사용</div>
-                        </div>
-                        <button className="btn-icon" onClick={() => openFavoriteForm(item)} title="수정">✏</button>
-                        <button className="btn-icon" onClick={() => handleDeleteFavorite(item.id)} title="삭제">🗑</button>
-                      </div>
-                    ))}
+                  <div>
+                    {favoriteList.map((item, idx) => {
+                      const isDragging = dragId === item.id;
+                      const showIndicator = dropIdx === idx && dragId !== null && !isDragging;
+                      return (
+                        <React.Fragment key={item.id}>
+                          {showIndicator && <div className="drop-indicator" />}
+                          <div
+                            className={`settings-item ${isDragging ? 'settings-item-dragging' : ''}`}
+                            draggable
+                            onDragStart={() => { setDragId(item.id); setDropIdx(null); }}
+                            onDragOver={e => {
+                              e.preventDefault();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
+                            }}
+                            onDrop={() => { if (dragId && dragId !== item.id) { reorderFavorite(db, dragId, dropIdx); onChanged(); } setDragId(null); setDropIdx(null); }}
+                            onDragEnd={() => { setDragId(null); setDropIdx(null); }}
+                          >
+                            <span className="drag-handle">≡</span>
+                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                              <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}/{item.sub_category}</div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount.toLocaleString()}원 · {item.use_count}회 사용</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                              <button className="btn-icon" onClick={() => openFavoriteForm(item)} title="수정"><IconEdit /></button>
+                              <button className="btn-icon btn-icon--danger" onClick={() => handleDeleteFavorite(item.id)} title="삭제"><IconTrash /></button>
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
+                    {dropIdx === favoriteList.length && dragId !== null && <div className="drop-indicator" />}
                   </div>
                 ) : (
                   <div style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '24px' }}>등록된 즐겨찾기가 없습니다.</div>

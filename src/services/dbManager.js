@@ -1670,31 +1670,34 @@ export function reorderFavorite(db, id, newPosition) {
 export function getAutoPaymentMethod(db, subCategory) {
   if (!subCategory) return null;
 
+  // 최근 20개 거래에서 결제수단 목록 가져오기
   const res = db.exec(
-    `SELECT payment_method, COUNT(*) as cnt
-     FROM (
-       SELECT payment_method FROM transactions
-       WHERE sub_category = ?
-       ORDER BY created_at DESC
-       LIMIT 20
-     )
-     JOIN payment_methods pm ON pm.name = payment_method AND pm.is_hidden = 0
-     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = ?
-     WHERE COALESCE(aps.is_disabled, 0) = 0
-     GROUP BY payment_method
-     ORDER BY cnt DESC
-     LIMIT 1`,
-    [subCategory, subCategory]
+    `SELECT payment_method
+     FROM transactions
+     WHERE sub_category = ? AND payment_method IN (SELECT name FROM payment_methods WHERE is_hidden = 0)
+     ORDER BY created_at DESC
+     LIMIT 20`,
+    [subCategory]
   );
 
-  if (!res.length) return null;
-  const { values } = res[0];
-  if (!values.length) return null;
+  if (!res.length || !res[0].values.length) return null;
 
-  const [paymentMethod, count] = values[0];
-  const totalRes = db.exec('SELECT COUNT(*) FROM transactions WHERE sub_category = ? LIMIT 20', [subCategory]);
-  const total = totalRes.length > 0 ? totalRes[0].values[0][0] : 0;
+  // 결제수단별 집계
+  const methodCounts = {};
+  let total = 0;
+  res[0].values.forEach(row => {
+    const method = row[0];
+    methodCounts[method] = (methodCounts[method] || 0) + 1;
+    total++;
+  });
 
+  // 가장 많은 결제수단 찾기
+  const sorted = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]);
+  if (sorted.length === 0) return null;
+
+  const [paymentMethod, count] = sorted[0];
+
+  // 80% 이상이고 10건 이상이면 반환
   if (total >= 10 && count / total >= 0.8) {
     return paymentMethod;
   }
@@ -1703,17 +1706,17 @@ export function getAutoPaymentMethod(db, subCategory) {
 
 export function getDetectedPatterns(db) {
   const res = db.exec(
-    `SELECT sub_category, payment_method, COUNT(*) as cnt, COALESCE(aps.is_disabled, 0) as is_disabled
+    `SELECT t.sub_category, t.payment_method, COUNT(*) as cnt, COALESCE(aps.is_disabled, 0) as is_disabled
      FROM (
        SELECT sub_category, payment_method FROM transactions
        ORDER BY created_at DESC
        LIMIT 100
-     )
-     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = sub_category
-     JOIN payment_methods pm ON pm.name = payment_method AND pm.is_hidden = 0
-     GROUP BY sub_category, payment_method
+     ) t
+     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = t.sub_category
+     JOIN payment_methods pm ON pm.name = t.payment_method AND pm.is_hidden = 0
+     GROUP BY t.sub_category, t.payment_method
      HAVING cnt >= 10
-     ORDER BY sub_category, cnt DESC`
+     ORDER BY t.sub_category, cnt DESC`
   );
 
   if (!res.length) return [];
