@@ -11,6 +11,8 @@ import {
   getSetting, setSetting, changeDefaultMonthlyGoal,
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
   deleteRecurringTransaction, getRegistrationLog,
+  getFavorites, addFavorite, updateFavorite, deleteFavorite, reorderFavorite, recordFavoriteUse,
+  getDetectedPatterns, toggleAutoPattern, deleteAutoPattern,
   evaluateDiscountRule,
   getCalendarEventTypes, addCalendarEventType, updateCalendarEventType,
   deleteCalendarEventType, moveCalendarEventType,
@@ -107,7 +109,7 @@ const [dragId, setDragId] = useState(null);
   const calEmptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
 
   // 지출계획 섹션
-  const [financeSubTab, setFinanceSubTab] = useState('budget');
+  const [financeSubTab, setFinanceSubTab] = useState('favorites');
 
   // 캘린더 섹션
   const [calendarSubTab, setCalendarSubTab] = useState('types');

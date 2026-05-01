@@ -205,3 +205,136 @@
 .submit-tooltip-wrapper.tooltip-visible .submit-tooltip {
   display: block;
 }
+
+/* ── 별표 버튼 ────────────────────────────────────────────── */
+.btn-star {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  margin-left: 8px;
+  color: #d97706;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all .15s;
+}
+.btn-star:hover:not(:disabled) {
+  background: rgba(217, 119, 6, 0.1);
+  transform: scale(1.1);
+}
+.btn-star.disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: .5;
+}
+.btn-star.active {
+  color: #d97706;
+  font-weight: bold;
+}
+
+/* 별표 팝업 */
+.star-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--primary);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  animation: slideDown .15s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.star-popup input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+}
+.star-popup input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+.star-popup-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.star-popup-buttons button {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.star-popup-buttons .btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+.star-popup-buttons .btn-primary:hover {
+  opacity: .9;
+}
+.star-popup-buttons .btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.star-popup-buttons .btn-secondary:hover {
+  background: #d1d5db;
+}
+
+/* ── 즐겨찾기 칩 ────────────────────────────────────────────── */
+.favorite-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 0;
+  margin-bottom: 8px;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.favorite-chips::-webkit-scrollbar {
+  height: 4px;
+}
+.favorite-chips::-webkit-scrollbar-track {
+  background: transparent;
+}
+.favorite-chips::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.favorite-chip {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.favorite-chip:hover {
+  border-color: var(--primary);
+  background: var(--surface);
+}
+.favorite-chip.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}

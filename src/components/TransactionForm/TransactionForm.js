@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes } from '../../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes, getFavorites, addFavorite, updateFavorite, deleteFavorite, recordFavoriteUse, getAutoPaymentMethod } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 
@@ -153,6 +153,10 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const [subCategories, setSubCategories] = useState([]);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [eventTypeMap, setEventTypeMap] = useState({});
+  const [favorites, setFavorites] = useState([]);
+  const [starredFavoriteId, setStarredFavoriteId] = useState(null);
+  const [showStarPopup, setShowStarPopup] = useState(false);
+  const [starName, setStarName] = useState('');
   const skipAutoDiscountRef = React.useRef(false);
   const skipSubResetRef = React.useRef(false);
 
@@ -169,6 +173,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       return b.date_from.localeCompare(a.date_from);
     });
     setCalendarEvents(events);
+    setFavorites(getFavorites(db));
   }, [db]);
 
   useEffect(() => {
@@ -272,15 +277,156 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   ].filter(Boolean);
   const canSubmit = missingReasons.length === 0;
 
+  // ── 즐겨찾기 로직 ──────────────────────────────────────────────
+
+  const starFields = [form.payment_method, form.budget_category, form.sub_category, amountParsed != null ? form.amount : ''].filter(Boolean);
+  const canStar = starFields.length >= 2;
+
+  // 현재 폼이 기존 즐겨찾기와 일치하는지 확인
+  useEffect(() => {
+    if (!form.payment_method || !form.budget_category || !form.sub_category) {
+      setStarredFavoriteId(null);
+      return;
+    }
+    const matched = favorites.find(f =>
+      f.payment_method === form.payment_method &&
+      f.budget_category === form.budget_category &&
+      f.sub_category === form.sub_category &&
+      f.detail === form.detail &&
+      f.amount === amountParsed
+    );
+    setStarredFavoriteId(matched ? matched.id : null);
+  }, [form, favorites, amountParsed]);
+
+  // 세부카테고리 선택 시 자동 결제수단 선택
+  useEffect(() => {
+    if (!form.sub_category || form.payment_method) return;
+    const suggested = getAutoPaymentMethod(db, form.sub_category);
+    if (suggested) {
+      skipAutoDiscountRef.current = false;
+      set('payment_method', suggested);
+    }
+  }, [db, form.sub_category]);
+
+  const autoFavoriteName = () => form.detail || `${form.payment_method}-${form.sub_category}`;
+
+  const handleStarClick = () => {
+    if (!canStar) return;
+    if (starredFavoriteId) {
+      setShowStarPopup(true);
+      setStarName(favorites.find(f => f.id === starredFavoriteId)?.name || '');
+    } else {
+      const newName = autoFavoriteName();
+      addFavorite(db, {
+        name: newName,
+        payment_method: form.payment_method,
+        budget_category: form.budget_category,
+        sub_category: form.sub_category,
+        detail: form.detail,
+        amount: amountParsed,
+      });
+      setFavorites(getFavorites(db));
+      setStarName(newName);
+      setShowStarPopup(true);
+    }
+  };
+
+  const handleStarPopupClose = () => {
+    if (!starredFavoriteId || !starName.trim()) {
+      setShowStarPopup(false);
+      return;
+    }
+    updateFavorite(db, starredFavoriteId, {
+      name: starName,
+      payment_method: form.payment_method,
+      budget_category: form.budget_category,
+      sub_category: form.sub_category,
+      detail: form.detail,
+      amount: amountParsed,
+    });
+    setFavorites(getFavorites(db));
+    setShowStarPopup(false);
+  };
+
+  const handleStarRemove = () => {
+    if (starredFavoriteId) {
+      deleteFavorite(db, starredFavoriteId);
+      setFavorites(getFavorites(db));
+      setStarredFavoriteId(null);
+    }
+    setShowStarPopup(false);
+  };
+
+  const applyFavorite = (fav) => {
+    recordFavoriteUse(db, fav.id);
+    setFavorites(getFavorites(db));
+    setForm(prev => ({
+      ...prev,
+      payment_method: fav.payment_method,
+      budget_category: fav.budget_category,
+      sub_category: fav.sub_category,
+      detail: fav.detail,
+      amount: String(fav.amount),
+    }));
+  };
+
   return (
     <div className="modal-overlay">
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{editingTx ? '거래 수정' : '거래 추가'}</h2>
+          <h2>
+            {editingTx ? '거래 수정' : '거래 추가'}
+            <button
+              type="button"
+              className={`btn-star ${!canStar ? 'disabled' : ''} ${starredFavoriteId ? 'active' : ''}`}
+              onClick={handleStarClick}
+              disabled={!canStar}
+              title={canStar ? '즐겨찾기' : '결제수단, 카테고리, 세부카테고리, 금액 중 2개 이상 입력하세요'}
+            >
+              {starredFavoriteId ? '★' : '☆'}
+            </button>
+            {showStarPopup && (
+              <div className="star-popup">
+                <input
+                  type="text"
+                  value={starName}
+                  onChange={e => setStarName(e.target.value)}
+                  placeholder={autoFavoriteName()}
+                  autoFocus
+                />
+                <div className="star-popup-buttons">
+                  {starredFavoriteId && (
+                    <button type="button" className="btn-secondary" onClick={handleStarRemove}>
+                      해제
+                    </button>
+                  )}
+                  <button type="button" className="btn-primary" onClick={handleStarPopupClose}>
+                    완료
+                  </button>
+                </div>
+              </div>
+            )}
+          </h2>
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
 
         <form onSubmit={handleSubmit} className="tx-form">
+          {/* 즐겨찾기 칩 */}
+          {favorites.length > 0 && (
+            <div className="favorite-chips">
+              {favorites.map(fav => (
+                <button
+                  key={fav.id}
+                  type="button"
+                  className={`favorite-chip ${starredFavoriteId === fav.id ? 'active' : ''}`}
+                  onClick={() => applyFavorite(fav)}
+                >
+                  ★ {fav.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* 날짜 */}
           <div className="form-group">
             <label>날짜<span className="required">*</span></label>

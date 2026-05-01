@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS transactions (
   amount INTEGER NOT NULL,
   discount_amount INTEGER DEFAULT 0,
   discount_note TEXT DEFAULT '',
+  event_id INTEGER DEFAULT NULL,
+  foreign_amounts TEXT DEFAULT '',
+  trip_id INTEGER DEFAULT NULL,
+  is_recurring INTEGER DEFAULT 0,
+  recurring_source_id INTEGER DEFAULT NULL,
+  recurring_frequency TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
@@ -20,14 +26,17 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS payment_methods (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  sort_order INTEGER DEFAULT 0
+  sort_order INTEGER DEFAULT 0,
+  is_hidden INTEGER DEFAULT 0,
+  discount_rate REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS budget_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   sort_order INTEGER DEFAULT 0,
-  color TEXT DEFAULT ''
+  color TEXT DEFAULT '',
+  is_hidden INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sub_categories (
@@ -35,6 +44,7 @@ CREATE TABLE IF NOT EXISTS sub_categories (
   budget_category TEXT NOT NULL,
   name TEXT NOT NULL,
   sort_order INTEGER DEFAULT 0,
+  is_hidden INTEGER DEFAULT 0,
   UNIQUE(budget_category, name)
 );
 
@@ -129,6 +139,33 @@ CREATE TABLE IF NOT EXISTS calendar_event_types (
   sort_order   INTEGER NOT NULL DEFAULT 0,
   is_system    INTEGER NOT NULL DEFAULT 0,
   is_trip_type INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS favorite_transactions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  name            TEXT NOT NULL,
+  payment_method  TEXT NOT NULL,
+  budget_category TEXT NOT NULL,
+  sub_category    TEXT DEFAULT '',
+  detail          TEXT DEFAULT '',
+  amount          INTEGER NOT NULL,
+  sort_order      INTEGER DEFAULT 0,
+  use_count       INTEGER DEFAULT 0,
+  last_used_at    TEXT,
+  created_at      TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS auto_pattern_settings (
+  sub_category  TEXT PRIMARY KEY,
+  is_disabled   INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pattern_suggestion_log (
+  pattern_key           TEXT PRIMARY KEY,
+  suggest_count         INTEGER DEFAULT 0,
+  dismiss_count         INTEGER DEFAULT 0,
+  never_suggest         INTEGER DEFAULT 0,
+  last_suggest_tx_count INTEGER DEFAULT 0
 );
 `;
 
@@ -1570,6 +1607,176 @@ export function deleteRecurringTransaction(db, id) {
   db.run('DELETE FROM recurring_registration_log WHERE recurring_id = ?', [id]);
 }
 
+// ── 즐겨찾기 템플릿 ───────────────────────────────────────────────
+
+export function getFavorites(db) {
+  const res = db.exec(
+    `SELECT id, name, payment_method, budget_category, sub_category, detail, amount, sort_order, use_count, last_used_at, created_at
+     FROM favorite_transactions
+     ORDER BY sort_order ASC, created_at DESC`
+  );
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function addFavorite(db, data) {
+  const maxSortRes = db.exec('SELECT COALESCE(MAX(sort_order), -1) as maxSort FROM favorite_transactions');
+  const maxSort = maxSortRes.length > 0 ? maxSortRes[0].values[0][0] : -1;
+
+  db.run(
+    `INSERT INTO favorite_transactions (name, payment_method, budget_category, sub_category, detail, amount, sort_order, use_count, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.name, data.payment_method, data.budget_category,
+      data.sub_category || '', data.detail || '', data.amount,
+      maxSort + 1, 0, null,
+    ]
+  );
+}
+
+export function updateFavorite(db, id, data) {
+  db.run(
+    `UPDATE favorite_transactions SET name=?, payment_method=?, budget_category=?, sub_category=?, detail=?, amount=? WHERE id=?`,
+    [
+      data.name, data.payment_method, data.budget_category,
+      data.sub_category || '', data.detail || '', data.amount, id,
+    ]
+  );
+}
+
+export function deleteFavorite(db, id) {
+  db.run('DELETE FROM favorite_transactions WHERE id = ?', [id]);
+}
+
+export function recordFavoriteUse(db, id) {
+  const now = new Date().toLocaleString('sv-SE');
+  db.run(
+    `UPDATE favorite_transactions SET use_count = use_count + 1, last_used_at = ? WHERE id = ?`,
+    [now, id]
+  );
+}
+
+export function reorderFavorite(db, id, newPosition) {
+  moveItemToPosition(db, 'favorite_transactions', id, newPosition);
+}
+
+// ── 스마트 패턴: 자동 결제수단 선택 ─────────────────────────────────
+
+export function getAutoPaymentMethod(db, subCategory) {
+  if (!subCategory) return null;
+
+  const res = db.exec(
+    `SELECT payment_method, COUNT(*) as cnt
+     FROM (
+       SELECT payment_method FROM transactions
+       WHERE sub_category = ?
+       ORDER BY created_at DESC
+       LIMIT 20
+     )
+     JOIN payment_methods pm ON pm.name = payment_method AND pm.is_hidden = 0
+     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = ?
+     WHERE COALESCE(aps.is_disabled, 0) = 0
+     GROUP BY payment_method
+     ORDER BY cnt DESC
+     LIMIT 1`,
+    [subCategory, subCategory]
+  );
+
+  if (!res.length) return null;
+  const { values } = res[0];
+  if (!values.length) return null;
+
+  const [paymentMethod, count] = values[0];
+  const totalRes = db.exec('SELECT COUNT(*) FROM transactions WHERE sub_category = ? LIMIT 20', [subCategory]);
+  const total = totalRes.length > 0 ? totalRes[0].values[0][0] : 0;
+
+  if (total >= 10 && count / total >= 0.8) {
+    return paymentMethod;
+  }
+  return null;
+}
+
+export function getDetectedPatterns(db) {
+  const res = db.exec(
+    `SELECT sub_category, payment_method, COUNT(*) as cnt, COALESCE(aps.is_disabled, 0) as is_disabled
+     FROM (
+       SELECT sub_category, payment_method FROM transactions
+       ORDER BY created_at DESC
+       LIMIT 100
+     )
+     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = sub_category
+     JOIN payment_methods pm ON pm.name = payment_method AND pm.is_hidden = 0
+     GROUP BY sub_category, payment_method
+     HAVING cnt >= 10
+     ORDER BY sub_category, cnt DESC`
+  );
+
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  const patterns = {};
+
+  values.forEach(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    const { sub_category, payment_method, cnt, is_disabled } = obj;
+
+    if (!patterns[sub_category]) {
+      patterns[sub_category] = { sub_category, payment_method, count: cnt, total: cnt, is_disabled };
+    }
+  });
+
+  return Object.values(patterns);
+}
+
+export function toggleAutoPattern(db, subCategory, isDisabled) {
+  db.run(
+    `INSERT OR REPLACE INTO auto_pattern_settings (sub_category, is_disabled) VALUES (?, ?)`,
+    [subCategory, isDisabled ? 1 : 0]
+  );
+}
+
+export function deleteAutoPattern(db, subCategory) {
+  db.run('DELETE FROM auto_pattern_settings WHERE sub_category = ?', [subCategory]);
+}
+
+// ── 즐겨찾기 자동 추천 ──────────────────────────────────────────
+
+export function getSuggestionLog(db, patternKey) {
+  const res = db.exec('SELECT * FROM pattern_suggestion_log WHERE pattern_key = ?', [patternKey]);
+  if (!res.length) return null;
+  const { columns, values } = res[0];
+  if (!values.length) return null;
+
+  const obj = {};
+  columns.forEach((col, i) => { obj[col] = values[0][i]; });
+  return obj;
+}
+
+export function recordSuggestDismiss(db, patternKey, currentTxCount) {
+  const log = getSuggestionLog(db, patternKey);
+  const newDismissCount = (log?.dismiss_count ?? 0) + 1;
+  const shouldNeverSuggest = newDismissCount >= 3 ? 1 : 0;
+
+  db.run(
+    `INSERT OR REPLACE INTO pattern_suggestion_log (pattern_key, suggest_count, dismiss_count, never_suggest, last_suggest_tx_count)
+     VALUES (?, ?, ?, ?, ?)`,
+    [patternKey, log?.suggest_count ?? 0, newDismissCount, shouldNeverSuggest, currentTxCount]
+  );
+}
+
+export function recordNeverSuggest(db, patternKey) {
+  const log = getSuggestionLog(db, patternKey);
+  db.run(
+    `INSERT OR REPLACE INTO pattern_suggestion_log (pattern_key, suggest_count, dismiss_count, never_suggest, last_suggest_tx_count)
+     VALUES (?, ?, ?, 1, ?)`,
+    [patternKey, log?.suggest_count ?? 0, log?.dismiss_count ?? 0, log?.last_suggest_tx_count ?? 0]
+  );
+}
 
 export function getRegistrationLog(db) {
   const res = db.exec('SELECT recurring_id, registered_for_month FROM recurring_registration_log ORDER BY registered_for_month DESC');
