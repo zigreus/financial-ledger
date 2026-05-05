@@ -287,6 +287,7 @@ function App() {
             onChanged={async () => {
               await saveAndReload(db);
             }}
+            onOpenImport={() => navigate({ showImport: true })}
           />
         )}
         {activeTab === 'summary' && (

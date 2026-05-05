@@ -33,7 +33,7 @@ function categoryColor(cat) {
   return `hsl(${hue}, 55%, 52%)`;
 }
 
-function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged }) {
+function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
@@ -298,13 +298,15 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged })
               />
 
               <div className="filter-btn-row">
-                <button
-                  className={`btn-filter-toggle ${showIssueOnly ? 'active' : ''}`}
-                  onClick={() => setShowIssueOnly(v => !v)}
-                  title="카테고리 이슈 거래만 보기"
-                >
-                  이슈{hasAnyIssue && <span className="issue-dot" />}
-                </button>
+                {hasAnyIssue && (
+                  <button
+                    className={`btn-filter-toggle ${showIssueOnly ? 'active' : ''}`}
+                    onClick={() => setShowIssueOnly(v => !v)}
+                    title="카테고리 이슈 거래만 보기"
+                  >
+                    이슈<span className="issue-dot" />
+                  </button>
+                )}
                 <button
                   className={`btn-filter-toggle ${showFilters ? 'active' : ''}`}
                   onClick={() => setShowFilters(v => !v)}
@@ -314,6 +316,11 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged })
                 <button className="btn-filter-toggle" onClick={() => setDeleteMode(true)}>
                   삭제
                 </button>
+                {onOpenImport && (
+                  <button className="btn-filter-toggle" onClick={onOpenImport}>
+                    불러오기
+                  </button>
+                )}
               </div>
             </>
           )}
