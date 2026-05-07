@@ -2129,13 +2129,6 @@ export function runAccountAutoRegister(db) {
         const month = targetDate.getMonth() + 1;
         const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
-        const alreadyExists = db.exec(
-          `SELECT 1 FROM account_transactions
-           WHERE recurring_item_id = ? AND strftime('%Y-%m', date) = ?`,
-          [item.id, yearMonth]
-        );
-        if (alreadyExists.length && alreadyExists[0].values.length) continue;
-
         const lastDay = new Date(year, month, 0).getDate();
         const day = Math.min(item.day_of_month, lastDay);
         const rawDate = `${yearMonth}-${String(day).padStart(2, '0')}`;
@@ -2153,6 +2146,27 @@ export function runAccountAutoRegister(db) {
           const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
           amount = getCardPaymentTotal(db, item.auto_payment_method, prevYM);
           baseAmount = amount;
+        }
+
+        const alreadyExists = db.exec(
+          `SELECT id, is_modified FROM account_transactions
+           WHERE recurring_item_id = ? AND strftime('%Y-%m', date) = ?`,
+          [item.id, yearMonth]
+        );
+
+        if (alreadyExists.length && alreadyExists[0].values.length) {
+          // auto 항목은 사용자가 직접 수정하지 않은 경우에만 금액 갱신
+          if (item.amount_type === 'auto' && amount > 0) {
+            const existingId = alreadyExists[0].values[0][0];
+            const isModified = alreadyExists[0].values[0][1];
+            if (!isModified) {
+              db.run(
+                `UPDATE account_transactions SET amount = ?, base_amount = ? WHERE id = ?`,
+                [amount, baseAmount, existingId]
+              );
+            }
+          }
+          continue;
         }
 
         if (amount === 0) continue;

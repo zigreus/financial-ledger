@@ -590,7 +590,7 @@
 
 .acct-month-label {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -622,11 +622,15 @@
   border-left: 3px solid var(--border);
 }
 
+.acct-month-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .acct-expand-icon {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-left: 5px;
-  vertical-align: middle;
+  flex-shrink: 0;
+  font-size: 12px;
 }
 
 /* ── 모달 tall 변형 ─────────────────────────────────────────────── */

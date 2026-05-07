@@ -20,10 +20,6 @@ function fmt(dateStr) {
     : `${parts[1]}/${parts[2]}`;
 }
 
-function formatYM(ym) {
-  const [y, m] = ym.split('-');
-  return `${y}년 ${parseInt(m, 10)}월`;
-}
 
 function fmtAmount(n) {
   return Number(n).toLocaleString();
@@ -399,7 +395,10 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
                   className={`acct-month-row${isMonthOpen ? ' expanded' : ''}`}
                   onClick={() => toggleMonth(mg.ym)}
                 >
-                  <span className="acct-month-label">{formatYM(mg.ym)}</span>
+                  <div className="acct-month-left">
+                    <span className="acct-expand-icon">{isMonthOpen ? '▼' : '▶'}</span>
+                    <span className="acct-month-label">{mg.ym}</span>
+                  </div>
                   <div className="acct-month-right">
                     {mg.monthNet !== 0 && (
                       <span className={`acct-month-net ${mg.monthNet > 0 ? 'income' : 'expense'}`}>
@@ -409,7 +408,6 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
                     <span className={`acct-month-balance${mg.monthEndBalance < 0 ? ' negative' : ''}`}>
                       {fmtAmount(mg.monthEndBalance)}원
                     </span>
-                    <span className="acct-expand-icon">{isMonthOpen ? '▲' : '▼'}</span>
                   </div>
                 </li>
 
