@@ -2103,7 +2103,7 @@ export function bulkInsertAccountTransactions(db, accountId, rows) {
 export function getCardPaymentTotal(db, paymentMethod, yearMonth) {
   if (!paymentMethod || !yearMonth) return 0;
   const res = db.exec(
-    `SELECT COALESCE(SUM(amount - COALESCE(discount_amount, 0)), 0)
+    `SELECT COALESCE(SUM(amount), 0)
      FROM transactions WHERE payment_method = ? AND strftime('%Y-%m', date) = ?`,
     [paymentMethod, yearMonth]
   );
