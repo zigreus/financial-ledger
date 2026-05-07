@@ -1,4 +1,5 @@
 import initSqlJs from 'sql.js';
+import HOLIDAYS_BY_YEAR, { getNextBusinessDay, getPrevBusinessDay } from '../data/holidays';
 
 let SQL = null;
 
@@ -167,6 +168,60 @@ CREATE TABLE IF NOT EXISTS pattern_suggestion_log (
   never_suggest         INTEGER DEFAULT 0,
   last_suggest_tx_count INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  name             TEXT NOT NULL,
+  bank             TEXT DEFAULT '',
+  account_number   TEXT DEFAULT '',
+  current_balance  INTEGER DEFAULT 0,
+  balance_date     TEXT DEFAULT '',
+  danger_threshold INTEGER DEFAULT 0,
+  is_default       INTEGER DEFAULT 0,
+  note             TEXT DEFAULT '',
+  sort_order       INTEGER DEFAULT 0,
+  is_active        INTEGER DEFAULT 1,
+  created_at       TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS account_recurring_items (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id            INTEGER NOT NULL,
+  name                  TEXT NOT NULL,
+  type                  TEXT NOT NULL DEFAULT 'expense',
+  day_of_month          INTEGER NOT NULL DEFAULT 1,
+  holiday_rule          TEXT DEFAULT 'next_business',
+  amount_type           TEXT DEFAULT 'fixed',
+  fixed_amount          INTEGER DEFAULT 0,
+  auto_payment_method   TEXT DEFAULT '',
+  auto_register         INTEGER DEFAULT 1,
+  register_months_ahead INTEGER DEFAULT 2,
+  note                  TEXT DEFAULT '',
+  sort_order            INTEGER DEFAULT 0,
+  is_active             INTEGER DEFAULT 1,
+  created_at            TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS account_transactions (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id        INTEGER NOT NULL,
+  date              TEXT NOT NULL,
+  type              TEXT NOT NULL DEFAULT 'expense',
+  category          TEXT DEFAULT '',
+  description       TEXT NOT NULL DEFAULT '',
+  amount            INTEGER NOT NULL,
+  base_amount       INTEGER DEFAULT NULL,
+  recurring_item_id INTEGER DEFAULT NULL,
+  is_auto_generated INTEGER DEFAULT 0,
+  is_modified       INTEGER DEFAULT 0,
+  is_imported       INTEGER DEFAULT 0,
+  created_at        TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS holidays (
+  date TEXT PRIMARY KEY,
+  name TEXT NOT NULL
+);
 `;
 
 
@@ -300,6 +355,13 @@ export function createDatabase(SQL, existingData = null) {
     db.run(`UPDATE calendar_events SET event_type = 'general'
             WHERE event_type NOT IN (SELECT value FROM calendar_event_types)`);
     didMigrate = true;
+  } catch (e) {}
+
+  // ── holidays 테이블 동기화 ────────────────────────────────────
+  try {
+    Object.values(HOLIDAYS_BY_YEAR).flat().forEach(({ date, name }) => {
+      db.run('INSERT OR REPLACE INTO holidays (date, name) VALUES (?, ?)', [date, name]);
+    });
   } catch (e) {}
 
   return { db, didMigrate };
@@ -1849,4 +1911,322 @@ export function runAutoRegister(db) {
   });
 
   return { count, targetYearMonth };
+}
+
+// ── 계좌 관리 ────────────────────────────────────────────────────
+
+function dbRowsToObjects(result) {
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map(row => {
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return obj;
+  });
+}
+
+export function getAllAccounts(db) {
+  const res = db.exec('SELECT * FROM accounts WHERE is_active = 1 ORDER BY sort_order, id');
+  return dbRowsToObjects(res);
+}
+
+export function getAccount(db, id) {
+  const res = db.exec('SELECT * FROM accounts WHERE id = ?', [id]);
+  const rows = dbRowsToObjects(res);
+  return rows[0] || null;
+}
+
+// 각 계좌의 실제 현재 잔액 (current_balance + 오늘까지의 거래 합산)
+export function getAccountsActualBalances(db) {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const res = db.exec(
+    `SELECT account_id,
+            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END), 0) AS tx_sum
+     FROM account_transactions WHERE date <= ? GROUP BY account_id`,
+    [todayStr]
+  );
+  const txSums = {};
+  if (res.length) res[0].values.forEach(([id, sum]) => { txSums[id] = sum; });
+  return txSums;
+}
+
+export function getDefaultAccount(db) {
+  const res = db.exec('SELECT * FROM accounts WHERE is_default = 1 AND is_active = 1 LIMIT 1');
+  const rows = dbRowsToObjects(res);
+  return rows[0] || null;
+}
+
+export function addAccount(db, data) {
+  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM accounts');
+  const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
+  db.run(
+    `INSERT INTO accounts (name, bank, account_number, current_balance, balance_date, danger_threshold, is_default, note, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [data.name || '', data.bank || '', data.account_number || '',
+     data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
+     data.is_default ? 1 : 0, data.note || '', nextSort]
+  );
+  const res = db.exec('SELECT last_insert_rowid()');
+  return res[0].values[0][0];
+}
+
+export function updateAccount(db, id, data) {
+  db.run(
+    `UPDATE accounts SET name=?, bank=?, account_number=?, current_balance=?, balance_date=?,
+     danger_threshold=?, is_default=?, note=? WHERE id=?`,
+    [data.name || '', data.bank || '', data.account_number || '',
+     data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
+     data.is_default ? 1 : 0, data.note || '', id]
+  );
+}
+
+export function setDefaultAccount(db, id) {
+  db.run('UPDATE accounts SET is_default = 0');
+  if (id) db.run('UPDATE accounts SET is_default = 1 WHERE id = ?', [id]);
+}
+
+export function deleteAccount(db, id) {
+  db.run('UPDATE accounts SET is_active = 0 WHERE id = ?', [id]);
+}
+
+export function reorderAccounts(db, orderedIds) {
+  orderedIds.forEach((id, i) => {
+    db.run('UPDATE accounts SET sort_order = ? WHERE id = ?', [i, id]);
+  });
+}
+
+// ── 고정 입출금 항목 ─────────────────────────────────────────────
+
+export function getRecurringItems(db, accountId) {
+  const res = db.exec(
+    'SELECT * FROM account_recurring_items WHERE account_id = ? AND is_active = 1 ORDER BY sort_order, id',
+    [accountId]
+  );
+  return dbRowsToObjects(res);
+}
+
+export function addRecurringItem(db, data) {
+  const maxSort = db.exec(
+    'SELECT COALESCE(MAX(sort_order), -1) FROM account_recurring_items WHERE account_id = ?',
+    [data.account_id]
+  );
+  const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
+  db.run(
+    `INSERT INTO account_recurring_items
+       (account_id, name, type, day_of_month, holiday_rule, amount_type, fixed_amount,
+        auto_payment_method, auto_register, register_months_ahead, note, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [data.account_id, data.name || '', data.type || 'expense',
+     data.day_of_month || 1, data.holiday_rule || 'next_business',
+     data.amount_type || 'fixed', data.fixed_amount || 0,
+     data.auto_payment_method || '', data.auto_register !== false ? 1 : 0,
+     data.register_months_ahead || 2, data.note || '', nextSort]
+  );
+}
+
+export function updateRecurringItem(db, id, data) {
+  db.run(
+    `UPDATE account_recurring_items SET name=?, type=?, day_of_month=?, holiday_rule=?,
+     amount_type=?, fixed_amount=?, auto_payment_method=?, auto_register=?,
+     register_months_ahead=?, note=? WHERE id=?`,
+    [data.name || '', data.type || 'expense', data.day_of_month || 1,
+     data.holiday_rule || 'next_business', data.amount_type || 'fixed',
+     data.fixed_amount || 0, data.auto_payment_method || '',
+     data.auto_register !== false ? 1 : 0, data.register_months_ahead || 2,
+     data.note || '', id]
+  );
+}
+
+export function deleteRecurringItem(db, id) {
+  db.run('UPDATE account_recurring_items SET is_active = 0 WHERE id = ?', [id]);
+}
+
+// ── 계좌 거래 내역 ───────────────────────────────────────────────
+
+export function getAccountTransactions(db, accountId, opts = {}) {
+  let q = 'SELECT * FROM account_transactions WHERE account_id = ?';
+  const params = [accountId];
+  if (opts.dateFrom) { q += ' AND date >= ?'; params.push(opts.dateFrom); }
+  if (opts.dateTo)   { q += ' AND date <= ?'; params.push(opts.dateTo); }
+  q += ' ORDER BY date DESC, id DESC';
+  const res = db.exec(q, params);
+  return dbRowsToObjects(res);
+}
+
+export function addAccountTransaction(db, data) {
+  db.run(
+    `INSERT INTO account_transactions
+       (account_id, date, type, category, description, amount, base_amount,
+        recurring_item_id, is_auto_generated, is_modified, is_imported)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [data.account_id, data.date, data.type || 'expense', data.category || '',
+     data.description || '', data.amount, data.base_amount ?? null,
+     data.recurring_item_id ?? null,
+     data.is_auto_generated ? 1 : 0, data.is_modified ? 1 : 0, data.is_imported ? 1 : 0]
+  );
+}
+
+export function updateAccountTransaction(db, id, data) {
+  db.run(
+    `UPDATE account_transactions SET date=?, type=?, category=?, description=?, amount=?,
+     is_modified=1 WHERE id=?`,
+    [data.date, data.type || 'expense', data.category || '', data.description || '',
+     data.amount, id]
+  );
+}
+
+export function deleteAccountTransaction(db, id) {
+  db.run('DELETE FROM account_transactions WHERE id = ?', [id]);
+}
+
+export function bulkInsertAccountTransactions(db, accountId, rows) {
+  db.run('BEGIN');
+  try {
+    rows.forEach(row => {
+      db.run(
+        `INSERT INTO account_transactions
+           (account_id, date, type, description, amount, is_imported)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+        [accountId, row.date, row.type, row.description, row.amount]
+      );
+    });
+    db.run('COMMIT');
+  } catch (e) {
+    db.run('ROLLBACK');
+    throw e;
+  }
+}
+
+// ── 카드 결제 추정액 집계 ────────────────────────────────────────
+
+export function getCardPaymentTotal(db, paymentMethod, yearMonth) {
+  if (!paymentMethod || !yearMonth) return 0;
+  const res = db.exec(
+    `SELECT COALESCE(SUM(amount - COALESCE(discount_amount, 0)), 0)
+     FROM transactions WHERE payment_method = ? AND strftime('%Y-%m', date) = ?`,
+    [paymentMethod, yearMonth]
+  );
+  return res[0]?.values[0][0] || 0;
+}
+
+// ── 계좌 자동 등록 ───────────────────────────────────────────────
+
+export function runAccountAutoRegister(db) {
+  const accounts = getAllAccounts(db);
+  const now = new Date();
+  let totalCount = 0;
+
+  accounts.forEach(account => {
+    const items = getRecurringItems(db, account.id).filter(i => i.auto_register);
+
+    items.forEach(item => {
+      const monthsAhead = item.register_months_ahead || 2;
+
+      for (let m = 0; m <= monthsAhead; m++) {
+        const targetDate = new Date(now.getFullYear(), now.getMonth() + m, 1);
+        const year = targetDate.getFullYear();
+        const month = targetDate.getMonth() + 1;
+        const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+        const alreadyExists = db.exec(
+          `SELECT 1 FROM account_transactions
+           WHERE recurring_item_id = ? AND strftime('%Y-%m', date) = ?`,
+          [item.id, yearMonth]
+        );
+        if (alreadyExists.length && alreadyExists[0].values.length) continue;
+
+        const lastDay = new Date(year, month, 0).getDate();
+        const day = Math.min(item.day_of_month, lastDay);
+        const rawDate = `${yearMonth}-${String(day).padStart(2, '0')}`;
+        const actualDate = item.holiday_rule === 'next_business'
+          ? getNextBusinessDay(rawDate)
+          : item.holiday_rule === 'prev_business'
+            ? getPrevBusinessDay(rawDate)
+            : rawDate;
+
+        let amount = item.fixed_amount || 0;
+        let baseAmount = null;
+
+        if (item.amount_type === 'auto' && item.auto_payment_method) {
+          const prevDate = new Date(year, month - 2, 1);
+          const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+          amount = getCardPaymentTotal(db, item.auto_payment_method, prevYM);
+          baseAmount = amount;
+        }
+
+        if (amount === 0) continue;
+
+        db.run(
+          `INSERT INTO account_transactions
+             (account_id, date, type, category, description, amount, base_amount,
+              recurring_item_id, is_auto_generated, is_modified)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)`,
+          [account.id, actualDate, item.type, '',
+           item.name, amount, baseAmount, item.id]
+        );
+        totalCount++;
+      }
+    });
+  });
+
+  return totalCount;
+}
+
+// ── 잔액 예측 ────────────────────────────────────────────────────
+
+export function getBalanceForecast(db, accountId, daysAhead = 90) {
+  const account = getAccount(db, accountId);
+  if (!account) return [];
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + daysAhead);
+  const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+
+  // current_balance(시작 금액)에서 과거 거래를 순서대로 적용 → 실제 현재 잔액
+  const pastRes = db.exec(
+    'SELECT * FROM account_transactions WHERE account_id = ? AND date <= ? ORDER BY date ASC, id ASC',
+    [accountId, todayStr]
+  );
+  const pastTxs = dbRowsToObjects(pastRes);
+
+  let actualCurrentBalance = account.current_balance || 0;
+  for (const tx of pastTxs) {
+    if (tx.type === 'income') actualCurrentBalance += tx.amount;
+    else actualCurrentBalance -= tx.amount;
+  }
+
+  // 오늘 이후 거래를 예측 이벤트로 처리
+  const futureRes = db.exec(
+    'SELECT * FROM account_transactions WHERE account_id = ? AND date > ? AND date <= ? ORDER BY date ASC, id ASC',
+    [accountId, todayStr, endStr]
+  );
+  const futureTxs = dbRowsToObjects(futureRes);
+
+  let balance = actualCurrentBalance;
+  const events = [];
+
+  futureTxs.forEach(tx => {
+    const delta = tx.type === 'income' ? tx.amount : -tx.amount;
+    balance += delta;
+
+    const isEstimated = !!tx.is_auto_generated && !tx.is_modified;
+    const isCardEstimate = tx.amount_type === 'auto';
+
+    events.push({
+      date: tx.date,
+      description: tx.description,
+      type: tx.type,
+      amount: tx.amount,
+      balance,
+      isEstimated,
+      isCardEstimate,
+      isBelowDanger: account.danger_threshold > 0 && balance < account.danger_threshold,
+      tx,
+    });
+  });
+
+  return { account, startBalance: actualCurrentBalance, events };
 }

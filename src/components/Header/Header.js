@@ -2,7 +2,7 @@ import React from 'react';
 import { useMsal } from '@azure/msal-react';
 import './Header.css';
 
-function Header({ onRefresh, onSave, loading, saving, dirty }) {
+function Header({ onRefresh, onSave, loading, saving, dirty, onSettings, settingsActive }) {
   const { accounts, instance } = useMsal();
   const userName = accounts[0]?.name || accounts[0]?.username?.split('@')[0] || '';
 
@@ -34,6 +34,13 @@ function Header({ onRefresh, onSave, loading, saving, dirty }) {
           title="OneDrive에서 새로고침"
         >
           {loading ? '⏳' : '🔄'}
+        </button>
+        <button
+          className={`btn-header btn-settings${settingsActive ? ' active' : ''}`}
+          onClick={onSettings}
+          title="설정"
+        >
+          ⚙️
         </button>
         <button className="btn-header btn-user" onClick={handleLogout} title="로그아웃">
           {userName || '로그아웃'}

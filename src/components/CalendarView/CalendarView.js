@@ -207,7 +207,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
   }
 
   return (
-    <div className="cv-form-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <div className="cv-form-overlay">
       <div className="cv-form">
         <div className="cv-form-header">
           <span className="cv-form-title">{editingEvent ? '일정 수정' : '일정 추가'}</span>

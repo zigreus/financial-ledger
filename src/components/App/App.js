@@ -11,7 +11,8 @@ import SettingsView from '../SettingsView/SettingsView';
 import ImportModal from '../ImportModal/ImportModal';
 import CalendarView from '../CalendarView/CalendarView';
 
-import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister } from '../../services/dbManager';
+import AccountManagement from '../AccountManagement/AccountManagement';
+import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister, runAccountAutoRegister } from '../../services/dbManager';
 import { readDbFromOneDrive, writeDbToOneDrive } from '../../services/oneDriveService';
 
 function App() {
@@ -23,7 +24,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'settings'
+  const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
@@ -40,6 +41,10 @@ function App() {
   const [settingsDrilldownCategory, setSettingsDrilldownCategory] = useState(null);
   const [settingsDrilldownTrip, setSettingsDrilldownTrip] = useState(null);
   const [settingsDrilldownPayment, setSettingsDrilldownPayment] = useState(null);
+  // AccountManagement 내비게이션 state
+  const [accountDrilldown, setAccountDrilldown] = useState(null); // null=list, {id}=detail
+  const [accountDetailTab, setAccountDetailTab] = useState('transactions');
+  const [showAccountForm, setShowAccountForm] = useState(false); // 계좌탭 ➕ 버튼용
   const [calendarGoTodayKey, setCalendarGoTodayKey] = useState(0);
   const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
@@ -48,6 +53,7 @@ function App() {
     summaryTab: 'monthly', summaryDrilldown: null,
     settingsSection: 'payment',
     settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+    accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
   });
   const historyInitialized = React.useRef(false);
 
@@ -69,6 +75,9 @@ function App() {
     if ('settingsDrilldownCategory' in s) setSettingsDrilldownCategory(s.settingsDrilldownCategory);
     if ('settingsDrilldownTrip' in s) setSettingsDrilldownTrip(s.settingsDrilldownTrip);
     if ('settingsDrilldownPayment' in s) setSettingsDrilldownPayment(s.settingsDrilldownPayment);
+    if ('accountDrilldown' in s) setAccountDrilldown(s.accountDrilldown);
+    if ('accountDetailTab' in s) setAccountDetailTab(s.accountDetailTab);
+    if ('showAccountForm' in s) setShowAccountForm(s.showAccountForm);
   }, []);
 
   const navigate = useCallback((updates) => {
@@ -115,8 +124,9 @@ function App() {
 
       // 자동등록 실행 (매 로그인 시)
       const { count, targetYearMonth } = runAutoRegister(newDb);
+      const accountAutoCount = runAccountAutoRegister(newDb);
 
-      const needsSave = didMigrate || count > 0;
+      const needsSave = didMigrate || count > 0 || accountAutoCount > 0;
       if (needsSave) {
         try {
           const bytes = exportDatabase(newDb);
@@ -172,8 +182,16 @@ function App() {
       const SQL = await initSQL();
       const data = await readDbFromOneDrive(instance, accounts);
       const { db: newDb, didMigrate } = createDatabase(SQL, data);
+      if (didMigrate) {
+        try {
+          const migratedBytes = exportDatabase(newDb);
+          await writeDbToOneDrive(instance, accounts, migratedBytes);
+        } catch (e) {
+          setError(`저장 실패: ${e.message}`);
+        }
+      }
       setDb(newDb);
-      setDirty(didMigrate);
+      setDirty(false);
     } catch (e) {
       setError(`새로고침 실패: ${e.message}`);
     } finally {
@@ -262,6 +280,8 @@ function App() {
         loading={loading}
         saving={saving}
         dirty={dirty}
+        onSettings={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+        settingsActive={activeTab === 'settings'}
       />
 
       {toast && (
@@ -315,6 +335,23 @@ function App() {
             onEditTransaction={openEdit}
           />
         )}
+        {activeTab === 'account' && (
+          <AccountManagement
+            db={db}
+            drilldown={accountDrilldown}
+            detailTab={accountDetailTab}
+            showForm={showAccountForm}
+            onDrilldownChange={(v) => navigate({ accountDrilldown: v })}
+            onDetailTabChange={(t) => navigate({ accountDetailTab: t })}
+            onCloseForm={() => setShowAccountForm(false)}
+            onChanged={async () => {
+              showToast('저장 중…');
+              runAccountAutoRegister(db);
+              await saveAndReload(db);
+              showToast('✓ 저장됨');
+            }}
+          />
+        )}
         {activeTab === 'settings' && (
           <SettingsView
             db={db}
@@ -363,10 +400,16 @@ function App() {
           <span className="nav-label">요약</span>
         </button>
         <button
-          className={`nav-item nav-add${activeTab === 'calendar' ? ' nav-add--event' : ''}`}
-          onClick={activeTab === 'calendar' ? () => navigate({ showEventForm: true }) : openAdd}
+          className={`nav-item nav-add${activeTab === 'calendar' ? ' nav-add--event' : activeTab === 'account' ? ' nav-add--account' : ''}`}
+          onClick={
+            activeTab === 'calendar'
+              ? () => navigate({ showEventForm: true })
+              : activeTab === 'account'
+                ? () => { setShowAccountForm(true); }
+                : openAdd
+          }
         >
-          <span className="nav-icon-add">{activeTab === 'calendar' ? '📅' : '+'}</span>
+          <span className="nav-icon-add">{activeTab === 'calendar' ? '📅' : activeTab === 'account' ? '💳' : '+'}</span>
         </button>
         <button
           className={activeTab === 'calendar' ? 'nav-item active' : 'nav-item'}
@@ -384,11 +427,11 @@ function App() {
           <span className="nav-label">캘린더</span>
         </button>
         <button
-          className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}
-          onClick={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
+          className={activeTab === 'account' ? 'nav-item active' : 'nav-item'}
+          onClick={() => { navigate({ activeTab: 'account', accountDrilldown: null }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         >
-          <span className="nav-icon">⚙️</span>
-          <span className="nav-label">설정</span>
+          <span className="nav-icon">🏦</span>
+          <span className="nav-label">계좌</span>
         </button>
       </nav>
 

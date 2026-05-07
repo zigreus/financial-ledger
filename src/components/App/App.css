@@ -72,24 +72,18 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding-bottom: calc(var(--nav-h) + 8px);
 }
 
 /* ── 하단 네비게이션 ──────────────────────────────────────── */
 .bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
+  flex-shrink: 0;
   width: 100%;
-  max-width: 640px;
   height: var(--nav-h);
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-around;
-  z-index: 100;
 }
 
 .nav-item {
