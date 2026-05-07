@@ -659,7 +659,7 @@ function AccountForm({ account, onSave, onCancel }) {
             <input value={accountNumber} onChange={e => setAccountNumber(e.target.value)} placeholder="선택 사항" />
           </label>
           <label>
-            현재 잔액 (원)
+            최초 잔액 (원)
             <input
               type="number"
               value={balance}
