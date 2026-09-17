@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  getEventWallets, getEventCashFlows, addEventCashFlow, deleteEventCashFlow,
+  getEventWallets, getEventCashLedger, addEventCashFlow, deleteEventCashFlow,
   reconcileEventWallet, closeEventWallet,
-  getEventCountries, getAllAccounts, getDefaultAccount,
+  getEventCountries, getAllAccounts,
   getBudgetCategories, getSubCategories, getTripDefaultCategory,
   getCalendarEvents, getCalendarEventTypes,
 } from '../../services/dbManager';
 import { evaluateFormula, parseForeignAmount, formatAmount, today } from '../../services/formulaEvaluator';
 import './TripCashModal.css';
+import ModalOverlay from '../common/ModalOverlay';
 
 const KRW = 'KRW';
 
@@ -55,7 +56,7 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
   // version은 sql.js DB가 제자리에서 바뀌므로 다시 읽기 위한 캐시 무효화 키
   /* eslint-disable react-hooks/exhaustive-deps */
   const wallets = useMemo(() => getEventWallets(db, event.id), [db, event.id, version]);
-  const flows = useMemo(() => getEventCashFlows(db, event.id), [db, event.id, version]);
+  const ledger = useMemo(() => getEventCashLedger(db, event.id), [db, event.id, version]);
   const countries = useMemo(() => getEventCountries(db, event.id), [db, event.id, version]);
   /* eslint-enable react-hooks/exhaustive-deps */
   const accounts = useMemo(() => getAllAccounts(db), [db]);
@@ -70,11 +71,12 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
       .sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
   }, [db, event.id]);
 
+  // 원화는 환전 대상이 아니므로 환전/출금 통화 목록에서 제외한다
   const currencyOptions = useMemo(() => {
     const set = new Set(countries.map(c => String(c.currency).trim().toUpperCase()).filter(Boolean));
     wallets.forEach(w => set.add(w.currency));
-    set.add(KRW);
-    return [...set].sort((a, b) => (a === KRW ? 1 : 0) - (b === KRW ? 1 : 0) || a.localeCompare(b));
+    set.delete(KRW);
+    return [...set].sort();
   }, [countries, wallets]);
 
   const run = (fn) => {
@@ -90,8 +92,7 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
   }, 0);
 
   return (
-    <div className="tc-overlay" onClick={onClose}>
-      <div className="tc-modal" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="tc-overlay" panelClassName="tc-modal">
         <div className="tc-header">
           <div className="tc-header-left">
             <span className="tc-title">현금 관리</span>
@@ -143,7 +144,6 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
           {tab === 'add' && (
             <AddFlowForm
               event={event} accounts={accounts} currencyOptions={currencyOptions}
-              defaultAccount={getDefaultAccount(db)}
               onSubmit={payload => run(() => { addEventCashFlow(db, payload); bump(); setTab('wallets'); })}
             />
           )}
@@ -157,7 +157,6 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
             <CloseForm
               db={db} wallets={wallets} accounts={accounts} tripEvents={tripEvents}
               categories={categories} tripCategory={tripCategory}
-              defaultAccount={getDefaultAccount(db)}
               onSubmit={payload => run(() => {
                 const r = closeEventWallet(db, { ...payload, event_id: event.id });
                 bump();
@@ -171,13 +170,12 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
           )}
           {tab === 'history' && (
             <FlowHistory
-              flows={flows} accounts={accounts}
+              ledger={ledger} accounts={accounts}
               onDelete={id => run(() => { deleteEventCashFlow(db, id); bump(); })}
             />
           )}
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -225,21 +223,29 @@ function WalletList({ wallets, countries }) {
 }
 
 // ── 환전/출금 추가 ───────────────────────────────────────────────
-function AddFlowForm({ event, accounts, currencyOptions, defaultAccount, onSubmit }) {
+function AddFlowForm({ event, accounts, currencyOptions, onSubmit }) {
   const [date, setDate] = useState(event.date_from || today());
-  const [currency, setCurrency] = useState(currencyOptions[0] || KRW);
+  const [currency, setCurrency] = useState(currencyOptions[0] || '');
   const [amount, setAmount] = useState('');
   const [krwCost, setKrwCost] = useState('');
-  const [accountId, setAccountId] = useState(defaultAccount ? String(defaultAccount.id) : '');
+  const [accountId, setAccountId] = useState('');
   const [note, setNote] = useState('');
 
-  const isKrw = currency === KRW;
   const qty = parseForeignAmount(amount);
-  const cost = isKrw ? (qty === null ? null : Math.round(qty)) : evaluateFormula(krwCost);
+  const cost = evaluateFormula(krwCost);
   const costValid = cost !== null && !isNaN(cost) && cost > 0;
-  const rate = !isKrw && qty > 0 && costValid ? cost / qty : 0;
+  const rate = qty > 0 && costValid ? cost / qty : 0;
 
-  const canSubmit = qty !== null && qty > 0 && costValid;
+  const canSubmit = !!currency && qty !== null && qty > 0 && costValid;
+
+  if (!currencyOptions.length) {
+    return (
+      <div className="tc-empty">
+        이 일정에 여행 국가/화폐가 없습니다.<br />
+        일정 수정에서 국가와 통화를 먼저 추가하세요.
+      </div>
+    );
+  }
 
   return (
     <div className="tc-form">
@@ -261,29 +267,27 @@ function AddFlowForm({ event, accounts, currencyOptions, defaultAccount, onSubmi
       </div>
 
       <div className="tc-field">
-        <label>{isKrw ? '출금액 (원)' : `받은 금액 (${currency})`}</label>
+        <label>받은 금액 ({currency})</label>
         <input
           type="text" inputMode="decimal" value={amount}
           onChange={e => setAmount(e.target.value)}
-          placeholder={isKrw ? '예: 300000' : '예: 10000'}
+          placeholder="예: 10000"
         />
       </div>
 
-      {!isKrw && (
-        <div className="tc-field">
-          <label>지불한 원화</label>
-          <input
-            type="text" inputMode="decimal" value={krwCost}
-            onChange={e => setKrwCost(e.target.value)}
-            placeholder="예: 87800"
-          />
-          {rate > 0 && (
-            <span className="tc-rate-preview">
-              실효 환율 1 {currency} = {rate.toFixed(2)}원 — 일정 환율로 자동 반영됩니다
-            </span>
-          )}
-        </div>
-      )}
+      <div className="tc-field">
+        <label>지불한 원화</label>
+        <input
+          type="text" inputMode="decimal" value={krwCost}
+          onChange={e => setKrwCost(e.target.value)}
+          placeholder="예: 87800"
+        />
+        {rate > 0 && (
+          <span className="tc-rate-preview">
+            실효 환율 1 {currency} = {rate.toFixed(2)}원 — 일정 환율로 자동 반영됩니다
+          </span>
+        )}
+      </div>
 
       {accounts.length > 0 && (
         <div className="tc-field">
@@ -428,13 +432,13 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
 }
 
 // ── 여행 종료 처리 ───────────────────────────────────────────────
-function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory, defaultAccount, onSubmit }) {
+function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory, onSubmit }) {
   const open = wallets.filter(w => Math.abs(w.balance) >= 0.005);
   const [currency, setCurrency] = useState(open[0]?.currency || '');
   const [mode, setMode] = useState('refund');
   const [date, setDate] = useState(today());
   const [receivedKrw, setReceivedKrw] = useState('');
-  const [accountId, setAccountId] = useState(defaultAccount ? String(defaultAccount.id) : '');
+  const [accountId, setAccountId] = useState('');
   const [targetEventId, setTargetEventId] = useState('');
   const [recordFx, setRecordFx] = useState(true);
   const [category, setCategory] = useState(tripCategory || '');
@@ -583,32 +587,52 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
   );
 }
 
-// ── 내역 ─────────────────────────────────────────────────────────
-function FlowHistory({ flows, accounts, onDelete }) {
-  if (!flows.length) return <div className="tc-empty">기록이 없습니다.</div>;
+// ── 내역 (환전 흐름 + 실제 현금 사용) ──────────────────────────
+function FlowHistory({ ledger, accounts, onDelete }) {
+  if (!ledger.length) return <div className="tc-empty">기록이 없습니다.</div>;
   const acctName = id => accounts.find(a => a.id === id)?.name || '';
+
+  // 통화별 잔액이 어떻게 흘러왔는지 보이도록 누적 잔액을 계산한다
+  const running = {};
+  const rows = ledger.map(r => {
+    running[r.currency] = (running[r.currency] || 0) + r.amount;
+    return { ...r, balance: running[r.currency] };
+  });
+
   return (
     <>
-      {[...flows].reverse().map(f => (
-        <div key={f.id} className="tc-flow">
+      {rows.slice().reverse().map(r => (
+        <div key={`${r.kind}-${r.id}`} className={`tc-flow${r.kind === 'spend' ? ' tc-flow-spend' : ''}`}>
           <div className="tc-flow-main">
             <div className="tc-flow-top">
-              <span className="tc-flow-type">{FLOW_LABEL[f.type] || f.type}</span>
-              <span className="tc-flow-date">{f.date}</span>
+              <span className={`tc-flow-type${r.kind === 'spend' ? ' tc-flow-type-spend' : ''}`}>
+                {r.kind === 'spend' ? '현금 사용' : (FLOW_LABEL[r.type] || r.type)}
+              </span>
+              <span className="tc-flow-date">{r.date}</span>
+              {r.is_split && <span className="tc-flow-split" title="분할 결제">🔗</span>}
             </div>
-            {(f.note || f.account_id) && (
+            {(r.note || r.account_id) && (
               <div className="tc-flow-note">
-                {f.note}{f.account_id ? `${f.note ? ' · ' : ''}${acctName(f.account_id)}` : ''}
+                {r.note}{r.account_id ? `${r.note ? ' · ' : ''}${acctName(r.account_id)}` : ''}
               </div>
             )}
           </div>
           <div className="tc-flow-right">
-            <span className={`tc-flow-amount${f.amount < 0 ? ' neg' : ''}`}>
-              {f.amount > 0 ? '+' : ''}{fmtCur(f.amount, f.currency)} {f.currency}
+            <span className={`tc-flow-amount${r.amount < 0 ? ' neg' : ''}`}>
+              {r.amount > 0 ? '+' : ''}{fmtCur(r.amount, r.currency)} {r.currency}
             </span>
-            {f.krw_cost > 0 && <span className="tc-flow-krw">{formatAmount(f.krw_cost)}원</span>}
+            <span className="tc-flow-sub">
+              {r.kind === 'spend'
+                ? `${formatAmount(r.krw_cost)}원`
+                : (r.krw_cost > 0 ? `${formatAmount(r.krw_cost)}원` : '')}
+              <span className="tc-flow-running">잔액 {fmtCur(r.balance, r.currency)}</span>
+            </span>
           </div>
-          <button className="tc-flow-del" onClick={() => onDelete(f.id)} title="삭제">✕</button>
+          {r.kind === 'flow' ? (
+            <button className="tc-flow-del" onClick={() => onDelete(r.id)} title="삭제">✕</button>
+          ) : (
+            <span className="tc-flow-del-spacer" />
+          )}
         </div>
       ))}
     </>

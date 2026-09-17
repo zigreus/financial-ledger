@@ -5,6 +5,7 @@ import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../ser
 import { formatAmount } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import './TransactionList.css';
+import ModalOverlay from '../common/ModalOverlay';
 
 const DEFAULT_CATEGORY_COLORS = {
   '식비': '#FF6B6B',
@@ -568,8 +569,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
 
       {/* 세부내역 모달 */}
       {selectedDetail && (
-        <div className="modal-overlay" onClick={() => setSelectedDetail(null)}>
-          <div className="modal-content modal-small" onClick={e => e.stopPropagation()}>
+        <ModalOverlay className="modal-overlay" panelClassName="modal-content modal-small" onDismiss={() => setSelectedDetail(null)}>
             <div className="modal-header">
               <h3>거래 세부내역</h3>
               <button className="modal-close" onClick={() => setSelectedDetail(null)}>✕</button>
@@ -660,8 +660,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                 수정
               </button>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

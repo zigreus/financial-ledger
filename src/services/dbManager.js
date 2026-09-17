@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS favorite_transactions (
   budget_category TEXT NOT NULL,
   sub_category    TEXT DEFAULT '',
   detail          TEXT DEFAULT '',
-  amount          INTEGER NOT NULL,
+  amount          INTEGER,
   sort_order      INTEGER DEFAULT 0,
   use_count       INTEGER DEFAULT 0,
   last_used_at    TEXT,
@@ -299,6 +299,35 @@ export function createDatabase(SQL, existingData = null) {
   try { db.run("ALTER TABLE transactions ADD COLUMN split_group_id TEXT DEFAULT ''"); didMigrate = true; } catch (e) {}
   // 현금 거래지만 여행 지갑 잔액에는 영향이 없는 장부 조정(환차손익 등)
   try { db.run('ALTER TABLE transactions ADD COLUMN is_cash_adjustment INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
+
+  // 즐겨찾기 금액을 선택 항목으로 — amount의 NOT NULL 제거 (기존 DB 호환)
+  try {
+    const favSql = db.exec(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='favorite_transactions'"
+    )[0]?.values[0][0] || '';
+    if (/amount\s+INTEGER\s+NOT\s+NULL/i.test(favSql)) {
+      db.run(`CREATE TABLE favorite_transactions_new (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL,
+        payment_method  TEXT NOT NULL,
+        budget_category TEXT NOT NULL,
+        sub_category    TEXT DEFAULT '',
+        detail          TEXT DEFAULT '',
+        amount          INTEGER,
+        sort_order      INTEGER DEFAULT 0,
+        use_count       INTEGER DEFAULT 0,
+        last_used_at    TEXT,
+        created_at      TEXT DEFAULT (datetime('now', 'localtime'))
+      )`);
+      db.run(`INSERT INTO favorite_transactions_new
+              SELECT id, name, payment_method, budget_category, sub_category, detail,
+                     amount, sort_order, use_count, last_used_at, created_at
+              FROM favorite_transactions`);
+      db.run('DROP TABLE favorite_transactions');
+      db.run('ALTER TABLE favorite_transactions_new RENAME TO favorite_transactions');
+      didMigrate = true;
+    }
+  } catch (e) {}
 
   // ── trips → calendar_events 마이그레이션 ──────────────────────────
   // trips 테이블이 존재하면 마이그레이션 실행 후 DROP
@@ -774,8 +803,8 @@ export function getEventWallets(db, eventId) {
     return map[cur];
   };
 
-  // 환율이 설정된 통화는 흐름이 없어도 지갑을 노출한다
-  Object.keys(currencyLabel).forEach(ensure);
+  // 환율이 설정된 통화는 흐름이 없어도 지갑을 노출한다 (원화는 환전 대상이 아니므로 제외)
+  Object.keys(currencyLabel).filter(c => c !== KRW).forEach(ensure);
   flows.forEach(f => {
     const w = ensure(f.currency);
     w.inflow += f.amount;
@@ -784,7 +813,11 @@ export function getEventWallets(db, eventId) {
       w.krwCost += f.krw_cost;
     }
   });
-  Object.keys(spending).forEach(cur => { ensure(cur).spent += spending[cur]; });
+  // 원화 현금 지출은 지갑에 넣지 않는다 — 원화를 따로 환전해 둔 기록이 있을 때만 추적
+  const krwTracked = flows.some(f => f.currency === KRW);
+  Object.keys(spending)
+    .filter(cur => cur !== KRW || krwTracked)
+    .forEach(cur => { ensure(cur).spent += spending[cur]; });
 
   return Object.values(map).map(w => ({
     ...w,
@@ -792,6 +825,61 @@ export function getEventWallets(db, eventId) {
     avgRate: w.acquired > 0 ? w.krwCost / w.acquired : 0,
   })).sort((a, b) => (a.currency === KRW ? 1 : 0) - (b.currency === KRW ? 1 : 0)
       || a.currency.localeCompare(b.currency));
+}
+
+/**
+ * 현금 관리 내역용 — 흐름(환전/정산/종료)과 실제 현금 사용 거래를 한 줄기로 합쳐
+ * 날짜순으로 돌려준다. kind로 구분한다: 'flow' | 'spend'
+ */
+export function getEventCashLedger(db, eventId) {
+  if (!db || !eventId) return [];
+
+  const walletCurrencies = new Set(
+    (db.exec('SELECT DISTINCT UPPER(currency) FROM event_countries WHERE event_id = ?', [eventId])[0]?.values || [])
+      .map(r => String(r[0]))
+  );
+
+  const flows = getEventCashFlows(db, eventId);
+  const rows = flows.map(f => ({ ...f, kind: 'flow' }));
+
+  // 원화는 따로 환전해 둔 기록이 있을 때만 지갑으로 추적한다 (getEventWallets와 동일 규칙)
+  const krwTracked = flows.some(f => f.currency === KRW);
+
+  const res = db.exec(
+    `SELECT id, date, budget_category, sub_category, detail, amount, foreign_amounts, split_group_id
+     FROM transactions
+     WHERE event_id = ? AND payment_method = '현금' AND COALESCE(is_cash_adjustment, 0) = 0
+     ORDER BY date, id`,
+    [eventId]
+  );
+
+  (res[0]?.values || []).forEach(([id, date, cat, sub, detail, amount, foreignJson, splitId]) => {
+    let fa = {};
+    try { fa = foreignJson ? JSON.parse(foreignJson) : {}; } catch (e) {}
+    const matched = Object.entries(fa).filter(([cur, val]) =>
+      walletCurrencies.has(String(cur).trim().toUpperCase()) && Number(val) > 0);
+
+    // 현지 통화로 쓴 건 통화별로, 아니면 원화 지출로 한 줄
+    const legs = matched.length
+      ? matched.map(([cur, val]) => ({ currency: String(cur).trim().toUpperCase(), amount: -Number(val) }))
+      : [{ currency: KRW, amount: -(Number(amount) || 0) }];
+
+    legs.filter(leg => leg.currency !== KRW || krwTracked).forEach(leg => rows.push({
+      id: `tx-${id}-${leg.currency}`,
+      kind: 'spend',
+      tx_id: id,
+      date,
+      type: 'spend',
+      currency: leg.currency,
+      amount: leg.amount,
+      krw_cost: Number(amount) || 0,
+      note: detail || [cat, sub].filter(Boolean).join(' / '),
+      is_split: !!splitId,
+    }));
+  });
+
+  return rows.sort((a, b) =>
+    a.date.localeCompare(b.date) || (a.kind === 'flow' ? -1 : 1));
 }
 
 /** 환전 기록에서 실효 환율을 구해 event_countries.exchange_rate에 반영한다. */
@@ -2039,6 +2127,13 @@ export function getFavorites(db) {
   });
 }
 
+/** 즐겨찾기 금액은 선택 항목 — 비었거나 0 이하면 NULL로 저장한다 */
+function normalizeFavoriteAmount(amount) {
+  const n = Number(amount);
+  return amount === '' || amount === null || amount === undefined || !isFinite(n) || n <= 0
+    ? null : Math.round(n);
+}
+
 export function addFavorite(db, data) {
   const maxSortRes = db.exec('SELECT COALESCE(MAX(sort_order), -1) as maxSort FROM favorite_transactions');
   const maxSort = maxSortRes.length > 0 ? maxSortRes[0].values[0][0] : -1;
@@ -2048,7 +2143,7 @@ export function addFavorite(db, data) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.name, data.payment_method, data.budget_category,
-      data.sub_category || '', data.detail || '', data.amount,
+      data.sub_category || '', data.detail || '', normalizeFavoriteAmount(data.amount),
       maxSort + 1, 0, null,
     ]
   );
@@ -2059,7 +2154,7 @@ export function updateFavorite(db, id, data) {
     `UPDATE favorite_transactions SET name=?, payment_method=?, budget_category=?, sub_category=?, detail=?, amount=? WHERE id=?`,
     [
       data.name, data.payment_method, data.budget_category,
-      data.sub_category || '', data.detail || '', data.amount, id,
+      data.sub_category || '', data.detail || '', normalizeFavoriteAmount(data.amount), id,
     ]
   );
 }

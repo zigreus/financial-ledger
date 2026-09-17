@@ -18,6 +18,7 @@ import {
 import { parseRate, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
 import TripCashModal from '../TripCash/TripCashModal';
+import ModalOverlay from '../common/ModalOverlay';
 
 // ── 카테고리 컬러 ──────────────────────────────────────────
 const DEFAULT_CATEGORY_COLORS = {
@@ -214,8 +215,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
   }
 
   return (
-    <div className="cv-form-overlay">
-      <div className="cv-form">
+    <ModalOverlay className="cv-form-overlay" panelClassName="cv-form">
         <div className="cv-form-header">
           <span className="cv-form-title">{editingEvent ? '일정 수정' : '일정 추가'}</span>
           <button className="cv-bs-close" onClick={onCancel}>✕</button>
@@ -351,8 +351,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
             {saving ? '저장 중…' : '저장'}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -672,8 +671,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
 
       {/* ── 바텀 시트 ── */}
       {selectedDate && (
-        <div className="cv-bs-overlay" onClick={() => setSelectedDate(null)}>
-          <div className="cv-bs" onClick={e => e.stopPropagation()}>
+        <ModalOverlay className="cv-bs-overlay" panelClassName="cv-bs" onDismiss={() => setSelectedDate(null)}>
             <div className="cv-bs-header">
               <div className="cv-bs-header-left">
                 <span className="cv-bs-title">
@@ -754,14 +752,12 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
               <button className="cv-bs-add-btn cv-bs-add-btn-secondary" onClick={() => openAddEventFromSheet(selectedDate)}>+ 일정</button>
               <button className="cv-bs-add-btn" onClick={openAddFromSheet}>+ 거래 추가</button>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* ── 거래 세부 모달 ── */}
       {selectedTx && (
-        <div className="cv-tx-modal-overlay" onClick={() => setSelectedTx(null)}>
-          <div className="cv-tx-modal" onClick={e => e.stopPropagation()}>
+        <ModalOverlay className="cv-tx-modal-overlay" panelClassName="cv-tx-modal" onDismiss={() => setSelectedTx(null)}>
             <div className="cv-tx-modal-header">
               <div className="cv-tx-modal-cat-badge" style={{ background: categoryColor(selectedTx.budget_category) + '22', color: categoryColor(selectedTx.budget_category) }}>
                 <span className="cv-tx-modal-cat-dot" style={{ background: categoryColor(selectedTx.budget_category) }} />
@@ -800,8 +796,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
                 <button className="cv-form-save-btn" onClick={() => { setSelectedTx(null); setSelectedDate(null); onEditTransaction(selectedTx); }}>수정</button>
               )}
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* ── 이벤트 폼 ── */}

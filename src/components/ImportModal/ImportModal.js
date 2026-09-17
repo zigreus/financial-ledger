@@ -7,6 +7,7 @@ import {
 } from '../../services/dbManager';
 import { buildValidationContext, detectIssues } from '../../services/txValidator';
 import './ImportModal.css';
+import ModalOverlay from '../common/ModalOverlay';
 
 // ── CSV 파서 ─────────────────────────────────────────────────────────
 function parseCSVLine(line) {
@@ -384,8 +385,7 @@ function ImportModal({ db, onImport, onClose }) {
   const hasTrip = finalRows.some(r => r.trip_id);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="modal-overlay" panelClassName="modal-content">
         <div className="modal-header">
           <h2>거래내역 가져오기</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
@@ -608,8 +608,7 @@ function ImportModal({ db, onImport, onClose }) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 

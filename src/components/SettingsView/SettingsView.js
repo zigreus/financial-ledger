@@ -405,7 +405,7 @@ const [dragId, setDragId] = useState(null);
         budget_category: item.budget_category,
         sub_category: item.sub_category || '',
         detail: item.detail || '',
-        amount: String(item.amount),
+        amount: item.amount == null ? '' : String(item.amount),
       });
     } else {
       setEditingFavoriteId(null);
@@ -420,8 +420,10 @@ const [dragId, setDragId] = useState(null);
     if (!favoriteForm.payment_method) { setError('결제수단을 선택하세요.'); return; }
     if (!favoriteForm.budget_category) { setError('카테고리를 선택하세요.'); return; }
     if (!favoriteForm.sub_category) { setError('세부카테고리를 선택하세요.'); return; }
-    const amount = parseInt(favoriteForm.amount, 10);
-    if (isNaN(amount) || amount <= 0) { setError('금액을 올바르게 입력하세요.'); return; }
+    // 금액은 선택 — 비워두면 거래 추가 시 직접 입력한다
+    const hasAmount = String(favoriteForm.amount).trim() !== '';
+    const amount = hasAmount ? parseInt(favoriteForm.amount, 10) : null;
+    if (hasAmount && (isNaN(amount) || amount <= 0)) { setError('금액을 올바르게 입력하세요.'); return; }
     const data = { ...favoriteForm, amount };
     try {
       if (editingFavoriteId !== null) {
@@ -738,7 +740,7 @@ const [dragId, setDragId] = useState(null);
                             <div style={{ flex: 1, overflow: 'hidden' }}>
                               <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
                               <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}/{item.sub_category}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount.toLocaleString()}원 · {item.use_count}회 사용</div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount == null ? '금액 직접 입력' : `${item.amount.toLocaleString()}원`} · {item.use_count}회 사용</div>
                             </div>
                             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                               <button className="btn-icon" onClick={() => openFavoriteForm(item)} title="수정"><IconEdit /></button>
@@ -789,8 +791,8 @@ const [dragId, setDragId] = useState(null);
                   <input type="text" value={favoriteForm.detail} onChange={e => setFavoriteForm({...favoriteForm, detail: e.target.value})} placeholder="선택사항" />
                 </div>
                 <div className="form-group">
-                  <label>금액 *</label>
-                  <input type="number" value={favoriteForm.amount} onChange={e => setFavoriteForm({...favoriteForm, amount: e.target.value})} placeholder="0" required />
+                  <label>금액 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '12px' }}>(선택)</span></label>
+                  <input type="number" value={favoriteForm.amount ?? ''} onChange={e => setFavoriteForm({...favoriteForm, amount: e.target.value})} placeholder="비워두면 거래 추가 시 직접 입력" />
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
                   <button type="button" className="btn-secondary" onClick={() => { setShowFavoriteForm(false); setEditingFavoriteId(null); setFavoriteForm(emptyFavoriteForm); setError(''); }} style={{ flex: 1 }}>취소</button>

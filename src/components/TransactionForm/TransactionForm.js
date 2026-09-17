@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes, getFavorites, addFavorite, updateFavorite, deleteFavorite, recordFavoriteUse, getAutoPaymentMethod, getTripDefaultCategory, getEventWallets } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today, parseRate, parseForeignAmount, toKrw } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
+import ModalOverlay from '../common/ModalOverlay';
 
 
 const EMPTY_FORM = {
@@ -408,7 +409,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
 
   // ── 즐겨찾기 로직 ──────────────────────────────────────────────
 
-  const canStar = form.payment_method && form.budget_category && form.sub_category && amountParsed != null;
+  // 금액은 선택 — 결제수단/카테고리/세부카테고리 3개만 있으면 즐겨찾기 가능
+  const canStar = !!(form.payment_method && form.budget_category && form.sub_category);
+  const starAmount = amountParsed === null || isNaN(amountParsed) ? null : amountParsed;
 
   // 현재 폼이 기존 즐겨찾기와 일치하는지 확인
   useEffect(() => {
@@ -421,10 +424,10 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       f.budget_category === form.budget_category &&
       f.sub_category === form.sub_category &&
       f.detail === form.detail &&
-      f.amount === amountParsed
+      (f.amount ?? null) === starAmount
     );
     setStarredFavoriteId(matched ? matched.id : null);
-  }, [form, favorites, amountParsed]);
+  }, [form, favorites, starAmount]);
 
   // 세부카테고리 선택 시 자동 결제수단 선택
   useEffect(() => {
@@ -452,7 +455,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         budget_category: form.budget_category,
         sub_category: form.sub_category,
         detail: form.detail,
-        amount: amountParsed,
+        amount: starAmount,
       });
       setFavorites(getFavorites(db));
       setStarName(newName);
@@ -471,7 +474,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       budget_category: form.budget_category,
       sub_category: form.sub_category,
       detail: form.detail,
-      amount: amountParsed,
+      amount: starAmount,
     });
     setFavorites(getFavorites(db));
     setShowStarPopup(false);
@@ -495,13 +498,13 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       budget_category: fav.budget_category,
       sub_category: fav.sub_category,
       detail: fav.detail,
-      amount: String(fav.amount),
+      // 금액이 없는 즐겨찾기는 직접 입력하도록 기존 값을 그대로 둔다
+      ...(fav.amount == null ? {} : { amount: String(fav.amount) }),
     }));
   };
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-content" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="modal-overlay" panelClassName="modal-content">
         <div className="modal-header">
           <h2>
             {editingTx ? '거래 수정' : '거래 추가'}
@@ -510,7 +513,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
               className={`btn-star ${!canStar ? 'disabled' : ''} ${starredFavoriteId ? 'active' : ''}`}
               onClick={handleStarClick}
               disabled={!canStar}
-              title={canStar ? '즐겨찾기' : '결제수단, 카테고리, 세부카테고리, 금액 중 2개 이상 입력하세요'}
+              title={canStar ? '즐겨찾기' : '결제수단, 카테고리, 세부카테고리를 모두 선택하세요'}
             >
               {starredFavoriteId ? '★' : '☆'}
             </button>
@@ -824,8 +827,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
             </div>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 

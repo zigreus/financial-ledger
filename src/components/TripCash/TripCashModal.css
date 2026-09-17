@@ -274,7 +274,18 @@
 .tc-flow-right { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
 .tc-flow-amount { font-size: 14px; font-weight: 600; color: var(--success); }
 .tc-flow-amount.neg { color: var(--danger); }
-.tc-flow-krw { font-size: 11px; color: var(--text-muted); }
+.tc-flow-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.tc-flow-running { color: var(--text); font-weight: 600; }
+.tc-flow-spend { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+.tc-flow-type-spend { color: var(--text-muted); background: var(--bg); }
+.tc-flow-split { font-size: 10px; opacity: .7; }
+.tc-flow-del-spacer { width: 25px; flex-shrink: 0; }
 .tc-flow-del {
   border: none; background: none; color: var(--text-muted);
   cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 6px;

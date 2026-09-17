@@ -6,6 +6,7 @@ import {
   getAccountTransactions, addAccountTransaction, updateAccountTransaction, deleteAccountTransaction,
   bulkInsertAccountTransactions, getPaymentMethods,
 } from '../../services/dbManager';
+import ModalOverlay from '../common/ModalOverlay';
 import './AccountManagement.css';
 
 // ── 날짜 포맷 헬퍼 ──────────────────────────────────────────────
@@ -639,8 +640,7 @@ function AccountForm({ account, onSave, onCancel }) {
   };
 
   return (
-    <div className="acct-modal-overlay" onClick={onCancel}>
-      <div className="acct-modal" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal">
         <div className="acct-modal-header">
           <h3>{account ? '계좌 편집' : '계좌 추가'}</h3>
           <button className="acct-modal-close" onClick={onCancel}>✕</button>
@@ -693,8 +693,7 @@ function AccountForm({ account, onSave, onCancel }) {
             <button type="submit" className="acct-btn-save">저장</button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -718,8 +717,7 @@ function AccountTxForm({ tx, onSave, onCancel }) {
   };
 
   return (
-    <div className="acct-modal-overlay" onClick={onCancel}>
-      <div className="acct-modal" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal">
         <div className="acct-modal-header">
           <h3>{tx ? '내역 편집' : '내역 추가'}</h3>
           <button className="acct-modal-close" onClick={onCancel}>✕</button>
@@ -764,8 +762,7 @@ function AccountTxForm({ tx, onSave, onCancel }) {
             <button type="submit" className="acct-btn-save">저장</button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -800,8 +797,7 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
   };
 
   return (
-    <div className="acct-modal-overlay">
-      <div className="acct-modal">
+    <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal">
         <div className="acct-modal-header">
           <h3>{item ? '항목 편집' : '고정 입출금 추가'}</h3>
           <button className="acct-modal-close" onClick={onCancel}>✕</button>
@@ -901,8 +897,7 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
             <button type="submit" className="acct-btn-save">저장</button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -1037,8 +1032,7 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
   };
 
   return (
-    <div className="acct-modal-overlay" onClick={onClose}>
-      <div className="acct-modal acct-modal--tall" onClick={e => e.stopPropagation()}>
+    <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal acct-modal--tall">
         <div className="acct-modal-header">
           <h3>거래 내역 불러오기</h3>
           <button className="acct-modal-close" onClick={onClose}>✕</button>
@@ -1123,7 +1117,6 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
