@@ -170,6 +170,15 @@
   border-top: 1px solid var(--border);
 }
 .split-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+.split-unlink-warn {
+  margin-top: 10px;
+  padding: 9px 11px;
+  background: #FEF2F2;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--danger);
+  line-height: 1.5;
+}
 .split-cur { font-weight: 400; color: var(--text-muted); font-size: 11px; }
 .split-preview {
   background: var(--bg);

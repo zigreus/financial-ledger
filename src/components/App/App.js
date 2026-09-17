@@ -12,7 +12,7 @@ import ImportModal from '../ImportModal/ImportModal';
 import CalendarView from '../CalendarView/CalendarView';
 
 import AccountManagement from '../AccountManagement/AccountManagement';
-import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, runAutoRegister, runAccountAutoRegister } from '../../services/dbManager';
+import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAutoRegister, runAccountAutoRegister } from '../../services/dbManager';
 import { readDbFromOneDrive, writeDbToOneDrive } from '../../services/oneDriveService';
 
 function App() {
@@ -217,14 +217,30 @@ function App() {
   }, [db, showToast, saveAndReload]);
 
   const handleUpdate = useCallback(async (txData) => {
-    updateTransaction(db, editingTx.id, txData);
+    // 분할 결제는 묶음 전체를 한 번에 반영한다.
+    // id가 있으면 갱신, 없으면 새로 만들고, 묶음에 있었는데 빠진 건 삭제한다.
+    const rows = Array.isArray(txData) ? txData : [txData];
+    const priorIds = editingTx.split_group_id
+      ? getSplitGroupTransactions(db, editingTx.split_group_id).map(t => t.id)
+      : [editingTx.id];
+
+    const keptIds = new Set(rows.map(r => r.id).filter(Boolean));
+    rows.forEach(row => {
+      if (row.id) updateTransaction(db, row.id, row);
+      else addTransaction(db, row);
+    });
+    priorIds.filter(id => !keptIds.has(id)).forEach(id => deleteTransaction(db, id));
+
     setShowForm(false);
     setEditingTx(null);
     window.history.back();
-    const amt = Number(txData.amount).toLocaleString();
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    const amt = total.toLocaleString();
     showToast(`저장 중…`);
     await saveAndReload(db);
-    showToast(`✓ ${txData.budget_category} ${amt}원 수정 및 저장됨`);
+    showToast(rows.length > 1
+      ? `✓ ${rows[0].budget_category} ${amt}원 분할 ${rows.length}건 수정됨`
+      : `✓ ${rows[0].budget_category} ${amt}원 수정 및 저장됨`);
   }, [db, editingTx, showToast, saveAndReload]);
 
   const handleDelete = useCallback(async (id) => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes, getFavorites, addFavorite, updateFavorite, deleteFavorite, recordFavoriteUse, getAutoPaymentMethod, getTripDefaultCategory, getEventWallets } from '../../services/dbManager';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes, getFavorites, addFavorite, updateFavorite, deleteFavorite, recordFavoriteUse, getAutoPaymentMethod, getTripDefaultCategory, getEventWallets, getSplitGroupTransactions } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today, parseRate, parseForeignAmount, toKrw } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
@@ -195,6 +195,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const [split, setSplit] = useState(false);
   const [splitAmount, setSplitAmount] = useState('');
   const [splitMethod, setSplitMethod] = useState('');
+  const [splitSibling, setSplitSibling] = useState(null);
   const skipAutoDiscountRef = React.useRef(false);
   const skipSubResetRef = React.useRef(false);
 
@@ -219,23 +220,56 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
     if (editingTx) {
       skipAutoDiscountRef.current = true;
       skipSubResetRef.current = true;
-      let foreign_amounts = {};
-      try { foreign_amounts = editingTx.foreign_amounts ? JSON.parse(editingTx.foreign_amounts) : {}; } catch (e) {}
+      const parseFa = (raw) => {
+        try { return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+      };
+      let foreign_amounts = parseFa(editingTx.foreign_amounts);
+      let amount = editingTx.amount != null ? String(editingTx.amount) : '';
+
+      // 분할된 거래를 열면 묶음 전체를 합쳐 총액으로 보여주고 분할 칸을 채워 둔다
+      const group = editingTx.split_group_id
+        ? getSplitGroupTransactions(db, editingTx.split_group_id) : [];
+      const sibling = group.find(t => t.id !== editingTx.id) || null;
+
+      if (sibling) {
+        const totals = { ...foreign_amounts };
+        Object.entries(parseFa(sibling.foreign_amounts)).forEach(([cur, val]) => {
+          totals[cur] = (totals[cur] || 0) + Number(val);
+        });
+        foreign_amounts = totals;
+        amount = String((editingTx.amount || 0) + (sibling.amount || 0));
+
+        const ownFa = parseFa(editingTx.foreign_amounts);
+        const ownCur = Object.keys(ownFa)[0];
+        setSplit(true);
+        setSplitAmount(String(ownCur ? ownFa[ownCur] : editingTx.amount));
+        setSplitMethod(sibling.payment_method || '');
+      } else {
+        setSplit(false);
+        setSplitAmount('');
+        setSplitMethod('');
+      }
+      setSplitSibling(sibling);
+
       setForm({
         payment_method: editingTx.payment_method || '',
         date: editingTx.date || today(),
         budget_category: editingTx.budget_category || '',
         sub_category: editingTx.sub_category || '',
         detail: editingTx.detail || '',
-        amount: editingTx.amount != null ? String(editingTx.amount) : '',
+        amount,
         discount_amount: editingTx.discount_amount ? String(editingTx.discount_amount) : '',
         event_id: editingTx.event_id ? String(editingTx.event_id) : '',
         foreign_amounts,
       });
     } else {
+      setSplit(false);
+      setSplitAmount('');
+      setSplitMethod('');
+      setSplitSibling(null);
       setForm({ ...EMPTY_FORM, date: defaultDate || today() });
     }
-  }, [editingTx, defaultDate]);
+  }, [db, editingTx, defaultDate]);
 
   useEffect(() => {
     const subs = getSubCategories(db, form.budget_category);
@@ -329,9 +363,12 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       event_id: form.event_id ? Number(form.event_id) : null,
     };
 
-    // 분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 2건으로 기록한다
+    // 분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 2건으로 기록한다.
+    // 수정 중이면 기존 건을 첫 번째 몫으로 갱신하고, 나머지 몫은
+    // 짝이 있으면 갱신 / 없으면 새로 만든다 (id 유무로 구분).
     if (split && splitValid) {
-      const groupId = `sg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const groupId = editingTx?.split_group_id
+        || `sg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const primaryForeign = {};
       const secondForeign = {};
@@ -346,21 +383,23 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         secondRules, form.budget_category, form.sub_category, secondaryKrw, form.detail);
 
       onSave([
-        { ...base, payment_method: form.payment_method, amount: primaryKrw,
+        { ...base, id: editingTx?.id, payment_method: form.payment_method, amount: primaryKrw,
           discount_amount: discountAmount || 0, foreign_amounts: primaryForeign, split_group_id: groupId },
-        { ...base, payment_method: splitMethod, amount: secondaryKrw,
+        { ...base, id: splitSibling?.id, payment_method: splitMethod, amount: secondaryKrw,
           discount_amount: secondDiscount || 0, foreign_amounts: secondForeign, split_group_id: groupId },
       ]);
       return;
     }
 
+    // 분할을 해제한 경우 — 짝은 App에서 정리된다 (rows에 없는 묶음 멤버는 삭제)
     onSave({
       ...base,
+      id: editingTx?.id,
       payment_method: form.payment_method,
       amount,
       discount_amount: discountAmount || 0,
       foreign_amounts,
-      split_group_id: editingTx?.split_group_id || '',
+      split_group_id: '',
     });
   };
 
@@ -381,9 +420,14 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const splitTotalForeign = splitCurrency !== 'KRW'
     ? parseForeignAmount(form.foreign_amounts[splitCurrency]) : null;
 
+  // 일정에 환율이 없으면 이번 거래가 함축하는 환율(총 원화 ÷ 총 현지금액)로 나눈다
+  const impliedRate = splitTotalForeign > 0 && amountParsed > 0
+    ? amountParsed / splitTotalForeign : 0;
+  const effectiveSplitRate = splitRate || impliedRate;
+
   const splitPrimary = parseForeignAmount(splitAmount);
   const primaryKrw = splitPrimary === null ? null
-    : splitCurrency === 'KRW' ? Math.round(splitPrimary) : Math.round(splitPrimary * splitRate);
+    : splitCurrency === 'KRW' ? Math.round(splitPrimary) : Math.round(splitPrimary * effectiveSplitRate);
   const secondaryKrw = primaryKrw === null || amountParsed === null || isNaN(amountParsed)
     ? null : amountParsed - primaryKrw;
   const secondaryForeign = splitTotalForeign !== null && splitPrimary !== null
@@ -734,70 +778,76 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
           />
 
           {/* 분할 결제 */}
-          {!editingTx && (
-            <div className="split-box">
-              <label className="split-toggle">
-                <input
-                  type="checkbox"
-                  checked={split}
-                  onChange={e => { setSplit(e.target.checked); setSplitAmount(''); }}
-                />
-                <span>분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 냄</span>
-              </label>
+          <div className="split-box">
+            <label className="split-toggle">
+              <input
+                type="checkbox"
+                checked={split}
+                onChange={e => { setSplit(e.target.checked); setSplitAmount(''); }}
+              />
+              <span>분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 냄</span>
+            </label>
 
-              {split && (
-                <div className="split-fields">
-                  <div className="split-hint">
-                    거래 2건으로 나뉘어 저장됩니다. 총액은 위 금액({formatAmount(amountParsed)}원) 기준입니다.
-                  </div>
+            {!split && splitSibling && (
+              <div className="split-unlink-warn">
+                분할을 해제하고 저장하면 나머지 1건
+                ({splitSibling.payment_method} {formatAmount(splitSibling.amount)}원)이 삭제되고
+                이 거래 하나로 합쳐집니다.
+              </div>
+            )}
 
-                  <div className="form-group">
-                    <label>
-                      {form.payment_method || '첫 번째 결제수단'}(으)로 낸 금액
-                      <span className="split-cur"> ({splitCurrency})</span>
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={splitAmount}
-                      onChange={e => setSplitAmount(e.target.value)}
-                      placeholder={splitCurrency === 'KRW' ? '예: 30000' : `예: 10000 (${splitCurrency})`}
-                    />
-                    {primaryKrw > 0 && splitCurrency !== 'KRW' && (
-                      <span className="formula-preview">≈ {formatAmount(primaryKrw)}원</span>
-                    )}
-                  </div>
+            {split && (
+              <div className="split-fields">
+                <div className="split-hint">
+                  거래 2건으로 {editingTx ? '저장' : '나뉘어 저장'}됩니다. 총액은 위 금액({formatAmount(amountParsed)}원) 기준입니다.
+                </div>
 
-                  <div className="form-group">
-                    <label>나머지 결제수단<span className="required">*</span></label>
-                    <select value={splitMethod} onChange={e => setSplitMethod(e.target.value)}>
-                      <option value="">선택</option>
-                      {paymentMethods.filter(m => m !== form.payment_method).map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {splitValid && splitMethod && (
-                    <div className="split-preview">
-                      <div>
-                        <span>{form.payment_method}</span>
-                        <b>{formatAmount(primaryKrw)}원
-                          {splitCurrency !== 'KRW' && ` (${fmtWallet(splitPrimary, splitCurrency)} ${splitCurrency})`}
-                        </b>
-                      </div>
-                      <div>
-                        <span>{splitMethod}</span>
-                        <b>{formatAmount(secondaryKrw)}원
-                          {secondaryForeign !== null && ` (${fmtWallet(secondaryForeign, splitCurrency)} ${splitCurrency})`}
-                        </b>
-                      </div>
-                    </div>
+                <div className="form-group">
+                  <label>
+                    {form.payment_method || '첫 번째 결제수단'}(으)로 낸 금액
+                    <span className="split-cur"> ({splitCurrency})</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={splitAmount}
+                    onChange={e => setSplitAmount(e.target.value)}
+                    placeholder={splitCurrency === 'KRW' ? '예: 30000' : `예: 10000 (${splitCurrency})`}
+                  />
+                  {primaryKrw > 0 && splitCurrency !== 'KRW' && (
+                    <span className="formula-preview">≈ {formatAmount(primaryKrw)}원</span>
                   )}
                 </div>
-              )}
-            </div>
-          )}
+
+                <div className="form-group">
+                  <label>나머지 결제수단<span className="required">*</span></label>
+                  <select value={splitMethod} onChange={e => setSplitMethod(e.target.value)}>
+                    <option value="">선택</option>
+                    {paymentMethods.filter(m => m !== form.payment_method).map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {splitValid && splitMethod && (
+                  <div className="split-preview">
+                    <div>
+                      <span>{form.payment_method}</span>
+                      <b>{formatAmount(primaryKrw)}원
+                        {splitCurrency !== 'KRW' && ` (${fmtWallet(splitPrimary, splitCurrency)} ${splitCurrency})`}
+                      </b>
+                    </div>
+                    <div>
+                      <span>{splitMethod}</span>
+                      <b>{formatAmount(secondaryKrw)}원
+                        {secondaryForeign !== null && ` (${fmtWallet(secondaryForeign, splitCurrency)} ${splitCurrency})`}
+                      </b>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* 할인/수익 정보 */}
           <div className="form-section-title">

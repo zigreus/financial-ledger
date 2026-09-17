@@ -510,6 +510,14 @@ export function deleteTransaction(db, id) {
   db.run('DELETE FROM transactions WHERE id = ?', [id]);
 }
 
+/** 분할 결제로 묶인 거래들 (id 순) */
+export function getSplitGroupTransactions(db, groupId) {
+  if (!db || !groupId) return [];
+  return dbRowsToObjects(
+    db.exec('SELECT * FROM transactions WHERE split_group_id = ? ORDER BY id', [groupId])
+  );
+}
+
 // ── 마스터 데이터 ──────────────────────────────────────────────
 
 export function getPaymentMethods(db) {
