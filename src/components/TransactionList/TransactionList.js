@@ -516,6 +516,9 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                               {eventMap[tx.event_id].name}
                             </span>
                           )}
+                          {tx.split_group_id ? (
+                            <span className="tx-split-badge" title="분할 결제">🔗</span>
+                          ) : null}
                           {tx.sub_category && (
                             <span
                               className="tx-sub"

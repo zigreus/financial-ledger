@@ -17,6 +17,7 @@ import {
   getCalendarEventTypes, addCalendarEventType, updateCalendarEventType,
   deleteCalendarEventType, moveCalendarEventType,
   getCalendarEventTypeUsageCount, setCalendarEventTypeTripFlag,
+  getTripDefaultCategory,
 } from '../../services/dbManager';
 import './SettingsView.css';
 
@@ -107,6 +108,7 @@ const [dragId, setDragId] = useState(null);
   const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
   const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
   const calEmptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
+  const [tripCategory, setTripCategory] = useState(() => getTripDefaultCategory(db));
 
   // 지출계획 섹션
   const [financeSubTab, setFinanceSubTab] = useState('favorites');
@@ -1080,6 +1082,29 @@ const [dragId, setDragId] = useState(null);
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
                   슬라이더 ON = 해당 유형 일정 선택 시 국가/통화 입력 활성화
+                </div>
+
+                {/* 여행 일정 자동 카테고리 */}
+                <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>여행 일정 자동 카테고리</div>
+                  <select
+                    className="settings-inline-input"
+                    style={{ width: '100%' }}
+                    value={tripCategory}
+                    onChange={e => {
+                      setSetting(db, 'trip_default_category', e.target.value);
+                      setTripCategory(e.target.value);
+                      onChanged();
+                    }}
+                  >
+                    <option value="">사용 안 함</option>
+                    {getBudgetCategories(db).map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    거래 추가 시 여행 유형 일정을 선택하면 이 카테고리가 자동 선택됩니다.
+                  </div>
                 </div>
               </div>
             )}

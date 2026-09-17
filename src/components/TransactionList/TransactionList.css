@@ -247,6 +247,7 @@
   border-radius: 10px;
   flex-shrink: 0;
 }
+.tx-split-badge { font-size: 10px; flex-shrink: 0; opacity: .75; }
 .tx-payment { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .tx-detail-inline {
   font-size: 12px;

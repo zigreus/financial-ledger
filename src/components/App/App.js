@@ -200,14 +200,20 @@ function App() {
   }, [instance, accounts]);
 
   const handleAdd = useCallback(async (txData) => {
-    addTransaction(db, txData);
+    // 분할 결제는 거래 2건으로 들어온다
+    const rows = Array.isArray(txData) ? txData : [txData];
+    rows.forEach(row => addTransaction(db, row));
+
     setShowForm(false);
     setEditingTx(null);
     window.history.back();
-    const amt = Number(txData.amount).toLocaleString();
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    const amt = total.toLocaleString();
     showToast(`저장 중…`);
     await saveAndReload(db);
-    showToast(`✓ ${txData.budget_category} ${amt}원 추가됨`);
+    showToast(rows.length > 1
+      ? `✓ ${rows[0].budget_category} ${amt}원 분할 ${rows.length}건 추가됨`
+      : `✓ ${rows[0].budget_category} ${amt}원 추가됨`);
   }, [db, showToast, saveAndReload]);
 
   const handleUpdate = useCallback(async (txData) => {

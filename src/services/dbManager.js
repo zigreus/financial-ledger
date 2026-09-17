@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   is_recurring INTEGER DEFAULT 0,
   recurring_source_id INTEGER DEFAULT NULL,
   recurring_frequency TEXT DEFAULT NULL,
+  split_group_id TEXT DEFAULT '',
+  is_cash_adjustment INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
@@ -129,6 +131,7 @@ CREATE TABLE IF NOT EXISTS event_countries (
   event_id INTEGER NOT NULL,
   country TEXT NOT NULL,
   currency TEXT NOT NULL,
+  exchange_rate REAL DEFAULT 0,
   sort_order INTEGER DEFAULT 0
 );
 
@@ -218,6 +221,19 @@ CREATE TABLE IF NOT EXISTS account_transactions (
   created_at        TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS event_cash_flows (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id   INTEGER NOT NULL,
+  date       TEXT NOT NULL,
+  type       TEXT NOT NULL DEFAULT 'exchange',
+  currency   TEXT NOT NULL,
+  amount     REAL NOT NULL,
+  krw_cost   INTEGER DEFAULT 0,
+  account_id INTEGER DEFAULT NULL,
+  note       TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS holidays (
   date TEXT PRIMARY KEY,
   name TEXT NOT NULL
@@ -275,6 +291,14 @@ export function createDatabase(SQL, existingData = null) {
 
   // transactions에 event_id 컬럼 추가
   try { db.run('ALTER TABLE transactions ADD COLUMN event_id INTEGER DEFAULT NULL'); didMigrate = true; } catch (e) {}
+
+  // event_countries에 환율 컬럼 추가 (기존 DB 호환)
+  try { db.run('ALTER TABLE event_countries ADD COLUMN exchange_rate REAL DEFAULT 0'); didMigrate = true; } catch (e) {}
+
+  // 분할 결제(현금+카드) 묶음 식별자 (기존 DB 호환)
+  try { db.run("ALTER TABLE transactions ADD COLUMN split_group_id TEXT DEFAULT ''"); didMigrate = true; } catch (e) {}
+  // 현금 거래지만 여행 지갑 잔액에는 영향이 없는 장부 조정(환차손익 등)
+  try { db.run('ALTER TABLE transactions ADD COLUMN is_cash_adjustment INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
 
   // ── trips → calendar_events 마이그레이션 ──────────────────────────
   // trips 테이블이 존재하면 마이그레이션 실행 후 DROP
@@ -418,16 +442,19 @@ export function getTransactions(db, filters = {}) {
 export function addTransaction(db, tx) {
   db.run(
     `INSERT INTO transactions
-       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, event_id, foreign_amounts)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, event_id, foreign_amounts, split_group_id, is_cash_adjustment)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tx.payment_method, tx.date, tx.budget_category,
       tx.sub_category || '', tx.detail || '',
       tx.amount, tx.discount_amount || 0, tx.discount_note || '',
       tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
+      tx.split_group_id || '',
+      tx.is_cash_adjustment ? 1 : 0,
     ]
   );
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
 }
 
 export function updateTransaction(db, id, tx) {
@@ -435,7 +462,7 @@ export function updateTransaction(db, id, tx) {
     `UPDATE transactions
      SET payment_method=?, date=?, budget_category=?, sub_category=?,
          detail=?, amount=?, discount_amount=?, discount_note=?,
-         event_id=?, foreign_amounts=?,
+         event_id=?, foreign_amounts=?, split_group_id=?,
          updated_at=datetime('now','localtime')
      WHERE id=?`,
     [
@@ -444,6 +471,7 @@ export function updateTransaction(db, id, tx) {
       tx.amount, tx.discount_amount || 0, tx.discount_note || '',
       tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
+      tx.split_group_id || '',
       id,
     ]
   );
@@ -560,11 +588,12 @@ export function getUndatedCalendarEvents(db) {
 export function getEventCountries(db, eventId) {
   if (!db || !eventId) return [];
   const res = db.exec(
-    'SELECT id, country, currency, sort_order FROM event_countries WHERE event_id = ? ORDER BY sort_order, id',
+    'SELECT id, country, currency, COALESCE(exchange_rate, 0), sort_order FROM event_countries WHERE event_id = ? ORDER BY sort_order, id',
     [eventId]
   );
   if (!res.length) return [];
-  return res[0].values.map(([id, country, currency, sort_order]) => ({ id, country, currency, sort_order }));
+  return res[0].values.map(([id, country, currency, exchange_rate, sort_order]) =>
+    ({ id, country, currency, exchange_rate: Number(exchange_rate) || 0, sort_order }));
 }
 
 export function addCalendarEvent(db, ev) {
@@ -597,19 +626,330 @@ export function deleteCalendarEvent(db, id) {
   db.run('DELETE FROM calendar_events WHERE id = ?', [id]);
 }
 
-export function addEventCountry(db, eventId, country, currency) {
+export function addEventCountry(db, eventId, country, currency, exchangeRate = 0) {
   const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM event_countries WHERE event_id = ?', [eventId]);
   const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
-  db.run('INSERT INTO event_countries (event_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
-    [eventId, country, currency, nextSort]);
+  db.run('INSERT INTO event_countries (event_id, country, currency, exchange_rate, sort_order) VALUES (?, ?, ?, ?, ?)',
+    [eventId, country, currency, Number(exchangeRate) || 0, nextSort]);
 }
 
-export function updateEventCountry(db, id, country, currency) {
-  db.run('UPDATE event_countries SET country=?, currency=? WHERE id=?', [country, currency, id]);
+export function updateEventCountry(db, id, country, currency, exchangeRate = 0) {
+  db.run('UPDATE event_countries SET country=?, currency=?, exchange_rate=? WHERE id=?',
+    [country, currency, Number(exchangeRate) || 0, id]);
 }
 
 export function deleteEventCountry(db, id) {
   db.run('DELETE FROM event_countries WHERE id = ?', [id]);
+}
+
+// ── 여행 현금 지갑 ──────────────────────────────────────────────────
+//
+// 출금/환전은 "지출"이 아니라 계좌 → 현금지갑 이동이다.
+// 따라서 가계부 합계(transactions)에는 넣지 않고 event_cash_flows에만 기록하며,
+// 실제 현금 사용은 기존 transactions(결제수단='현금')이 담당한다.
+// 잔여 현금 = Σ흐름 − Σ현금사용.
+
+const KRW = 'KRW';
+
+function todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function getEventCashFlows(db, eventId) {
+  if (!db || !eventId) return [];
+  const res = db.exec(
+    `SELECT id, event_id, date, type, currency, amount, krw_cost, account_id, note
+     FROM event_cash_flows WHERE event_id = ? ORDER BY date, id`,
+    [eventId]
+  );
+  if (!res.length) return [];
+  return res[0].values.map(([id, event_id, date, type, currency, amount, krw_cost, account_id, note]) =>
+    ({ id, event_id, date, type, currency, amount: Number(amount), krw_cost: Number(krw_cost) || 0, account_id, note }));
+}
+
+export function addEventCashFlow(db, flow) {
+  if (!db || !flow.event_id) throw new Error('일정을 선택하세요');
+  const currency = (flow.currency || KRW).trim().toUpperCase();
+  const amount = Number(flow.amount);
+  if (!isFinite(amount) || amount === 0) throw new Error('금액을 입력하세요');
+
+  db.run(
+    `INSERT INTO event_cash_flows (event_id, date, type, currency, amount, krw_cost, account_id, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [flow.event_id, flow.date, flow.type || 'exchange', currency, amount,
+     Math.round(Number(flow.krw_cost) || 0), flow.account_id || null, flow.note || '']
+  );
+  const id = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+
+  // 계좌를 지정했으면 계좌 잔액에도 반영 (출금=지출 / 입금=수입)
+  if (flow.account_id) {
+    const krw = Math.abs(Math.round(Number(flow.krw_cost) || 0));
+    if (krw > 0) {
+      addAccountTransaction(db, {
+        account_id: flow.account_id,
+        date: flow.date,
+        type: amount > 0 ? 'expense' : 'income',
+        category: '여행 현금',
+        description: flow.note || (amount > 0 ? `${currency} 환전/출금` : `${currency} 재환전/입금`),
+        amount: krw,
+      });
+    }
+  }
+
+  syncEventRateFromFlows(db, flow.event_id, currency);
+  return id;
+}
+
+export function deleteEventCashFlow(db, id) {
+  if (!db) return;
+  const res = db.exec('SELECT event_id, currency FROM event_cash_flows WHERE id = ?', [id]);
+  const row = res[0]?.values[0];
+  db.run('DELETE FROM event_cash_flows WHERE id = ?', [id]);
+  if (row) syncEventRateFromFlows(db, row[0], row[1]);
+}
+
+/**
+ * 일정에 연결된 현금(결제수단='현금') 거래의 통화별 사용액.
+ * 현지 통화 금액이 기록돼 있으면 그 통화 지갑에서, 없으면 원화 지갑에서 차감한다.
+ */
+export function getEventCashSpending(db, eventId) {
+  const spent = {};
+  if (!db || !eventId) return spent;
+  const res = db.exec(
+    `SELECT amount, foreign_amounts FROM transactions
+     WHERE event_id = ? AND payment_method = '현금' AND COALESCE(is_cash_adjustment, 0) = 0`,
+    [eventId]
+  );
+  if (!res.length) return spent;
+
+  const walletCurrencies = new Set(
+    (db.exec('SELECT DISTINCT currency FROM event_countries WHERE event_id = ?', [eventId])[0]?.values || [])
+      .map(r => String(r[0]).trim().toUpperCase())
+  );
+
+  res[0].values.forEach(([amount, foreignJson]) => {
+    let fa = {};
+    try { fa = foreignJson ? JSON.parse(foreignJson) : {}; } catch (e) {}
+    const matched = Object.entries(fa).filter(([cur, val]) =>
+      walletCurrencies.has(String(cur).trim().toUpperCase()) && Number(val) > 0);
+
+    if (matched.length) {
+      matched.forEach(([cur, val]) => {
+        const c = String(cur).trim().toUpperCase();
+        spent[c] = (spent[c] || 0) + Number(val);
+      });
+    } else {
+      spent[KRW] = (spent[KRW] || 0) + (Number(amount) || 0);
+    }
+  });
+  return spent;
+}
+
+/**
+ * 일정의 통화별 현금 지갑 현황.
+ * balance = 흐름 합계 − 현금 사용액, avgRate = 취득 원화 / 취득 수량.
+ */
+export function getEventWallets(db, eventId) {
+  if (!db || !eventId) return [];
+  const flows = getEventCashFlows(db, eventId);
+  const spending = getEventCashSpending(db, eventId);
+  const countries = getEventCountries(db, eventId);
+
+  const currencyLabel = {};
+  countries.forEach(c => {
+    const cur = String(c.currency || '').trim().toUpperCase();
+    if (cur) currencyLabel[cur] = c.country;
+  });
+
+  const map = {};
+  const ensure = (cur) => {
+    if (!map[cur]) {
+      map[cur] = {
+        currency: cur,
+        country: currencyLabel[cur] || (cur === KRW ? '원화' : ''),
+        inflow: 0, acquired: 0, krwCost: 0, spent: 0, balance: 0, avgRate: 0,
+      };
+    }
+    return map[cur];
+  };
+
+  // 환율이 설정된 통화는 흐름이 없어도 지갑을 노출한다
+  Object.keys(currencyLabel).forEach(ensure);
+  flows.forEach(f => {
+    const w = ensure(f.currency);
+    w.inflow += f.amount;
+    if (f.amount > 0 && f.krw_cost > 0) {
+      w.acquired += f.amount;
+      w.krwCost += f.krw_cost;
+    }
+  });
+  Object.keys(spending).forEach(cur => { ensure(cur).spent += spending[cur]; });
+
+  return Object.values(map).map(w => ({
+    ...w,
+    balance: w.inflow - w.spent,
+    avgRate: w.acquired > 0 ? w.krwCost / w.acquired : 0,
+  })).sort((a, b) => (a.currency === KRW ? 1 : 0) - (b.currency === KRW ? 1 : 0)
+      || a.currency.localeCompare(b.currency));
+}
+
+/** 환전 기록에서 실효 환율을 구해 event_countries.exchange_rate에 반영한다. */
+export function syncEventRateFromFlows(db, eventId, currency) {
+  const cur = String(currency || '').trim().toUpperCase();
+  if (!db || !eventId || !cur || cur === KRW) return;
+
+  const res = db.exec(
+    `SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(krw_cost), 0)
+     FROM event_cash_flows
+     WHERE event_id = ? AND UPPER(currency) = ? AND amount > 0 AND krw_cost > 0`,
+    [eventId, cur]
+  );
+  const [qty, cost] = res[0]?.values[0] || [0, 0];
+  if (!qty || !cost) return;
+
+  const rate = Number(cost) / Number(qty);
+  db.run('UPDATE event_countries SET exchange_rate = ? WHERE event_id = ? AND UPPER(currency) = ?',
+    [rate, eventId, cur]);
+}
+
+function walletOf(db, eventId, currency) {
+  const cur = String(currency || '').trim().toUpperCase();
+  return getEventWallets(db, eventId).find(w => w.currency === cur) || null;
+}
+
+/** 지갑의 현지 금액을 원화로 환산한다. 평균 환율이 없으면 일정에 설정된 환율을 쓴다. */
+function walletKrw(db, eventId, wallet, foreignAmount) {
+  if (wallet.currency === KRW) return Math.round(foreignAmount);
+  let rate = wallet.avgRate;
+  if (!rate) {
+    const c = getEventCountries(db, eventId)
+      .find(x => String(x.currency).trim().toUpperCase() === wallet.currency);
+    rate = c?.exchange_rate || 0;
+  }
+  return Math.round(foreignAmount * rate);
+}
+
+/**
+ * 실물 정산 — 지갑에 실제로 남은 현금을 입력해 계산상 잔액과 맞춘다.
+ *  mode 'expense' : 부족분을 '미기록 현금 지출'로 가계부에 기록 (잔액은 자동으로 맞춰짐)
+ *  mode 'adjust'  : 가계부는 두고 지갑 잔액만 보정
+ */
+export function reconcileEventWallet(db, opts) {
+  const cur = String(opts.currency || '').trim().toUpperCase();
+  const wallet = walletOf(db, opts.event_id, cur);
+  if (!wallet) throw new Error('지갑을 찾을 수 없습니다');
+
+  const actual = Number(opts.actual);
+  if (!isFinite(actual) || actual < 0) throw new Error('실제 잔액을 입력하세요');
+
+  const diff = Number((actual - wallet.balance).toFixed(2));
+  if (Math.abs(diff) < 0.005) return { diff: 0 };
+
+  const date = opts.date || todayLocal();
+
+  if (opts.mode === 'expense' && diff < 0) {
+    const missing = -diff;
+    addTransaction(db, {
+      payment_method: '현금',
+      date,
+      budget_category: opts.budget_category || '',
+      sub_category: opts.sub_category || '',
+      detail: opts.detail || '미기록 현금 지출 (정산)',
+      amount: walletKrw(db, opts.event_id, wallet, missing),
+      event_id: opts.event_id,
+      foreign_amounts: cur === KRW ? {} : { [cur]: missing },
+    });
+    return { diff, mode: 'expense' };
+  }
+
+  addEventCashFlow(db, {
+    event_id: opts.event_id,
+    date,
+    type: 'adjust',
+    currency: cur,
+    amount: diff,
+    krw_cost: 0,
+    note: opts.detail || '실물 정산',
+  });
+  return { diff, mode: 'adjust' };
+}
+
+/**
+ * 여행 종료 처리 — 남은 현금을 정리한다.
+ *  mode 'refund'    : 재환전해서 계좌로 입금 (received_krw, account_id)
+ *  mode 'carryover' : 다른 일정으로 이월 (target_event_id) — 취득 원가도 함께 넘긴다
+ *  mode 'writeoff'  : 남은 현금을 지갑에서 비움 (원화 현금으로 보관 등)
+ * 재환전 시 환차손익을 계산해 돌려주고, record_fx가 참이면 가계부에도 반영한다.
+ */
+export function closeEventWallet(db, opts) {
+  const cur = String(opts.currency || '').trim().toUpperCase();
+  const wallet = walletOf(db, opts.event_id, cur);
+  if (!wallet) throw new Error('지갑을 찾을 수 없습니다');
+
+  const balance = Number(wallet.balance.toFixed(2));
+  if (Math.abs(balance) < 0.005) return { closed: false };
+
+  const date = opts.date || todayLocal();
+
+  if (opts.mode === 'carryover') {
+    if (!opts.target_event_id) throw new Error('이월할 일정을 선택하세요');
+    const srcTitle = db.exec('SELECT title FROM calendar_events WHERE id = ?', [opts.event_id])[0]?.values[0][0] || '';
+    const dstTitle = db.exec('SELECT title FROM calendar_events WHERE id = ?', [opts.target_event_id])[0]?.values[0][0] || '';
+
+    addEventCashFlow(db, {
+      event_id: opts.event_id, date, type: 'carryover_out', currency: cur,
+      amount: -balance, krw_cost: 0, note: `${dstTitle}(으)로 이월`,
+    });
+
+    // 이월 대상에 해당 통화가 없으면 만들어 줘야 환율이 따라간다
+    const hasCountry = getEventCountries(db, opts.target_event_id)
+      .some(c => String(c.currency).trim().toUpperCase() === cur);
+    if (!hasCountry && cur !== KRW) {
+      addEventCountry(db, opts.target_event_id, wallet.country || cur, cur, wallet.avgRate || 0);
+    }
+
+    addEventCashFlow(db, {
+      event_id: opts.target_event_id, date, type: 'carryover_in', currency: cur,
+      amount: balance, krw_cost: walletKrw(db, opts.event_id, wallet, balance),
+      note: `${srcTitle}에서 이월`,
+    });
+    return { closed: true, mode: 'carryover', balance };
+  }
+
+  if (opts.mode === 'refund') {
+    const received = Math.round(Number(opts.received_krw) || 0);
+    addEventCashFlow(db, {
+      event_id: opts.event_id, date, type: 'refund', currency: cur,
+      amount: -balance, krw_cost: received, account_id: opts.account_id || null,
+      note: opts.note || (cur === KRW ? '현금 입금' : '재환전 후 입금'),
+    });
+
+    // 취득 원가 대비 실제로 회수한 금액의 차이 = 환차손익
+    const basis = walletKrw(db, opts.event_id, wallet, balance);
+    const fx = received - basis;
+
+    if (opts.record_fx && fx !== 0 && cur !== KRW) {
+      addTransaction(db, {
+        payment_method: '현금',
+        date,
+        budget_category: opts.budget_category || '',
+        sub_category: opts.sub_category || '',
+        detail: fx < 0 ? '환전 차손' : '환전 차익',
+        amount: fx < 0 ? -fx : 0,
+        discount_amount: fx > 0 ? fx : 0,
+        event_id: opts.event_id,
+        is_cash_adjustment: 1,
+      });
+    }
+    return { closed: true, mode: 'refund', balance, basis, fx };
+  }
+
+  addEventCashFlow(db, {
+    event_id: opts.event_id, date, type: 'close', currency: cur,
+    amount: -balance, krw_cost: 0, note: opts.note || '지갑 정리',
+  });
+  return { closed: true, mode: 'writeoff', balance };
 }
 
 // ── 캘린더 일정 유형 ────────────────────────────────────────────────
@@ -1548,6 +1888,19 @@ export function getSetting(db, key, defaultVal = '') {
 
 export function setSetting(db, key, value) {
   db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, String(value)]);
+}
+
+/**
+ * 여행 유형 일정 선택 시 자동으로 채울 가계부 카테고리.
+ * 설정값이 없으면 이름에 '여행'이 들어간 카테고리를 자동 추론한다.
+ * 반환값은 현재 숨겨지지 않은 카테고리일 때만 유효하다.
+ */
+export function getTripDefaultCategory(db) {
+  if (!db) return '';
+  const categories = getBudgetCategories(db);
+  const saved = getSetting(db, 'trip_default_category', '');
+  if (saved) return categories.includes(saved) ? saved : '';
+  return categories.find(c => c === '여행') || categories.find(c => c.includes('여행')) || '';
 }
 
 // ── 월 목표금액 ───────────────────────────────────────────────────

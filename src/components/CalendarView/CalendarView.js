@@ -15,6 +15,9 @@ import {
   getCalendarEventTypes,
   getSetting,
 } from '../../services/dbManager';
+import { parseRate, formatAmount } from '../../services/formulaEvaluator';
+import { getEventWallets } from '../../services/dbManager';
+import TripCashModal from '../TripCash/TripCashModal';
 
 // ── 카테고리 컬러 ──────────────────────────────────────────
 const DEFAULT_CATEGORY_COLORS = {
@@ -112,7 +115,7 @@ const EMPTY_FORM = {
   countries: [], // [{id, country, currency}]
 };
 
-function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, eventTypes = [], eventTypeMap = {} }) {
+function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, onOpenCash, eventTypes = [], eventTypeMap = {} }) {
   const [form, setForm] = useState(() => {
     if (editingEvent) {
       return {
@@ -122,7 +125,10 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
         event_type: editingEvent.event_type || 'general',
         color:      editingEvent.color || '',
         note:       editingEvent.note || '',
-        countries:  (editingEvent.countries || []).map(c => ({ ...c })),
+        countries:  (editingEvent.countries || []).map(c => ({
+          ...c,
+          exchange_rate: c.exchange_rate ? String(c.exchange_rate) : '',
+        })),
       };
     }
     return {
@@ -148,7 +154,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
   }
 
   function addCountry() {
-    setForm(f => ({ ...f, countries: [...f.countries, { id: null, country: '', currency: '' }] }));
+    setForm(f => ({ ...f, countries: [...f.countries, { id: null, country: '', currency: '', exchange_rate: '' }] }));
   }
   function updateCountryField(idx, key, val) {
     setForm(f => {
@@ -182,13 +188,14 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
         oldCountries.forEach(oc => { if (!keepIds.has(oc.id)) deleteEventCountry(db, oc.id); });
         form.countries.forEach(c => {
           if (!c.country.trim()) return;
-          if (c.id) updateEventCountry(db, c.id, c.country, c.currency);
-          else addEventCountry(db, editingEvent.id, c.country, c.currency);
+          const rate = parseRate(c.exchange_rate);
+          if (c.id) updateEventCountry(db, c.id, c.country, c.currency, rate);
+          else addEventCountry(db, editingEvent.id, c.country, c.currency, rate);
         });
       } else {
         const newId = addCalendarEvent(db, payload);
         form.countries.forEach(c => {
-          if (c.country.trim()) addEventCountry(db, newId, c.country, c.currency);
+          if (c.country.trim()) addEventCountry(db, newId, c.country, c.currency, parseRate(c.exchange_rate));
         });
       }
       onSave();
@@ -270,24 +277,56 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
             </div>
           </div>
 
+          {eventTypeMap[form.event_type]?.is_trip_type === 1 && editingEvent && onOpenCash && (
+            <button className="cv-form-cash-btn" onClick={() => onOpenCash(editingEvent)}>
+              <span className="cv-form-cash-btn-icon">💰</span>
+              <span className="cv-form-cash-btn-text">현금 관리 — 환전·잔여 현금·정산</span>
+              <span className="cv-form-cash-btn-arrow">›</span>
+            </button>
+          )}
+
           {eventTypeMap[form.event_type]?.is_trip_type === 1 && (
             <div className="cv-form-field">
               <label className="cv-form-label">여행 국가/화폐</label>
-              {form.countries.map((c, i) => (
-                <div className="cv-form-country-row" key={i}>
-                  <input
-                    className="cv-form-input" placeholder="국가 (예: 일본)"
-                    value={c.country} onChange={e => updateCountryField(i, 'country', e.target.value)}
-                  />
-                  <input
-                    className="cv-form-input" placeholder="통화 (예: JPY)"
-                    value={c.currency} onChange={e => updateCountryField(i, 'currency', e.target.value)}
-                    style={{ width: 80, flex: 'none' }}
-                  />
-                  <button className="cv-form-country-remove" onClick={() => removeCountry(i)}>✕</button>
-                </div>
-              ))}
+              {form.countries.map((c, i) => {
+                const rate = parseRate(c.exchange_rate);
+                const unit = c.currency.trim().toUpperCase() || '통화';
+                return (
+                  <div className="cv-form-country-block" key={i}>
+                    <div className="cv-form-country-row">
+                      <input
+                        className="cv-form-input" placeholder="국가 (예: 일본)"
+                        value={c.country} onChange={e => updateCountryField(i, 'country', e.target.value)}
+                      />
+                      <input
+                        className="cv-form-input" placeholder="통화 (예: JPY)"
+                        value={c.currency} onChange={e => updateCountryField(i, 'currency', e.target.value)}
+                        style={{ width: 80, flex: 'none' }}
+                      />
+                      <button className="cv-form-country-remove" onClick={() => removeCountry(i)}>✕</button>
+                    </div>
+                    <div className="cv-form-rate-row">
+                      <span className="cv-form-rate-prefix">1 {unit} =</span>
+                      <input
+                        className="cv-form-input cv-form-rate-input"
+                        type="text" inputMode="decimal" placeholder="환율 (선택)"
+                        value={c.exchange_rate || ''}
+                        onChange={e => updateCountryField(i, 'exchange_rate', e.target.value)}
+                      />
+                      <span className="cv-form-rate-suffix">원</span>
+                    </div>
+                    {rate > 0 && (
+                      <div className="cv-form-rate-hint">
+                        예) 1,000 {unit} = {formatAmount(Math.round(1000 * rate))}원
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <button className="cv-form-add-country-btn" onClick={addCountry}>+ 국가 추가</button>
+              <div className="cv-form-rate-note">
+                환율을 입력하면 거래 추가 시 현지 금액에서 원화가 자동 계산됩니다.
+              </div>
             </div>
           )}
 
@@ -327,6 +366,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   const [internalEventForm, setInternalEventForm] = useState(false);
   const [formInitialDate, setFormInitialDate] = useState('');
   const [selectedTx, setSelectedTx] = useState(null);
+  const [cashEvent, setCashEvent] = useState(null);
 
   useEffect(() => {
     if (goTodayKey > 0) {
@@ -652,16 +692,34 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
               {bottomSheetEvents.length > 0 && (
                 <>
                   <div className="cv-bs-section-title">일정</div>
-                  {bottomSheetEvents.map(ev => (
-                    <div key={ev.id} className="cv-bs-event-item" onClick={() => { setSelectedDate(null); setEditingEvent(ev); setInternalEventForm(true); }}>
-                      <div className="cv-bs-event-bar" style={{ background: resolveEventColor(ev, eventTypeMap) }} />
-                      <div className="cv-bs-event-info">
-                        <div className="cv-bs-event-title">{ev.title}</div>
-                        <div className="cv-bs-event-dates">{eventDateRange(ev)}</div>
+                  {bottomSheetEvents.map(ev => {
+                    const isTrip = eventTypeMap[ev.event_type]?.is_trip_type === 1;
+                    const wallets = isTrip ? getEventWallets(db, ev.id).filter(w => Math.abs(w.balance) >= 0.005) : [];
+                    return (
+                      <div key={ev.id} className="cv-bs-event-item" onClick={() => { setSelectedDate(null); setEditingEvent(ev); setInternalEventForm(true); }}>
+                        <div className="cv-bs-event-bar" style={{ background: resolveEventColor(ev, eventTypeMap) }} />
+                        <div className="cv-bs-event-info">
+                          <div className="cv-bs-event-title">{ev.title}</div>
+                          <div className="cv-bs-event-dates">{eventDateRange(ev)}</div>
+                          {wallets.length > 0 && (
+                            <div className="cv-bs-event-cash">
+                              💰 남은 현금 {wallets.map(w =>
+                                `${w.currency === 'KRW' ? formatAmount(Math.round(w.balance)) : Math.round(w.balance * 100) / 100} ${w.currency}`
+                              ).join(' · ')}
+                            </div>
+                          )}
+                        </div>
+                        {isTrip && (
+                          <button
+                            className="cv-bs-event-cash-btn"
+                            onClick={e => { e.stopPropagation(); setSelectedDate(null); setCashEvent(ev); }}
+                            title="현금 관리"
+                          >💰</button>
+                        )}
+                        <span className="cv-bs-event-arrow">›</span>
                       </div>
-                      <span className="cv-bs-event-arrow">›</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </>
               )}
 
@@ -755,8 +813,19 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
           onSave={handleFormSave}
           onDelete={handleFormDelete}
           onCancel={handleFormCancel}
+          onOpenCash={ev => { setInternalEventForm(false); setEditingEvent(null); if (showEventForm && onCloseEventForm) onCloseEventForm(); setCashEvent(ev); }}
           eventTypes={eventTypes}
           eventTypeMap={eventTypeMap}
+        />
+      )}
+
+      {/* ── 여행 현금 관리 ── */}
+      {cashEvent && (
+        <TripCashModal
+          db={db}
+          event={cashEvent}
+          onClose={() => setCashEvent(null)}
+          onChanged={onChanged}
         />
       )}
     </div>
