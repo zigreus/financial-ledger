@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PROVIDERS, getAIConfig, saveAIConfig, listModels } from '../../services/aiClient';
-import './ReceiptScanner.css';
+import './AIEntry.css';
 
 /**
  * AI 영수증 분석 설정 — 공급자 선택, API 키, 모델.

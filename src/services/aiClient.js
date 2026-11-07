@@ -148,31 +148,35 @@ function parseJsonText(text) {
 }
 
 /**
- * 이미지 1장과 지시문을 보내 schema 모양의 객체를 받는다.
- * image: { base64, mediaType }
+ * 파일(이미지·PDF, 0개 이상)과 지시문을 보내 schema 모양의 객체를 받는다.
+ * files: [{ base64, mediaType }] — 비어 있으면 글만 보낸다 (말로 입력).
+ * description은 Claude 도구 설명, maxTokens는 응답 길이 상한 (명세서처럼 행이 많으면 크게).
  */
-export async function analyzeImage({ ai, system, prompt, schema, toolName, image, signal }) {
+export async function analyzeWithAI({
+  ai, system, prompt, schema, toolName, files = [], signal,
+  description = '읽은 내용을 정해진 형식으로 기록한다', maxTokens = 2048,
+}) {
   if (ai.provider === 'claude') {
+    const fileBlocks = files.map(f => (f.mediaType === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: f.mediaType, data: f.base64 } }
+      : { type: 'image', source: { type: 'base64', media_type: f.mediaType, data: f.base64 } }));
     const body = await request('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: claudeHeaders(ai.apiKey),
       signal,
       body: JSON.stringify({
         model: ai.model,
-        max_tokens: 2048,
+        max_tokens: maxTokens,
         system,
         // 도구 호출을 강제해 정해진 모양의 JSON으로 받는다
-        tools: [{ name: toolName, description: '영수증에서 읽은 내용을 기록한다', input_schema: schema }],
+        tools: [{ name: toolName, description, input_schema: schema }],
         tool_choice: { type: 'tool', name: toolName },
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 } },
-            { type: 'text', text: prompt },
-          ],
-        }],
+        messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: prompt }] }],
       }),
     });
+    if (body?.stop_reason === 'max_tokens') {
+      throw new AIError('내용이 너무 많아 끝까지 읽지 못했습니다 — 나눠서 다시 시도하세요', 'parse');
+    }
     const block = (body?.content || []).find(b => b.type === 'tool_use');
     if (!block?.input) throw new AIError('AI 응답을 해석하지 못했습니다 — 다시 시도하세요', 'parse');
     return block.input;
@@ -189,12 +193,13 @@ export async function analyzeImage({ ai, system, prompt, schema, toolName, image
         contents: [{
           role: 'user',
           parts: [
-            { inline_data: { mime_type: image.mediaType, data: image.base64 } },
+            ...files.map(f => ({ inline_data: { mime_type: f.mediaType, data: f.base64 } })),
             { text: prompt },
           ],
         }],
         generationConfig: {
           temperature: 0.1,
+          maxOutputTokens: Math.max(maxTokens, 8192),
           responseMimeType: 'application/json',
           responseSchema: toGeminiSchema(schema),
         },
@@ -204,8 +209,16 @@ export async function analyzeImage({ ai, system, prompt, schema, toolName, image
   const candidate = body?.candidates?.[0];
   if (!candidate) {
     const reason = body?.promptFeedback?.blockReason;
-    throw new AIError(reason ? `AI가 이미지를 처리하지 않았습니다 (${reason})` : 'AI 응답이 비어 있습니다', 'parse');
+    throw new AIError(reason ? `AI가 요청을 처리하지 않았습니다 (${reason})` : 'AI 응답이 비어 있습니다', 'parse');
+  }
+  if (candidate.finishReason === 'MAX_TOKENS') {
+    throw new AIError('내용이 너무 많아 끝까지 읽지 못했습니다 — 나눠서 다시 시도하세요', 'parse');
   }
   const text = (candidate.content?.parts || []).map(p => p.text || '').join('');
   return parseJsonText(text);
+}
+
+/** 이미지 1장 분석 (영수증) */
+export function analyzeImage({ image, ...rest }) {
+  return analyzeWithAI({ ...rest, files: [image], description: '영수증에서 읽은 내용을 기록한다' });
 }

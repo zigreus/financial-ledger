@@ -9,6 +9,7 @@ import TransactionForm from '../TransactionForm/TransactionForm';
 import SummaryView from '../SummaryView/SummaryView';
 import SettingsView from '../SettingsView/SettingsView';
 import ImportModal from '../ImportModal/ImportModal';
+import CardStatementModal from '../CardStatement/CardStatementModal';
 import CalendarView from '../CalendarView/CalendarView';
 
 import AccountManagement from '../AccountManagement/AccountManagement';
@@ -27,6 +28,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showCardCheck, setShowCardCheck] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [defaultFormDate, setDefaultFormDate] = useState(null);
@@ -49,7 +51,7 @@ function App() {
   const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
   const navRef = React.useRef({
-    activeTab: 'list', showForm: false, showImport: false, showEventForm: false, editingTx: null,
+    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, editingTx: null,
     summaryTab: 'monthly', summaryDrilldown: null,
     settingsSection: 'payment',
     settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
@@ -71,6 +73,7 @@ function App() {
     if ('activeTab' in s) setActiveTab(s.activeTab);
     if ('showForm' in s) setShowForm(s.showForm);
     if ('showImport' in s) setShowImport(s.showImport);
+    if ('showCardCheck' in s) setShowCardCheck(s.showCardCheck);
     if ('showEventForm' in s) setShowEventForm(s.showEventForm);
     if ('editingTx' in s) setEditingTx(s.editingTx);
     if ('summaryTab' in s) setSummaryTab(s.summaryTab);
@@ -251,6 +254,19 @@ function App() {
     showToast(`✓ ${label} 추가됨`);
   }, [db, showToast, saveAndReload]);
 
+  // 말로 입력한 여러 건을 한 번에 추가
+  const handleBulkAdd = useCallback(async (rows) => {
+    if (!rows.length) return;
+    rows.forEach(row => addTransaction(db, row));
+    setShowForm(false);
+    setEditingTx(null);
+    window.history.back();
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    showToast('저장 중…');
+    await saveAndReload(db);
+    showToast(`✓ ${rows.length}건 ${total.toLocaleString()}원 추가됨`);
+  }, [db, showToast, saveAndReload]);
+
   const handleUpdate = useCallback(async (txData) => {
     // 분할 결제는 묶음 전체를 한 번에 반영한다.
     // id가 있으면 갱신, 없으면 새로 만들고, 묶음에 있었는데 빠진 건 삭제한다.
@@ -365,6 +381,7 @@ function App() {
               await saveAndReload(db);
             }}
             onOpenImport={() => navigate({ showImport: true })}
+            onOpenCardCheck={() => navigate({ showCardCheck: true })}
           />
         )}
         {activeTab === 'summary' && (
@@ -499,7 +516,17 @@ function App() {
           editingTx={editingTx}
           defaultDate={defaultFormDate}
           onSave={editingTx ? handleUpdate : handleAdd}
+          onBulkAdd={handleBulkAdd}
           onCancel={closeForm}
+        />
+      )}
+
+      {/* 카드 내역 대조 */}
+      {showCardCheck && (
+        <CardStatementModal
+          db={db}
+          onChanged={() => saveAndReload(db)}
+          onClose={() => { setShowCardCheck(false); window.history.back(); }}
         />
       )}
 

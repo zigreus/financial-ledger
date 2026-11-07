@@ -1,33 +1,33 @@
-/* ── 영수증 스캐너 (거래 폼 상단) ── */
-.rs-idle {
+/* ── AI 입력 바 (거래 폼 상단) ── */
+.ai-entry-bar {
   display: flex;
   gap: 6px;
   align-items: stretch;
 }
-.rs-scan-btn {
+.ai-entry-btn {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px 8px;
   border: 1.5px dashed var(--primary);
   border-radius: 10px;
   background: #EFF6FF;
-  cursor: pointer;
-  text-align: left;
-}
-.rs-scan-icon { font-size: 20px; flex-shrink: 0; }
-.rs-scan-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
   color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.rs-scan-text small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.ai-entry-icon { font-size: 17px; }
+.ai-entry-notice {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #047857;
+}
+
 .rs-gear {
   flex-shrink: 0;
   width: 42px;
@@ -134,6 +134,8 @@
 .rs-src-history { background: #ECFDF5; color: #047857; }
 .rs-src-ai { background: #F5F3FF; color: #6D28D9; }
 .rs-src-trip { background: #FFF7ED; color: #C2410C; }
+.rs-src-text,
+.rs-src-statement { background: #EFF6FF; color: var(--primary-dark); }
 
 .rs-warnings {
   margin: 0;
@@ -240,3 +242,59 @@
 .ai-btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .ai-btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
 .ai-btn-danger { background: var(--surface); color: var(--danger); border: 1px solid #FECACA; margin-right: auto; }
+
+/* ── 말로 입력 ── */
+.tp-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+.tp-textarea:focus { outline: none; border-color: var(--primary); background: var(--surface); }
+.tp-hint { font-size: 11px; color: var(--text-muted); }
+.tp-quote {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: normal !important;
+  word-break: break-word;
+}
+.rs-btn-primary:disabled { background: #CBD5E1; cursor: not-allowed; }
+
+.tp-list { display: flex; flex-direction: column; gap: 8px; }
+.tp-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.tp-item.checked { border-color: var(--primary); background: #F8FBFF; }
+.tp-item-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.tp-item-head input { width: 17px; height: 17px; flex-shrink: 0; }
+.tp-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tp-item-main b { font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-item-main small { font-size: 11px; color: var(--text-muted); }
+.tp-item-amount { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.tp-item-amount.missing { color: var(--text-muted); font-weight: 400; }
+.tp-item-fields { display: flex; gap: 6px; flex-wrap: wrap; }
+.tp-field { flex: 1 1 140px; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.tp-field select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.tp-item-missing { font-size: 11px; color: var(--text-muted); }
+.tp-item-warn { font-size: 11px; color: #92400E; }

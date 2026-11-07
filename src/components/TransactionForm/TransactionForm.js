@@ -5,7 +5,7 @@ import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
-import ReceiptScanner from '../ReceiptScanner/ReceiptScanner';
+import AIEntry from '../AIEntry/AIEntry';
 
 
 const EMPTY_FORM = {
@@ -67,7 +67,7 @@ function fmtWallet(value, currency) {
   return (Math.round(value * 100) / 100).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
-function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
+function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -456,7 +456,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
     setShowStarPopup(false);
   };
 
-  // 영수증 분석 결과로 폼을 채운다 — 저장은 사용자가 확인한 뒤 직접 한다
+  // AI(영수증·말로 입력) 결과로 폼을 채운다 — 저장은 사용자가 확인한 뒤 직접 한다
   const applyReceipt = (s) => {
     skipAutoDiscountRef.current = false;
     setSplit(false);
@@ -537,9 +537,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         </div>
 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
-          {/* 영수증 AI 입력 */}
+          {/* AI 입력 — 영수증 사진 / 말로 입력 */}
           {!editingTx && (
-            <ReceiptScanner db={db} onApply={applyReceipt} resetKey={addedCount} />
+            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={onBulkAdd} resetKey={addedCount} />
           )}
 
           {/* 즐겨찾기 칩 */}

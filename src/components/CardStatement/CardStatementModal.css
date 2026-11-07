@@ -1,0 +1,203 @@
+/* ── 카드 내역 대조 ── */
+.cs-pad { padding: 14px 16px 0; display: flex; flex-direction: column; gap: 12px; }
+.cs-footer { flex-direction: row; justify-content: flex-end; gap: 6px; padding-top: 16px; }
+
+.cs-intro {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  background: var(--bg);
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+.cs-intro b { color: var(--text); }
+
+.cs-field { display: flex; flex-direction: column; gap: 6px; }
+.cs-field label { font-size: 13px; font-weight: 600; color: var(--text); }
+.cs-field select {
+  padding: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--bg);
+  color: var(--text);
+}
+.cs-drop {
+  padding: 16px 12px;
+  border: 1.5px dashed var(--primary);
+  border-radius: 10px;
+  background: #EFF6FF;
+  color: var(--primary-dark);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cs-drop:disabled { opacity: .6; cursor: progress; }
+.cs-help { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+
+.cs-previews { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.cs-preview { flex: 0 0 72px; display: flex; flex-direction: column; gap: 3px; }
+.cs-preview img,
+.cs-pdf {
+  width: 72px;
+  height: 96px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.cs-pdf {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--danger);
+}
+.cs-preview small {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 결과 요약 */
+.cs-summary { display: flex; flex-direction: column; gap: 8px; }
+.cs-summary-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cs-summary-title span { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.cs-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-chip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 12px;
+}
+.cs-chip.ok { background: #ECFDF5; color: #047857; }
+.cs-chip.warn { background: #FFFBEB; color: #B45309; }
+.cs-chip.add { background: #EFF6FF; color: var(--primary-dark); }
+.cs-chip.info { background: var(--bg); color: var(--text-muted); }
+
+.cs-notice { font-size: 13px; color: #047857; font-weight: 600; }
+.cs-allgood {
+  text-align: center;
+  padding: 18px 12px;
+  background: #ECFDF5;
+  border-radius: 10px;
+  color: #047857;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 섹션 */
+.cs-section { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.cs-section-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.cs-section-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text); }
+.cs-section-count {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+.cs-tone-ok .cs-section-count { background: #ECFDF5; color: #047857; }
+.cs-tone-warn .cs-section-count { background: #FFFBEB; color: #B45309; }
+.cs-tone-add .cs-section-count { background: #EFF6FF; color: var(--primary-dark); }
+.cs-tone-info .cs-section-count { background: var(--bg); color: var(--text-muted); }
+.cs-tone-add { border-color: #BFDBFE; }
+.cs-section-arrow { color: var(--text-muted); font-size: 12px; }
+.cs-section-hint {
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.cs-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+/* 행 */
+.cs-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--surface);
+}
+.cs-row.checked { border-color: var(--primary); background: #F8FBFF; }
+.cs-row-plain { flex-direction: row; align-items: center; gap: 8px; }
+.cs-row-head { display: flex; align-items: center; gap: 8px; }
+label.cs-row-head { cursor: pointer; }
+.cs-row-head input { width: 17px; height: 17px; flex-shrink: 0; }
+.cs-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cs-row-main b {
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-row-main small {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-row-amount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.cs-row-amount.neg { color: var(--danger); }
+.cs-row-amount small { font-size: 10px; font-weight: 400; color: var(--text-muted); }
+.cs-row-amount s { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+.cs-row-fields { display: flex; align-items: center; gap: 6px; }
+.cs-row-fields select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.cs-btn-danger {
+  padding: 9px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+}

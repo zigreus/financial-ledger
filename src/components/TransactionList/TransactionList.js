@@ -35,7 +35,7 @@ function categoryColor(cat) {
   return `hsl(${hue}, 55%, 52%)`;
 }
 
-function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport }) {
+function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
@@ -327,6 +327,11 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                 <button className="btn-filter-toggle" onClick={() => setDeleteMode(true)}>
                   삭제
                 </button>
+                {onOpenCardCheck && (
+                  <button className="btn-filter-toggle" onClick={onOpenCardCheck}>
+                    카드 대조
+                  </button>
+                )}
                 {onOpenImport && (
                   <button className="btn-filter-toggle" onClick={onOpenImport}>
                     불러오기
