@@ -2222,6 +2222,28 @@ export function getAutoPaymentMethod(db, subCategory) {
   return null;
 }
 
+/**
+ * 세부내역별 입력 습관 — 같은 세부내역을 어떤 카테고리·결제수단으로 적어 왔는지.
+ * 영수증 AI가 "기존 데이터 기준"으로 추천할 때 쓴다. 최근 sinceMonths개월, 많이 쓴 순.
+ */
+export function getDetailPatterns(db, { sinceMonths = 12, limit = 500 } = {}) {
+  if (!db) return [];
+  const d = new Date();
+  d.setMonth(d.getMonth() - sinceMonths);
+  const since = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const res = db.exec(
+    `SELECT detail, budget_category, sub_category, payment_method,
+            COUNT(*) AS cnt, MAX(date) AS last_date
+     FROM transactions
+     WHERE detail != '' AND date >= ? AND COALESCE(is_cash_adjustment, 0) = 0
+     GROUP BY detail, budget_category, sub_category, payment_method
+     ORDER BY cnt DESC, last_date DESC
+     LIMIT ?`,
+    [since, limit]
+  );
+  return dbRowsToObjects(res).map(r => ({ ...r, cnt: Number(r.cnt) }));
+}
+
 export function getDetectedPatterns(db) {
   const res = db.exec(
     `SELECT t.sub_category, t.payment_method, COUNT(*) as cnt, COALESCE(aps.is_disabled, 0) as is_disabled

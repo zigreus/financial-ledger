@@ -1,0 +1,242 @@
+/* ── 영수증 스캐너 (거래 폼 상단) ── */
+.rs-idle {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.rs-scan-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1.5px dashed var(--primary);
+  border-radius: 10px;
+  background: #EFF6FF;
+  cursor: pointer;
+  text-align: left;
+}
+.rs-scan-icon { font-size: 20px; flex-shrink: 0; }
+.rs-scan-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-dark);
+}
+.rs-scan-text small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.rs-gear {
+  flex-shrink: 0;
+  width: 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.rs-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rs-setup-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.rs-setup-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+.rs-thumb {
+  width: 54px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+/* 분석 중 */
+.rs-analyzing { flex-direction: row; align-items: center; }
+.rs-analyzing-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.rs-analyzing-text small { color: var(--text-muted); }
+.rs-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #BFDBFE;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: rs-spin .8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes rs-spin { to { transform: rotate(360deg); } }
+
+/* 오류 */
+.rs-error { border-color: #FECACA; background: #FEF2F2; }
+.rs-error-text { font-size: 13px; color: var(--danger); line-height: 1.5; word-break: break-word; }
+
+/* 확인 카드 */
+.rs-review { border-color: var(--primary); box-shadow: 0 2px 10px rgba(37, 99, 235, .08); }
+.rs-review-head { display: flex; gap: 10px; align-items: center; }
+.rs-review-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rs-review-title b { font-size: 15px; color: var(--text); }
+.rs-review-title span {
+  font-size: 12px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.rs-rows { display: flex; flex-direction: column; }
+.rs-row {
+  display: grid;
+  grid-template-columns: 62px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.rs-row:last-child { border-bottom: none; }
+.rs-row-label { font-size: 12px; color: var(--text-muted); padding-top: 1px; }
+.rs-row-value {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+.rs-row-value.missing { color: var(--text-muted); font-weight: 400; }
+.rs-row-value small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+
+.rs-src {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--text-muted);
+}
+.rs-src-receipt { background: #EFF6FF; color: var(--primary-dark); }
+.rs-src-history { background: #ECFDF5; color: #047857; }
+.rs-src-ai { background: #F5F3FF; color: #6D28D9; }
+.rs-src-trip { background: #FFF7ED; color: #C2410C; }
+
+.rs-warnings {
+  margin: 0;
+  padding: 8px 10px 8px 26px;
+  background: #FFFBEB;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #92400E;
+  line-height: 1.5;
+}
+
+.rs-items ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rs-items li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text); }
+.rs-items li b { font-weight: 600; white-space: nowrap; }
+
+.rs-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.rs-btn-primary,
+.rs-btn-secondary {
+  padding: 9px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rs-btn-primary { background: var(--primary); color: #fff; border: none; }
+.rs-btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.rs-btn-link {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+/* ── AI 설정 폼 (스캐너·설정 화면 공용) ── */
+.ai-settings { display: flex; flex-direction: column; gap: 14px; }
+.ai-settings--compact { gap: 11px; }
+.ai-field { display: flex; flex-direction: column; gap: 5px; }
+.ai-field label { font-size: 12px; font-weight: 600; color: var(--text); }
+.ai-field input,
+.ai-field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+}
+.ai-field input:focus,
+.ai-field select:focus { outline: none; border-color: var(--primary); background: var(--surface); }
+.ai-provider-row { display: flex; gap: 6px; }
+.ai-provider {
+  flex: 1;
+  padding: 9px 6px;
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ai-provider.active { border-color: var(--primary); background: #EFF6FF; color: var(--primary-dark); font-weight: 600; }
+.ai-model-row { display: flex; gap: 6px; }
+.ai-model-row select { flex: 1; }
+.ai-help { font-size: 11px; color: var(--text-muted); line-height: 1.5; word-break: break-all; }
+.ai-status { font-size: 12px; font-weight: 600; }
+.ai-status.ok { color: #047857; }
+.ai-status.err { color: var(--danger); word-break: break-word; }
+.ai-privacy {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  background: var(--bg);
+  padding: 9px 11px;
+  border-radius: 8px;
+}
+.ai-privacy b { color: var(--text); font-weight: 600; }
+.ai-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.ai-btn-primary,
+.ai-btn-secondary,
+.ai-btn-danger {
+  padding: 9px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-btn-primary { background: var(--primary); color: #fff; border: none; }
+.ai-btn-primary:disabled { background: #CBD5E1; cursor: not-allowed; }
+.ai-btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.ai-btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
+.ai-btn-danger { background: var(--surface); color: var(--danger); border: 1px solid #FECACA; margin-right: auto; }

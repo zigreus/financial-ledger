@@ -21,6 +21,7 @@ import {
 } from '../../services/dbManager';
 import './SettingsView.css';
 import AmountInput from '../common/AmountInput';
+import AISettingsForm from '../ReceiptScanner/AISettingsForm';
 import { evaluateFormula, parseForeignAmount } from '../../services/formulaEvaluator';
 
 const IconEyeOpen = () => (
@@ -675,6 +676,7 @@ const [dragId, setDragId] = useState(null);
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={(activeSection === 'budget' || activeSection === 'recurring') ? 'tab active' : 'tab'} onClick={() => { switchSection(financeSubTab); setShowRecurringForm(false); }}>지출계획</button>
         <button className={activeSection === 'calendar' ? 'tab active' : 'tab'} onClick={() => switchSection('calendar')}>캘린더</button>
+        <button className={activeSection === 'ai' ? 'tab active' : 'tab'} onClick={() => switchSection('ai')}>AI</button>
       </div>
 
       {/* 드릴다운 뒤로가기 */}
@@ -898,6 +900,19 @@ const [dragId, setDragId] = useState(null);
               개별 월 목표금액은 거래내역 화면의 월 헤더에서 설정할 수 있습니다.
             </div>
 
+          </div>
+        )}
+
+        {/* ── AI 영수증 분석 탭 ── */}
+        {activeSection === 'ai' && (
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>AI 영수증 분석</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: 1.6 }}>
+              거래 추가 화면에서 영수증을 찍으면 AI가 날짜·금액·가게를 읽고,
+              예전 입력 습관을 기준으로 결제수단과 카테고리를 추천합니다.
+              이 설정은 기기마다 따로 저장됩니다.
+            </div>
+            <AISettingsForm />
           </div>
         )}
 

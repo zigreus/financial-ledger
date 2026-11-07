@@ -5,6 +5,7 @@ import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
+import ReceiptScanner from '../ReceiptScanner/ReceiptScanner';
 
 
 const EMPTY_FORM = {
@@ -455,6 +456,30 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
     setShowStarPopup(false);
   };
 
+  // 영수증 분석 결과로 폼을 채운다 — 저장은 사용자가 확인한 뒤 직접 한다
+  const applyReceipt = (s) => {
+    skipAutoDiscountRef.current = false;
+    setSplit(false);
+    setSplitAmount('');
+    setSplitMethod('');
+    setForm(prev => {
+      const next = {
+        ...prev,
+        date: s.date || prev.date,
+        detail: s.detail || prev.detail,
+        payment_method: s.payment_method || prev.payment_method,
+        budget_category: s.budget_category || prev.budget_category,
+        sub_category: s.budget_category ? s.sub_category : prev.sub_category,
+      };
+      if (s.event_id) {
+        next.event_id = String(s.event_id);
+        next.foreign_amounts = s.foreignAmount !== null ? { [s.currency]: String(s.foreignAmount) } : {};
+      }
+      if (s.amount !== null) next.amount = String(s.amount);
+      return next;
+    });
+  };
+
   const applyFavorite = (fav) => {
     recordFavoriteUse(db, fav.id);
     setFavorites(getFavorites(db));
@@ -512,6 +537,11 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         </div>
 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
+          {/* 영수증 AI 입력 */}
+          {!editingTx && (
+            <ReceiptScanner db={db} onApply={applyReceipt} resetKey={addedCount} />
+          )}
+
           {/* 즐겨찾기 칩 */}
           {favorites.length > 0 && (
             <div className="favorite-chips">
