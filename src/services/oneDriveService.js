@@ -2,7 +2,8 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { loginRequest } from '../auth/msalConfig';
 import { ONEDRIVE_DB_PATH } from '../config';
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+// 다른 OneDrive 기능 모듈(예: 백업)이 같은 토큰·오류 처리를 쓰도록 내보낸다
+export const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const ITEM_URL = `${GRAPH_BASE}/me/drive/root:/${ONEDRIVE_DB_PATH}`;
 
 /** 다른 기기가 먼저 저장해서 내 저장이 거절됨 (HTTP 412/409) — 최신 파일을 받아 합친 뒤 다시 저장해야 한다 */
@@ -21,7 +22,7 @@ export class ReauthRedirectError extends Error {
   }
 }
 
-async function getToken(instance, accounts) {
+export async function getToken(instance, accounts) {
   try {
     const res = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
     return res.accessToken;
@@ -36,7 +37,7 @@ async function getToken(instance, accounts) {
   }
 }
 
-async function graphFetch(url, init) {
+export async function graphFetch(url, init) {
   try {
     return await fetch(url, init);
   } catch (e) {
@@ -94,4 +95,41 @@ export async function writeDbToOneDrive(instance, accounts, dbBytes, eTag) {
   if (!res.ok) throw new Error(`OneDrive 저장 오류: ${res.status} ${res.statusText}`);
   const item = await res.json().catch(() => ({}));
   return item.eTag || null;
+}
+
+// ── 계정 설정 파일 (가계부 DB와 별도) ─────────────────────────────
+// 같은 Microsoft 계정으로 로그인한 기기끼리 나눠 쓰는 작은 JSON 설정 (예: ai-settings.json).
+// 가계부 DB(ledger.db)와 섞지 않는다 — DB는 변경 기록·병합·내보내기로 여기저기 복사된다.
+
+const APP_FOLDER = ONEDRIVE_DB_PATH.replace(/[^/]+$/, ''); // 'Apps/financial-ledger/'
+const settingsUrl = name => `${GRAPH_BASE}/me/drive/root:/${APP_FOLDER}${encodeURIComponent(name)}`;
+
+/** 설정 파일을 읽는다. 없으면 null. 내용이 JSON이 아니면 null. */
+export async function readSettingsFile(instance, accounts, name) {
+  const token = await getToken(instance, accounts);
+  const metaRes = await graphFetch(settingsUrl(name), { headers: { Authorization: `Bearer ${token}` } });
+  if (metaRes.status === 404) return null;
+  if (!metaRes.ok) throw new Error(`OneDrive 설정 읽기 오류: ${metaRes.status} ${metaRes.statusText}`);
+  const meta = await metaRes.json();
+  const downloadUrl = meta['@microsoft.graph.downloadUrl'];
+  const res = downloadUrl
+    ? await graphFetch(downloadUrl)
+    : await graphFetch(`${settingsUrl(name)}:/content`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`OneDrive 설정 읽기 오류: ${res.status} ${res.statusText}`);
+  try {
+    return JSON.parse(await res.text());
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 설정 파일을 통째로 저장한다 (작은 파일이라 마지막에 저장한 쪽이 이긴다). */
+export async function writeSettingsFile(instance, accounts, name, data) {
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(`${settingsUrl(name)}:/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`OneDrive 설정 저장 오류: ${res.status} ${res.statusText}`);
 }

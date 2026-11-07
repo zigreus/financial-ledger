@@ -116,7 +116,9 @@
 
 ## 7. AI 연동
 
-- API 키는 기기의 localStorage에만 둡니다. 가족이 함께 쓰는 DB에는 절대 저장하지 않습니다.
+- API 키는 **가계부 DB(ledger.db)에 절대 저장하지 않습니다.** DB는 변경 기록·병합·내보내기로 여기저기 복사됩니다.
+  - 키는 기기의 localStorage에 두고, 같은 Microsoft 계정의 기기끼리는 OneDrive의 별도 설정 파일(`Apps/financial-ledger/ai-settings.json`)로만 맞춥니다(`aiSettingsSync`). (I-015)
+  - 사용자가 바꾼 설정만 수정 시각을 찍습니다(`saveAIConfig`의 `touch`). 로그아웃 때 이 기기에서만 지우는 것은 시각을 바꾸지 않아, 다시 로그인하면 돌아옵니다.
 - AI가 고른 결제수단·카테고리는 DB 목록과 대조해 검증합니다. 목록에 없으면 버립니다.
 - AI에게 보내는 가계부 정보는 결제수단·카테고리 목록과 입력 습관처럼 필요한 범위로 제한합니다.
 

@@ -3,7 +3,8 @@
  *
  * 앱에 서버가 없으므로 사용자가 발급받은 API 키로 호출한다.
  * (claude.ai·Gemini 앱 구독 로그인으로 다른 웹앱이 호출하는 방법은 제공되지 않는다)
- * 키는 가족이 함께 쓰는 DB가 아니라 이 기기의 localStorage에만 저장한다.
+ * 키는 이 기기의 localStorage에 두고, 같은 계정의 다른 기기와는 aiSettingsSync가
+ * OneDrive의 별도 설정 파일로 맞춘다. 가계부 DB(ledger.db)에는 절대 넣지 않는다.
  */
 
 const CONFIG_KEY = 'ai_receipt_config';
@@ -25,28 +26,48 @@ export const PROVIDERS = {
   },
 };
 
-// ── 설정 (기기별) ────────────────────────────────────────────────
+// ── 설정 (이 기기 + 같은 계정 기기끼리 공유) ─────────────────────────
+
+/** 저장된 설정 모양을 바로잡는다 — 모르는 공급자·문자열이 아닌 키는 버린다 */
+export function normalizeAIConfig(saved) {
+  const src = saved && typeof saved === 'object' ? saved : {};
+  const pick = obj => Object.fromEntries(Object.keys(PROVIDERS).map(p => {
+    const v = obj && typeof obj[p] === 'string' ? obj[p] : '';
+    return [p, v];
+  }));
+  return {
+    provider: PROVIDERS[src.provider] ? src.provider : 'gemini',
+    keys: pick(src.keys),
+    models: pick(src.models),
+    // 마지막으로 사용자가 바꾼 시각 — 기기끼리 어느 쪽이 최신인지 가린다 (0 = 모름)
+    updatedAt: Number(src.updatedAt) || 0,
+  };
+}
 
 export function getAIConfig() {
   let saved = {};
   try { saved = JSON.parse(window.localStorage.getItem(CONFIG_KEY) || '{}') || {}; } catch (e) { saved = {}; }
-  const provider = PROVIDERS[saved.provider] ? saved.provider : 'gemini';
-  return {
-    provider,
-    keys: { gemini: '', claude: '', ...(saved.keys || {}) },
-    models: { gemini: '', claude: '', ...(saved.models || {}) },
-  };
+  return normalizeAIConfig(saved);
 }
 
-export function saveAIConfig(config) {
-  try { window.localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch (e) { /* 저장 불가 환경 */ }
+/**
+ * touch: 사용자가 바꾼 것이면 true(기본) — 수정 시각을 지금으로 찍어 다른 기기에 이 설정이 퍼지게 한다.
+ * 동기화로 받아 온 값이나 로그아웃 정리처럼 "사용자의 새 결정"이 아니면 false.
+ */
+export function saveAIConfig(config, { touch = true } = {}) {
+  const next = { ...normalizeAIConfig(config), updatedAt: touch ? Date.now() : (Number(config.updatedAt) || 0) };
+  try { window.localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); } catch (e) { /* 저장 불가 환경 */ }
+  return next;
 }
 
-/** 이 기기에 저장된 모든 공급자의 API 키를 지운다 (로그아웃 등). 공급자·모델 선택은 남긴다. */
+/**
+ * 이 기기에 저장된 모든 공급자의 API 키를 지운다 (로그아웃). 공급자·모델 선택은 남긴다.
+ * 이 기기에서만 지우는 것이라 수정 시각을 바꾸지 않는다 — 다시 로그인하면 OneDrive에서 다시 받아 온다.
+ */
 export function clearAIKeys() {
   const config = getAIConfig();
   const keys = Object.fromEntries(Object.keys(config.keys).map(p => [p, '']));
-  saveAIConfig({ ...config, keys });
+  saveAIConfig({ ...config, keys }, { touch: false });
 }
 
 /** 지금 선택된 공급자로 바로 호출할 수 있는 상태인지 */
