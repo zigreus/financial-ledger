@@ -1,15 +1,18 @@
+/**
+ * @vitest-environment jsdom
+ */
 /* eslint-disable */
-import { act } from 'react-dom/test-utils';
+import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import initSqlJs from 'sql.js/dist/sql-asm.js';
 import TransactionForm from '../TransactionForm';
 import * as M from '../../../services/dbManager';
 
-jest.mock('../../AIEntry/AIEntry', () => (props) => { global.__aiProps = props; return null; });
+vi.mock('../../AIEntry/AIEntry', () => ({ default: (props) => { global.__aiProps = props; return null; } }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 let SQL;
 beforeAll(async () => {
-  const initSqlJs = require('sql.js/dist/sql-asm.js');
   SQL = await initSqlJs();
 });
 beforeEach(() => { try { window.localStorage.clear(); } catch (e) {} });
@@ -32,7 +35,7 @@ async function render(props) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  const onSave = jest.fn();
+  const onSave = vi.fn();
   await act(async () => { root.render(<TransactionForm onCancel={() => {}} {...props} onSave={onSave} />); });
   return { container, root, onSave };
 }

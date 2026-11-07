@@ -235,7 +235,8 @@ CREATE TABLE IF NOT EXISTS event_cash_flows (
 export async function initSQL() {
   if (!SQL) {
     SQL = await initSqlJs({
-      locateFile: file => `${process.env.PUBLIC_URL || ''}/${file}`,
+      // Vite: public/ 파일은 BASE_URL('/')에서 제공된다 (process.env는 브라우저에 없음 — I-008)
+      locateFile: file => `${import.meta.env.BASE_URL}${file}`,
     });
   }
   return SQL;

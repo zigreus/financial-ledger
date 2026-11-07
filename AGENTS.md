@@ -9,7 +9,7 @@
 ## 1. 프로젝트 한눈에
 
 - 가족이 함께 쓰는 가계부 웹앱입니다. 서버가 없습니다.
-- 기술: React 18, CRA + react-app-rewired, sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`)
+- 기술: React 18, Vite 6(개발 서버·빌드), Vitest(테스트), sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`)
 - 모바일 우선, UI 문구는 한국어입니다.
 
 | 위치 | 역할 |
@@ -128,12 +128,19 @@
 ## 9. 테스트와 검증
 
 - dbManager·changeLog·formulaEvaluator 같은 로직을 바꾸면 `src/services/__tests__/`에 테스트를 추가합니다.
-  - sql.js는 Node에서 바로 돌아갑니다. 파일 맨 위에 `@jest-environment node`를 둡니다.
+  - 테스트는 Vitest입니다. `describe/test/expect/vi`는 전역으로 씁니다.
+  - sql.js는 Node에서 바로 돌아갑니다(기본 환경 node).
+  - 화면 테스트는 파일 맨 위에 `@vitest-environment jsdom`을 두고 `react`의 `act`를 씁니다. 예: `src/components/TransactionForm/__tests__/`
 - 커밋 전에 아래를 확인합니다.
-  - `npm test -- --watchAll=false`(CI=true): 전부 통과
-  - `npx eslint src`: 경고 0
-  - `npm run build`: 성공
-- sql.js WASM은 `scripts/copy-sql-wasm.js`가 빌드 전에 `public/`으로 복사합니다. CDN URL을 쓰지 않습니다. (B-013)
+  - `npm test`: 전부 통과 (반복 실행은 `npm run test:watch`)
+  - `npm run lint`: 경고 0
+  - `npm run build`: 성공 (결과는 `build/`)
+- **빌드 환경 (Vite)**
+  - JSX는 `.js` 파일에 그대로 씁니다. vite.config.mjs가 처리합니다.
+  - 환경값은 `import.meta.env`를 씁니다. `process.env`는 브라우저에 없습니다.
+  - 개발 서버는 3000번 고정입니다. Azure 앱 등록의 리디렉션 주소와 맞추기 위해서입니다.
+  - 배포 설정은 `vercel.json`에 있습니다.
+- sql.js WASM은 `scripts/copy-sql-wasm.js`가 `npm start`·`npm run build` 전에 `public/`으로 복사합니다. CDN URL을 쓰지 않습니다. (B-013)
 
 ## 10. Git
 

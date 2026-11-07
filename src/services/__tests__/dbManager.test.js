@@ -1,7 +1,7 @@
 /**
- * @jest-environment node
+ * @vitest-environment node
  */
-// dbManager 핵심 로직 테스트 (I-001). 실행: npm test -- --watchAll=false
+// dbManager 핵심 로직 테스트 (I-001). 실행: npm test
 import initSqlJs from 'sql.js';
 import {
   createDatabase, addTransaction, addCalendarEvent, addEventCountry, withTransaction,

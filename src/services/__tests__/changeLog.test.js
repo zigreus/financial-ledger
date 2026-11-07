@@ -1,5 +1,5 @@
 /**
- * @jest-environment node
+ * @vitest-environment node
  */
 // 변경 기록·충돌 병합 테스트 (B-001, I-001)
 import initSqlJs from 'sql.js';
@@ -63,7 +63,7 @@ test('되돌린 트랜잭션의 문장은 기록에서 빠진다', () => {
 
 test('읽기는 기록하지 않고 쓰기만 기록하며, onWrite가 불린다', () => {
   const { db } = createDatabase(SQL, null);
-  const onWrite = jest.fn();
+  const onWrite = vi.fn();
   attachChangeLog(db, { onWrite });
   db.exec('SELECT * FROM transactions');
   addTransaction(db, tx('2026-11-01', 'x', 1));

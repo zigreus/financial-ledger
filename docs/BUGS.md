@@ -84,7 +84,7 @@
 | I-005 | ✅ | - | 구조 | CSV 파서 중복, 따옴표 안 줄바꿈 미지원 |
 | I-006 | ✅ | - | 구조 | 로컬 날짜 포맷 함수 5벌 이상 중복 |
 | I-007 | ✅ | - | 정리 | README가 CRA 기본 문서, 0바이트 sqlite 파일이 커밋됨 |
-| I-008 | ⏸ | - | 인프라 | CRA(react-scripts 5) 지원 종료 → Vite 이전 |
+| I-008 | ✅ | - | 인프라 | CRA(react-scripts 5) 지원 종료 → Vite 이전 |
 | I-009 | ✅ | - | DB | 스키마 버전 관리 없음 |
 | I-010 | ✅ | - | 구조 | dataVersion 반영 방식이 두 가지(eslint-disable vs useDbSnapshot) |
 
@@ -697,12 +697,12 @@
 - 파일: README.md, SETUP.md, financial-ledger.sqlite(삭제)
 
 ### I-008 CRA(react-scripts 5) 지원 종료 → Vite 이전
-- 상태: ⏸ 보류(빌드 체계 전체 변경이라 별도 진행)
+- 상태: ✅ 해결 (2026-11-07)
 - 영역: 인프라
 - 문제: CRA는 더 이상 관리되지 않아 의존성 보안 경고와 빌드 도구 노후화가 쌓인다.
 - 원인: 프로젝트가 react-scripts 5 기반이다.
-- 해결: (보류)
-- 파일: package.json, config-overrides.js
+- 해결: react-scripts·react-app-rewired를 Vite 6 + Vitest 3으로 바꿨다. JSX가 든 .js를 설정으로 처리해 파일 이름은 그대로 두고, 3000번 포트·build 출력 폴더·vercel.json으로 로그인·배포 설정을 유지했다. process.env를 import.meta.env로 바꾸고 테스트 50개를 Vitest로 옮겼다. 운영 의존성 취약점은 0건이다.
+- 파일: vite.config.mjs(신규), index.html(public→루트), vercel.json(신규), package.json, package-lock.json, src/services/db/schema.js, 테스트 7개, config-overrides.js(삭제), AGENTS.md, README.md
 
 ### I-009 스키마 버전 관리 없음
 - 상태: ✅ 해결 (2026-11-07)

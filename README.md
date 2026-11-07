@@ -1,6 +1,6 @@
 # 지금 가계부
 
-가족이 함께 쓰는 모바일 우선 가계부 웹앱입니다. 서버 없이 브라우저에서 동작합니다.
+가족이 함께 쓰는 모바일 우선 가계부 웹앱입니다. 서버 없이 브라우저에서 동작합니다(React 18 + Vite).
 
 - **저장소:** 가계부 DB(SQLite) 파일 하나를 각자의 Microsoft 계정 OneDrive(`Apps/financial-ledger/ledger.db`)에 둡니다.
 - **동작 방식:** 브라우저에서 sql.js로 이 파일을 열어 씁니다.
@@ -19,9 +19,10 @@
 
 ```bash
 npm install
-npm start          # http://localhost:3000
-npm test -- --watchAll=false
-npm run build
+npm start          # 개발 서버 http://localhost:3000 (Vite)
+npm test           # Vitest
+npm run lint       # ESLint, 경고 0이어야 함
+npm run build      # build/ 에 배포용 결과물
 ```
 
 Azure 앱 등록과 OneDrive 설정은 [SETUP.md](SETUP.md)를 참고하세요.

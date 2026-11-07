@@ -1,5 +1,5 @@
 /**
- * @jest-environment node
+ * @vitest-environment node
  */
 // 금액 수식 입력 규칙 (B-041)
 import { evaluateFormula, evaluateExpression, parseForeignAmount, parseRate } from '../formulaEvaluator';

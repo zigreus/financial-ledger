@@ -7,37 +7,48 @@
     "@azure/msal-react": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-scripts": "5.0.1",
     "sql.js": "1.12.0"
   },
   "scripts": {
     "prestart": "node scripts/copy-sql-wasm.js",
-    "start": "react-app-rewired start",
+    "start": "vite",
     "prebuild": "node scripts/copy-sql-wasm.js",
-    "build": "react-app-rewired build",
-    "pretest": "node scripts/copy-sql-wasm.js",
-    "test": "react-app-rewired test",
-    "eject": "react-scripts eject"
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src scripts --max-warnings=0"
   },
   "eslintConfig": {
     "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
+      "react-app"
     ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
+    "overrides": [
+      {
+        "files": [
+          "**/__tests__/**/*.js",
+          "**/*.test.js"
+        ],
+        "globals": {
+          "describe": "readonly",
+          "test": "readonly",
+          "it": "readonly",
+          "expect": "readonly",
+          "vi": "readonly",
+          "beforeAll": "readonly",
+          "beforeEach": "readonly",
+          "afterAll": "readonly",
+          "afterEach": "readonly"
+        }
+      }
     ]
   },
   "devDependencies": {
-    "react-app-rewired": "^2.2.1"
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^8.57.1",
+    "eslint-config-react-app": "^7.0.1",
+    "jsdom": "^25.0.1",
+    "vite": "^6.4.5",
+    "vitest": "^3.2.7"
   }
 }

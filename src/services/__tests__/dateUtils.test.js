@@ -1,5 +1,5 @@
 /**
- * @jest-environment node
+ * @vitest-environment node
  */
 // 로컬 날짜 도우미 (I-006, B-011)
 import {
