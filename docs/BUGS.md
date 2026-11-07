@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-065, I-011
+다음 번호: B-065, I-012
 
 ## 요약표
 
@@ -90,6 +90,7 @@
 | I-008 | ✅ | - | 인프라 | CRA(react-scripts 5) 지원 종료 → Vite 이전 |
 | I-009 | ✅ | - | DB | 스키마 버전 관리 없음 |
 | I-010 | ✅ | - | 구조 | dataVersion 반영 방식이 두 가지(eslint-disable vs useDbSnapshot) |
+| I-011 | ✅ | - | 문서 | 설정·가져오기·설계 문서가 Vite 이전·리디렉션 로그인·자동 저장 등 지금 코드와 다름 |
 
 
 ## 상세
@@ -745,9 +746,15 @@
 ### I-010 dataVersion 반영 방식이 두 가지
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 구조
-- 문제: 화면 갱신(B-014)을 반영하는 방식이 두 가지로 섞여 있다.
-  - 요약·캘린더·거래 화면: `[db, dataVersion]` 의존성 + eslint-disable 주석
-  - 설정·계좌 화면: useDbSnapshot 훅
+- 문제: 화면 갱신(B-014) 방식이 요약·캘린더·거래 화면은 `[db, dataVersion]` 의존성 + eslint-disable 주석, 설정·계좌 화면은 useDbSnapshot 훅으로 섞여 있다.
 - 원인: 세 에이전트가 동시에 고치면서 방식이 갈렸다.
-- 해결: 요약·캘린더·거래 목록·입력 폼·여행 현금 화면을 useDbSnapshot(live)으로 바꾸고 dataVersion 관련 eslint-disable을 모두 지웠다. TripCashModal의 자체 version 카운터도 필요 없어져 지웠다. 다른 세션 소유인 CardStatementModal은 자체 카운터로 정상 동작해 그대로 두었다.
-- 파일: src/components/SummaryView/SummaryView.js, CalendarView.js, TransactionList.js, TransactionForm.js, TripCash/TripCashModal.js
+- 해결: 요약·캘린더·거래 목록·입력 폼·여행 현금 화면을 useDbSnapshot(live)으로 바꾸고 dataVersion 관련 eslint-disable을 모두 지웠다. TripCashModal의 자체 version 카운터도 필요 없어져 지웠다. CardStatementModal은 당시 다른 세션 소유라 자체 카운터로 두었다가 B-062·B-063 수정 때 useDbSnapshot으로 바꿨다.
+- 파일: src/components/SummaryView/SummaryView.js, CalendarView.js, TransactionList.js, TransactionForm.js, TripCash/TripCashModal.js, CardStatement/CardStatementModal.js(B-062 커밋)
+
+### I-011 설정·가져오기·설계 문서가 지금 코드와 다름
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 문서
+- 문제: SETUP.md가 CRA 배포 설정·process.env·팝업 로그인·없는 JSON 내보내기를 안내하고, IMPORT_GUIDE.md에 CSV·여행 칸·계좌 불러오기가 없으며, 설계 문서 8개는 구현 여부와 바뀐 구조(db/ 모듈, 일정 유형 테이블, 자동 저장 등)를 알 수 없다.
+- 원인: I-004·I-008·B-001·B-016 등으로 코드가 크게 바뀌는 동안 README·AGENTS.md·BUGS.md만 고쳤다.
+- 해결: SETUP.md(Vite·리디렉션·AI 키·문제 해결)와 IMPORT_GUIDE.md(거래 JSON·CSV, 계좌 CSV)를 코드 기준으로 다시 쓰고, 설계 문서마다 맨 위에 '현재 상태'(구현 여부·코드와 다른 점)를 붙였으며, AGENTS.md 파일 표에 AI·가져오기 모듈을, BUGS.md I-010에 CardStatementModal 후속 변경을 반영했다.
+- 파일: SETUP.md, IMPORT_GUIDE.md, README.md, AGENTS.md, docs/BUGS.md, docs/*-design.md, docs/settings-redesign.md, docs/summary-event-filter-ux-review.md, src/config.js(주석)

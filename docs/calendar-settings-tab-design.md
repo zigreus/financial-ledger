@@ -4,6 +4,19 @@
 > 최종 수정: 2026-04-19 v3  
 > 관련 파일: `src/components/CalendarView/CalendarView.js`, `src/components/SettingsView/SettingsView.js`, `src/services/dbManager.js`, `src/components/SummaryView/SummaryView.js`
 
+## 현재 상태 (2026-11-08 확인)
+
+**구현됨 — 아래 부분은 설계와 다름.** 이 문서는 설계 당시의 기록입니다. 본문과 코드가 다르면 코드가 맞고, 코드 작성 규칙은 [AGENTS.md](../AGENTS.md)를 따릅니다. 본문의 `dbManager.js`는 지금 `src/services/db/*.js` 모듈로 나뉘어 있습니다(dbManager.js는 재내보내기만 합니다).
+
+본문과 다른 점:
+- 일정 유형은 DB(`calendar_event_types`)에서 읽습니다. 본문이 '현재'라고 한 하드코딩 `EVENT_TYPES`는 없어졌습니다.
+- `general`의 이름은 '기타'가 아니라 **'일상'**이고 sort_order는 2입니다. 맨 아래 고정·드래그 금지가 없어 다른 유형처럼 옮길 수 있습니다.
+- 일정 입력 폼은 '(분류 없음)' 표시 없이 DB 순서대로 유형 이름을 보여 줍니다.
+- 설정 탭은 `결제수단 | 카테고리 | 지출계획 | 캘린더 | AI`입니다.
+- 요약의 유형 필터는 버튼이 아니라 선택 상자입니다.
+- 예전 holiday·medical 일정은 `general`로 옮겼습니다(본문 중 `occasion`으로 적힌 곳은 틀림).
+- 관련 파일의 `dbManager.js`는 `db/calendar.js`·`db/schema.js`, SettingsView의 캘린더 탭은 `SettingsView/sections/CalendarSection.js`입니다.
+
 ---
 
 ## 1. 배경 및 목적

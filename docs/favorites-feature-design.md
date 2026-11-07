@@ -1,5 +1,18 @@
 # 거래내역 즐겨찾기 기능 설계
 
+## 현재 상태 (2026-11-08 확인)
+
+**대부분 구현 — 즐겨찾기 추천 알림(§3-4 B)은 만들지 않음.** 이 문서는 설계 당시의 기록입니다. 본문과 코드가 다르면 코드가 맞고, 코드 작성 규칙은 [AGENTS.md](../AGENTS.md)를 따릅니다. 본문의 `dbManager.js`는 지금 `src/services/db/*.js` 모듈로 나뉘어 있습니다(dbManager.js는 재내보내기만 합니다).
+
+본문과 다른 점:
+- `favorite_transactions.amount`는 NULL을 허용합니다. 금액은 선택입니다.
+- 즐겨찾기 등록 조건은 '4개 중 2개'가 아니라 **결제수단·카테고리·세부카테고리 3개가 모두 있을 때**입니다.
+- §3-4 B 즐겨찾기 자동 추천 알림은 없습니다. 로그 함수(`recordSuggestDismiss`·`recordNeverSuggest`·`getSuggestionLog`, db/favorites.js)만 있고 화면에서 쓰지 않습니다. §3-4 A 결제수단 자동 선택은 동작합니다(`db/patterns.js`).
+- 함수 이름(§4): `initFavoriteTransactions`는 없고, `addFavorite(db, data)`, `reorderFavorite`, `toggleAutoPattern(db, subCategory, isDisabled)`, `deleteAutoPattern`, `recordSuggestDismiss(db, patternKey, currentTxCount)`입니다.
+- 컴포넌트: `FavoriteChips.js`·`FavoritesManager.js` 대신 `TransactionForm/FavoritesBar.js`·`TransactionForm/useFavorites.js`·`SettingsView/sections/FavoritesSection.js`이고, App.js에는 즐겨찾기 상태가 없습니다.
+
+---
+
 ## 1. 개요
 
 자주 입력하는 거래 패턴을 즐겨찾기로 저장해두고, 입력 폼에서 원클릭으로 불러와 빠르게 등록하는 기능.

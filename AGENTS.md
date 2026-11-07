@@ -20,6 +20,8 @@
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/oneDriveService.js` | Graph 호출(eTag 조건부 저장) |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
+| `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
+| `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서, 미등록 카테고리 검사 |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/components/*` | 화면 |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |

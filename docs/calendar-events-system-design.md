@@ -1,7 +1,19 @@
 # 캘린더 & 이벤트 시스템 설계서
 
 > 작성일: 2026-04-12
-> 상태: 검토 완료 → 구현 대기
+> 상태: 구현됨 — 아래 부분은 설계와 다름 (2026-11-08 확인, 아래 '현재 상태' 참고)
+
+## 현재 상태 (2026-11-08 확인)
+
+**구현됨 — 아래 부분은 설계와 다름.** 이 문서는 설계 당시의 기록입니다. 본문과 코드가 다르면 코드가 맞고, 코드 작성 규칙은 [AGENTS.md](../AGENTS.md)를 따릅니다. 본문의 `dbManager.js`는 지금 `src/services/db/*.js` 모듈로 나뉘어 있습니다(dbManager.js는 재내보내기만 합니다).
+
+본문과 다른 점:
+- 하단 탭은 `거래내역 | 요약 | + | 캘린더 | 계좌`입니다. 설정은 헤더의 ⚙️로 열고, 가져오기는 설정이 아니라 거래내역 화면의 **불러오기** 모달입니다.
+- 일정 유형은 고정 5종이 아니라 `calendar_event_types` 테이블에 있고 설정 > 캘린더에서 편집합니다. 기본값은 여행(trip)·경조사(occasion)·일상(general)이며, 예전 holiday·medical 일정은 general로 옮겼습니다. 자세한 내용은 [calendar-settings-tab-design.md](./calendar-settings-tab-design.md).
+- trips → calendar_events 이전은 `migrated_from_trip_id` 컬럼 없이 메모에 `[trip_id:N]`을 남기는 방식이고, 이전 뒤 `trips` 테이블은 지웠습니다(I-002).
+- 요약의 유형 필터는 칩이 아니라 선택 상자입니다([summary-event-filter-ux-review.md](./summary-event-filter-ux-review.md)의 B안).
+- 캘린더 표시 설정은 설정 > 예산이 아니라 **설정 > 캘린더 > 표시 설정**에 있습니다.
+- 본문 표의 `dbManager.js`는 `db/schema.js`(이전·스키마)와 `db/calendar.js`(일정 함수)입니다.
 
 ---
 

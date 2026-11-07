@@ -1,4 +1,4 @@
-# 우리 가계부 - 설정 가이드
+# 지금 가계부 - 설정 가이드
 
 이 앱은 **Microsoft 계정 로그인 + OneDrive 저장** 방식으로 동작합니다.
 가계부 데이터(SQLite DB)가 OneDrive에 저장되므로, 가족 구성원 모두 같은 Microsoft 계정으로 로그인하면 동기화됩니다.
@@ -56,7 +56,7 @@ export const AZURE_CLIENT_ID = '여기에-붙여넣기';
    - `https://financial-ledger-five.vercel.app` ← Vercel 프로덕션용
 5. **구성** 클릭 후 저장
 
-> **주의**: 플랫폼을 반드시 **SPA**로 선택해야 합니다. "웹"으로 선택하면 인증 방식이 달라져서 팝업 로그인이 동작하지 않습니다.
+> **주의**: 플랫폼을 반드시 **SPA**로 선택해야 합니다. "웹"으로 선택하면 인증 방식이 달라져서 로그인(리디렉션 방식)이 동작하지 않습니다.
 
 ### 1-4. API 권한 확인
 
@@ -90,13 +90,15 @@ export const ONEDRIVE_DB_PATH = 'Apps/financial-ledger/ledger.db'; // 변경 불
 # 의존성 설치
 npm install
 
-# 개발 서버 실행 (http://localhost:3000)
+# 개발 서버 실행 (http://localhost:3000, Vite)
 npm start
 ```
 
 - 브라우저에서 `http://localhost:3000` 접속
-- **Microsoft 계정으로 로그인** 버튼 클릭 → 팝업으로 Microsoft 로그인
+- **Microsoft 계정으로 로그인** 버튼 클릭 → Microsoft 로그인 페이지로 이동했다가 앱으로 돌아옴
 - 최초 로그인 시 OneDrive 접근 권한 동의 필요
+- 포트는 3000번 고정입니다(Azure 리디렉션 URI와 맞춤). 3000번이 사용 중이면 다른 포트로 바꾸지 않고 오류로 멈추므로, 사용 중인 프로그램을 먼저 종료하세요.
+- 테스트·검사·빌드 명령은 [README.md](README.md#시작하기)를 참고하세요.
 
 ---
 
@@ -110,11 +112,11 @@ npm start
 
 ### 4-2. 빌드 설정
 
-Vercel이 React 앱을 자동 감지하므로 별도 변경 불필요:
+저장소의 `vercel.json`에 빌드 설정이 들어 있어 대시보드에서 바꿀 것이 없습니다:
 
 | 항목 | 값 |
 |------|----|
-| Framework Preset | Create React App |
+| Framework Preset | Vite |
 | Build Command | `npm run build` |
 | Output Directory | `build` |
 | Install Command | `npm install` |
@@ -131,7 +133,8 @@ Vercel이 React 앱을 자동 감지하므로 별도 변경 불필요:
 ### 4-4. 환경변수 설정 (현재 불필요)
 
 - `AZURE_CLIENT_ID`는 현재 `src/config.js`에 하드코딩되어 있어 별도 환경변수 설정 불필요
-- 보안이 필요한 경우: Vercel 대시보드 → Settings → **Environment Variables**에 추가 후 코드에서 `process.env.REACT_APP_CLIENT_ID`로 참조
+- 환경변수로 옮기려면: Vercel 대시보드 → Settings → **Environment Variables**에 `VITE_AZURE_CLIENT_ID`를 추가하고 코드에서 `import.meta.env.VITE_AZURE_CLIENT_ID`로 읽습니다.
+  - Vite는 `VITE_`로 시작하는 값만 브라우저 코드에 넣습니다. `process.env`는 브라우저에 없습니다.
 
 ---
 
@@ -139,17 +142,30 @@ Vercel이 React 앱을 자동 감지하므로 별도 변경 불필요:
 
 - 로그인 후 모든 데이터는 OneDrive에 자동 저장됩니다.
 - 파일 경로: `내 OneDrive > Apps > financial-ledger > ledger.db`
-- 이 파일을 직접 백업하거나 다른 기기로 복사할 수 있습니다.
-- 앱 내 **설정 > 내보내기(JSON)** 기능으로 데이터를 JSON으로 내보낼 수도 있습니다.
+- 이 파일을 직접 백업하거나 다른 기기로 복사할 수 있습니다. 앱에는 별도의 내보내기 기능이 없으므로, 백업은 이 파일을 복사해 둡니다.
+- 잘못 저장했을 때는 OneDrive 웹의 **버전 기록**에서 이전 파일로 되돌릴 수 있습니다.
 
 ---
 
-## 6. 트러블슈팅
+## 6. AI 기능 (선택)
+
+- 영수증 사진 분석, 말로 입력, 카드 내역 대조에 AI를 씁니다. 쓰지 않으면 설정할 필요가 없습니다.
+- 앱의 **설정 > AI**에서 공급자(Gemini 또는 Claude)를 고르고 API 키를 입력합니다.
+  - Gemini: Google AI Studio(aistudio.google.com/app/apikey)에서 무료로 발급
+  - Claude: Anthropic Console(console.anthropic.com)의 API Keys에서 발급(사용량만큼 과금)
+- API 키는 **이 기기의 브라우저(localStorage)에만** 저장됩니다. 가족이 함께 쓰는 DB에는 저장하지 않으므로, 기기마다 따로 입력합니다.
+
+---
+
+## 7. 트러블슈팅
 
 | 증상 | 원인 | 해결 |
 |------|------|------|
-| 로그인 팝업이 뜨지 않음 | 팝업 차단 | 브라우저 팝업 허용 설정 |
 | `redirect_uri_mismatch` 오류 | Azure에 현재 URL 미등록 | 인증 탭에서 URI 추가 |
 | `AADSTS50011` 오류 | 동일한 원인 | 위와 동일 |
 | 로그인 후 데이터가 없음 | 새 DB 생성됨 (정상) | 기존 `.db` 파일을 OneDrive에 업로드 |
+| 가족이 입력한 내용이 안 보임 | 서로 다른 Microsoft 계정으로 로그인 | 같은 계정으로 로그인 (DB는 로그인한 계정의 OneDrive에 있음) |
+| "더 새 버전의 앱에서 저장되었습니다" | 다른 기기가 새 버전 앱으로 DB를 저장함 | 페이지를 새로고침해 앱을 업데이트 |
+| 헤더에 '저장 안 됨 N'이 계속 보임 | 네트워크 오류 등으로 저장 실패 | 연결 확인 후 🔄. 미저장 변경은 브라우저에 보관되어 다음 저장 때 반영 |
+| `npm start` 시 포트 3000 오류 | 3000번 포트 사용 중 | 사용 중인 프로그램 종료 (포트는 바꾸지 않음) |
 | `src/config.js` 설정 경고 | CLIENT_ID 미설정 | 1-2 단계 참고 |
