@@ -230,6 +230,11 @@ export function bulkInsertAccountTransactions(db, accountId, rows) {
 }
 
 // ── 카드 결제 추정액 집계 ────────────────────────────────────────
+// 그 결제수단의 해당 월 거래 amount 합계이며, 할인(discount_amount)은 빼지 않는다 (I-016).
+// - 카드 할인은 대부분 캐시백·포인트다. 결제일에는 할인 전 금액이 빠져나가고, 혜택은 그 뒤에 따로 들어온다.
+// - 할인을 빼면 출금 예상이 실제보다 적게 잡혀, 잔액 예측과 위험 알림이 잔액 부족을 늦게 알린다.
+// - 결제액에서 바로 깎이는 청구할인 카드는 사용자가 계좌 내역 금액을 고치면 된다(is_modified인 내역은 자동으로 바꾸지 않음).
+// 화면의 순지출(amount - discount_amount, AGENTS.md §4)과 다르게 계산하는 것은 의도한 것이다.
 
 export function getCardPaymentTotal(db, paymentMethod, yearMonth) {
   if (!paymentMethod || !yearMonth) return 0;

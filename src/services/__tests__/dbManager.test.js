@@ -86,6 +86,19 @@ describe('계좌 자동등록 (B-007, B-008, B-009)', () => {
     // 2027-02-01은 1월 31일(일)의 다음 영업일 → 대상 월은 1월
     expect(count(reloaded, 'SELECT recurring_month FROM account_transactions WHERE recurring_item_id = ?', [itemId])).toBe('2027-01');
   });
+
+  test('카드 결제 자동 금액은 할인을 빼지 않은 전월 사용액이다 (I-016)', () => {
+    // 카드 할인은 대부분 캐시백이라 결제일에는 할인 전 금액이 빠져나간다
+    const { db } = createDatabase(SQL, null);
+    const acc = addAccount(db, { name: '월급통장', current_balance: 0 });
+    addTransaction(db, { ...tx('2026-10-05', '마트', 30000), discount_amount: 3000 });
+    addTransaction(db, { ...tx('2026-10-31', '주유', 50000), discount_amount: 2000 });
+    addTransaction(db, { ...tx('2026-11-01', '다음 달', 7000) });
+    addTransaction(db, { ...tx('2026-10-10', '다른 결제수단', 9000), payment_method: '현금' });
+    addRecurringItem(db, { account_id: acc, name: '카드값', type: 'expense', day_of_month: 15, holiday_rule: 'none', amount_type: 'auto', auto_payment_method: '카드' });
+    runAccountAutoRegister(db, new Date(2026, 10, 8));
+    expect(count(db, "SELECT amount FROM account_transactions WHERE description = '카드값' AND recurring_month = '2026-11'")).toBe(80000);
+  });
 });
 
 describe('정기지출 자동등록 (B-010)', () => {

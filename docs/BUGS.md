@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-067, I-016
+다음 번호: B-067, I-017
 
 ## 요약표
 
@@ -97,6 +97,7 @@
 | I-013 | 🔧 | - | 거래 입력 | 누가 쓴 거래인지(가족 구성원) 기록·필터·요약 (ROADMAP C-3) |
 | I-014 | 🔧 | - | 저장·동기화 | 거래 CSV 내보내기, DB 파일 받기, 매일 자동 백업과 되돌리기 (ROADMAP F-1) |
 | I-015 | ✅ | - | AI | PC에서 넣은 AI API 키를 휴대폰에서 다시 입력해야 함 |
+| I-016 | ✅ | - | 계좌 | 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임 |
 
 
 ## 상세
@@ -790,3 +791,11 @@
 - 원인: 키를 가족 공용 DB에 넣지 않으려고 기기별로만 저장했고 기기 간 전달 방법이 없었다.
 - 해결: 같은 계정 OneDrive의 별도 파일 Apps/financial-ledger/ai-settings.json으로 앱을 열 때·저장·삭제할 때 최신 쪽으로 맞추고(예전에 넣어 둔 키도 자동으로 올림), 로그아웃 때 이 기기만 지운 키는 수정 시각을 바꾸지 않아 다시 로그인하면 돌아오게 했다. ledger.db에는 여전히 넣지 않는다.
 - 파일: src/services/aiSettingsSync.js, src/services/aiClient.js, src/services/oneDriveService.js, src/components/AIEntry/AISettingsForm.js, src/components/App/App.js, AGENTS.md
+
+### I-016 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 계좌
+- 문제: 카드 결제 자동 금액은 할인 전 합계(`SUM(amount)`)인데, AGENTS.md는 순지출을 `amount - discount_amount`로, 설계 문서는 할인 차감으로 적어 나중에 버그로 오해해 고칠 수 있다.
+- 원인: 할인을 빼지 않는 결정과 그 근거(카드 할인은 대부분 캐시백이라 결제일 출금액은 할인 전 금액)가 어디에도 적혀 있지 않았다.
+- 해결: 동작은 그대로 두기로 정하고(사용자 결정), 근거를 getCardPaymentTotal 주석, AGENTS.md §4 예외, 설계 문서 '현재 상태'·§7-2에 적은 뒤, 할인을 빼지 않는 것을 테스트로 고정했다.
+- 파일: src/services/db/accounts.js(주석), AGENTS.md, docs/account-management-design.md, src/services/__tests__/dbManager.test.js
