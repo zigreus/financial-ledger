@@ -9,6 +9,7 @@ import {
 import { evaluateFormula, parseForeignAmount, formatAmount, today } from '../../services/formulaEvaluator';
 import './TripCashModal.css';
 import ModalOverlay from '../common/ModalOverlay';
+import AmountInput from '../common/AmountInput';
 
 const KRW = 'KRW';
 
@@ -268,18 +269,16 @@ function AddFlowForm({ event, accounts, currencyOptions, onSubmit }) {
 
       <div className="tc-field">
         <label>받은 금액 ({currency})</label>
-        <input
-          type="text" inputMode="decimal" value={amount}
-          onChange={e => setAmount(e.target.value)}
+        <AmountInput
+          decimal unit={currency} value={amount} onChange={setAmount}
           placeholder="예: 10000"
         />
       </div>
 
       <div className="tc-field">
         <label>지불한 원화</label>
-        <input
-          type="text" inputMode="decimal" value={krwCost}
-          onChange={e => setKrwCost(e.target.value)}
+        <AmountInput
+          value={krwCost} onChange={setKrwCost}
           placeholder="예: 87800"
         />
         {rate > 0 && (
@@ -361,10 +360,9 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
 
       <div className="tc-field">
         <label>실제 남은 금액 ({currency})</label>
-        <input
-          type="text" inputMode="decimal" value={actual}
-          onChange={e => setActual(e.target.value)}
-          placeholder="지갑을 세어 본 금액"
+        <AmountInput
+          decimal unit={currency} value={actual} onChange={setActual}
+          placeholder="지갑을 세어 본 금액 (예: 5000+2000+500)"
         />
       </div>
 
@@ -505,9 +503,8 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
         <>
           <div className="tc-field">
             <label>실제로 받은 원화</label>
-            <input
-              type="text" inputMode="decimal" value={receivedKrw}
-              onChange={e => setReceivedKrw(e.target.value)}
+            <AmountInput
+              value={receivedKrw} onChange={setReceivedKrw}
               placeholder={basis > 0 ? `예: ${basis}` : '예: 35000'}
             />
             {fx !== null && fx !== 0 && (

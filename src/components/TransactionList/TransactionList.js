@@ -2,10 +2,11 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
-import { formatAmount } from '../../services/formulaEvaluator';
+import { formatAmount, evaluateFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
+import AmountInput from '../common/AmountInput';
 
 const DEFAULT_CATEGORY_COLORS = {
   '식비': '#FF6B6B',
@@ -43,6 +44,15 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [editingGoalMonth, setEditingGoalMonth] = useState(null);
   const [editingGoalValue, setEditingGoalValue] = useState('');
+
+  const saveMonthGoal = (month) => {
+    const amt = evaluateFormula(editingGoalValue);
+    if (amt !== null && !isNaN(amt) && amt > 0) {
+      setMonthlyGoal(db, month, amt);
+      onChanged && onChanged();
+    }
+    setEditingGoalMonth(null);
+  };
 
   const [calendarOpenMonths, setCalendarOpenMonths] = useState(new Set());
   const [focusedDate, setFocusedDate] = useState(null);
@@ -397,20 +407,13 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                       <span className="month-stats-net">{formatAmount(net)}원</span>
                       {showGoal && (editingGoalMonth === month ? (
                         <div className="month-goal-edit" onClick={e => e.stopPropagation()}>
-                          <input
+                          <AmountInput
                             className="month-goal-input"
-                            type="number"
+                            containerStyle={{ flex: '0 0 100px' }}
                             value={editingGoalValue}
-                            onChange={e => setEditingGoalValue(e.target.value)}
+                            onChange={setEditingGoalValue}
                             onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                const amt = parseInt(editingGoalValue, 10);
-                                if (!isNaN(amt) && amt > 0) {
-                                  setMonthlyGoal(db, month, amt);
-                                  onChanged && onChanged();
-                                }
-                                setEditingGoalMonth(null);
-                              }
+                              if (e.key === 'Enter') saveMonthGoal(month);
                               if (e.key === 'Escape') setEditingGoalMonth(null);
                             }}
                             autoFocus
@@ -418,14 +421,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                           />
                           <button
                             className="month-goal-btn month-goal-btn-ok"
-                            onClick={() => {
-                              const amt = parseInt(editingGoalValue, 10);
-                              if (!isNaN(amt) && amt > 0) {
-                                setMonthlyGoal(db, month, amt);
-                                onChanged && onChanged();
-                              }
-                              setEditingGoalMonth(null);
-                            }}
+                            onClick={() => saveMonthGoal(month)}
                           >✓</button>
                           <button
                             className="month-goal-btn"

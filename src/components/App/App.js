@@ -56,6 +56,10 @@ function App() {
     accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
   });
   const historyInitialized = React.useRef(false);
+  // 저장 큐 (saveAndReload 참고)
+  const changeSeqRef = React.useRef(0);
+  const latestDbRef = React.useRef(null);
+  const saveLoopRef = React.useRef(null);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -115,6 +119,11 @@ function App() {
 
   const loadDb = useCallback(async () => {
     if (loading) return;
+    // 저장이 진행 중이면 끝날 때 어차피 새로고침된다 — 겹쳐 읽으면 방금 넣은 내용이 사라질 수 있음
+    if (saveLoopRef.current) {
+      showToast('저장 중입니다 — 끝나면 자동으로 새로고침됩니다');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -150,6 +159,7 @@ function App() {
 
   const saveDb = useCallback(async () => {
     if (!db || saving) return;
+    if (saveLoopRef.current) return saveLoopRef.current;
     setSaving(true);
     setError('');
     try {
@@ -163,57 +173,82 @@ function App() {
     }
   }, [db, saving, instance, accounts]);
 
-  // 저장 후 OneDrive에서 즉시 새로고침 (수정 시 자동 호출)
-  const saveAndReload = useCallback(async (currentDb) => {
-    setSaving(true);
-    setError('');
-    try {
-      const bytes = exportDatabase(currentDb);
-      await writeDbToOneDrive(instance, accounts, bytes);
-      setDirty(false);
-    } catch (e) {
-      setError(`저장 실패: ${e.message}`);
-      setSaving(false);
-      return;
-    }
-    setSaving(false);
-    setLoading(true);
-    try {
-      const SQL = await initSQL();
-      const data = await readDbFromOneDrive(instance, accounts);
-      const { db: newDb, didMigrate } = createDatabase(SQL, data);
-      if (didMigrate) {
+  // ── 저장 후 OneDrive에서 새로고침 (수정 시 자동 호출) ───────────────
+  // 저장(쓰기 → 다시 읽기)이 여러 번 겹치면, 늦게 끝난 '다시 읽기'가 그 사이에
+  // 추가한 거래를 덮어써 사라지게 할 수 있다. 그래서 한 줄로 세워 처리한다.
+  //  - 변경이 들어올 때마다 번호(changeSeq)를 올린다
+  //  - 쓰는 동안 새 변경이 오면 최신 DB로 다시 쓴다
+  //  - 다시 읽는 동안 새 변경이 오면 읽은 결과를 버리고 다시 쓴다
+  // 진행 중인 저장이 있으면 새 호출은 그 저장에 합류한다 (같은 Promise를 돌려줌).
+  const saveAndReload = useCallback((currentDb) => {
+    changeSeqRef.current += 1;
+    latestDbRef.current = currentDb;
+    if (saveLoopRef.current) return saveLoopRef.current;
+
+    const run = async () => {
+      setError('');
+      for (;;) {
+        const seq = changeSeqRef.current;
+
+        setSaving(true);
         try {
-          const migratedBytes = exportDatabase(newDb);
-          await writeDbToOneDrive(instance, accounts, migratedBytes);
+          await writeDbToOneDrive(instance, accounts, exportDatabase(latestDbRef.current));
         } catch (e) {
           setError(`저장 실패: ${e.message}`);
+          return;
+        } finally {
+          setSaving(false);
+        }
+        if (seq !== changeSeqRef.current) continue;
+        setDirty(false);
+
+        setLoading(true);
+        try {
+          const SQL = await initSQL();
+          const data = await readDbFromOneDrive(instance, accounts);
+          if (seq !== changeSeqRef.current) continue;
+          const { db: newDb, didMigrate } = createDatabase(SQL, data);
+          if (didMigrate) {
+            try {
+              await writeDbToOneDrive(instance, accounts, exportDatabase(newDb));
+            } catch (e) {
+              setError(`저장 실패: ${e.message}`);
+            }
+          }
+          if (seq !== changeSeqRef.current) continue;
+          setDb(newDb);
+          return;
+        } catch (e) {
+          setError(`새로고침 실패: ${e.message}`);
+          return;
+        } finally {
+          setLoading(false);
         }
       }
-      setDb(newDb);
-      setDirty(false);
-    } catch (e) {
-      setError(`새로고침 실패: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    saveLoopRef.current = run().finally(() => { saveLoopRef.current = null; });
+    return saveLoopRef.current;
   }, [instance, accounts]);
 
-  const handleAdd = useCallback(async (txData) => {
+  const handleAdd = useCallback(async (txData, { keepOpen = false } = {}) => {
     // 분할 결제는 거래 2건으로 들어온다
     const rows = Array.isArray(txData) ? txData : [txData];
     rows.forEach(row => addTransaction(db, row));
 
-    setShowForm(false);
-    setEditingTx(null);
-    window.history.back();
+    // 연속 입력 중이면 폼을 열어둔 채 뒤에서 저장한다
+    if (!keepOpen) {
+      setShowForm(false);
+      setEditingTx(null);
+      window.history.back();
+    }
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
-    const amt = total.toLocaleString();
-    showToast(`저장 중…`);
+    const label = rows.length > 1
+      ? `${rows[0].budget_category} ${total.toLocaleString()}원 분할 ${rows.length}건`
+      : `${rows[0].budget_category} ${total.toLocaleString()}원`;
+    showToast(keepOpen ? `✓ ${label} 추가 — 저장 중…` : '저장 중…');
     await saveAndReload(db);
-    showToast(rows.length > 1
-      ? `✓ ${rows[0].budget_category} ${amt}원 분할 ${rows.length}건 추가됨`
-      : `✓ ${rows[0].budget_category} ${amt}원 추가됨`);
+    showToast(`✓ ${label} 추가됨`);
   }, [db, showToast, saveAndReload]);
 
   const handleUpdate = useCallback(async (txData) => {

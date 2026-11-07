@@ -759,3 +759,18 @@
 }
 .acct-import-preview-table tr:last-child td { border-bottom: none; }
 .acct-preview-desc { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 연속 입력 ── */
+.acct-continuous-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.acct-continuous-toggle small { font-size: 11px; color: var(--text-muted); font-weight: 400; line-height: 1.4; }
+.acct-continuous-count {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #EFF6FF;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.acct-btn-save:disabled { opacity: .5; cursor: not-allowed; }

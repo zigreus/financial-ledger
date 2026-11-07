@@ -7,6 +7,9 @@ import {
   bulkInsertAccountTransactions, getPaymentMethods,
 } from '../../services/dbManager';
 import ModalOverlay from '../common/ModalOverlay';
+import AmountInput from '../common/AmountInput';
+import { useStoredToggle } from '../../hooks/useStoredToggle';
+import { evaluateFormula } from '../../services/formulaEvaluator';
 import './AccountManagement.css';
 
 // ── 날짜 포맷 헬퍼 ──────────────────────────────────────────────
@@ -289,13 +292,14 @@ function AccountDetail({ db, accountId, activeTab, showNavForm, onNavFormClose, 
           db={db}
           accountId={accountId}
           tx={editingTx}
-          onSave={async (data) => {
+          onSave={async (data, { keepOpen = false } = {}) => {
             if (editingTx) {
               updateAccountTransaction(db, editingTx.id, data);
             } else {
               addAccountTransaction(db, { ...data, account_id: accountId });
             }
-            closeTxForm();
+            // 연속 입력 중이면 폼을 열어둔 채 뒤에서 저장한다
+            if (!keepOpen) closeTxForm();
             await onChanged();
           }}
           onCancel={closeTxForm}
@@ -631,9 +635,9 @@ function AccountForm({ account, onSave, onCancel }) {
       name: name.trim(),
       bank: bank.trim(),
       account_number: accountNumber.trim(),
-      current_balance: parseInt(balance.replace(/,/g, ''), 10) || 0,
+      current_balance: evaluateFormula(balance, { allowNegative: true }) || 0,
       balance_date: balanceDate,
-      danger_threshold: parseInt(dangerThreshold.replace(/,/g, ''), 10) || 0,
+      danger_threshold: evaluateFormula(dangerThreshold) || 0,
       is_default: isDefault,
       note: note.trim(),
     });
@@ -660,10 +664,10 @@ function AccountForm({ account, onSave, onCancel }) {
           </label>
           <label>
             최초 잔액 (원)
-            <input
-              type="number"
+            <AmountInput
+              allowNegative
               value={balance}
-              onChange={e => setBalance(e.target.value)}
+              onChange={setBalance}
               placeholder="0"
             />
           </label>
@@ -673,10 +677,9 @@ function AccountForm({ account, onSave, onCancel }) {
           </label>
           <label>
             위험 임계값 (원)
-            <input
-              type="number"
+            <AmountInput
               value={dangerThreshold}
-              onChange={e => setDangerThreshold(e.target.value)}
+              onChange={setDangerThreshold}
               placeholder="0 (미설정)"
             />
           </label>
@@ -704,22 +707,39 @@ function AccountTxForm({ tx, onSave, onCancel }) {
   const [type, setType] = useState(tx?.type || 'expense');
   const [description, setDescription] = useState(tx?.description || '');
   const [amount, setAmount] = useState(tx?.amount != null ? String(tx.amount) : '');
+  const [continuous, setContinuous] = useStoredToggle('acct_tx_form_continuous');
+  const [addedCount, setAddedCount] = useState(0);
+  const descRef = React.useRef(null);
+
+  const parsedAmount = evaluateFormula(amount);
+  const amountValid = parsedAmount !== null && !isNaN(parsedAmount) && parsedAmount > 0;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!description.trim() || !amount) return;
+    if (!description.trim() || !amountValid) return;
+    const keepOpen = continuous && !tx;
     onSave({
       date,
       type,
       description: description.trim(),
-      amount: parseInt(amount.replace(/,/g, ''), 10) || 0,
-    });
+      amount: parsedAmount,
+    }, { keepOpen });
+    if (keepOpen) {
+      // 다음 내역 입력용 — 날짜와 수입/지출 구분은 유지
+      setDescription('');
+      setAmount('');
+      setAddedCount(c => c + 1);
+      if (descRef.current) descRef.current.focus();
+    }
   };
 
   return (
     <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal">
         <div className="acct-modal-header">
-          <h3>{tx ? '내역 편집' : '내역 추가'}</h3>
+          <h3>
+            {tx ? '내역 편집' : '내역 추가'}
+            {addedCount > 0 && <span className="acct-continuous-count">{addedCount}건 추가됨</span>}
+          </h3>
           <button className="acct-modal-close" onClick={onCancel}>✕</button>
         </div>
         <form onSubmit={handleSubmit} className="acct-form">
@@ -745,21 +765,33 @@ function AccountTxForm({ tx, onSave, onCancel }) {
           </div>
           <label>
             내용 *
-            <input value={description} onChange={e => setDescription(e.target.value)} placeholder="내용을 입력하세요" required />
+            <input ref={descRef} value={description} onChange={e => setDescription(e.target.value)} placeholder="내용을 입력하세요" required />
           </label>
           <label>
             금액 (원) *
-            <input
-              type="number"
+            <AmountInput
               value={amount}
-              onChange={e => setAmount(e.target.value)}
-              placeholder="0"
+              onChange={setAmount}
+              placeholder="0 (예: 12000+3000)"
               required
             />
           </label>
+          {!tx && (
+            <label className="acct-form-checkbox acct-continuous-toggle">
+              <input type="checkbox" checked={continuous} onChange={e => setContinuous(e.target.checked)} />
+              <span>
+                연속 입력
+                <small>추가 후 창을 닫지 않고 바로 다음 내역 입력 (날짜·수입/지출 유지)</small>
+              </span>
+            </label>
+          )}
           <div className="acct-form-actions">
-            <button type="button" className="acct-btn-cancel" onClick={onCancel}>취소</button>
-            <button type="submit" className="acct-btn-save">저장</button>
+            <button type="button" className="acct-btn-cancel" onClick={onCancel}>
+              {addedCount > 0 ? '닫기' : '취소'}
+            </button>
+            <button type="submit" className="acct-btn-save" disabled={!amountValid || !description.trim()}>
+              {!tx && continuous ? '저장하고 계속' : '저장'}
+            </button>
           </div>
         </form>
     </ModalOverlay>
@@ -788,7 +820,7 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
       day_of_month: parseInt(dayOfMonth, 10) || 1,
       holiday_rule: holidayRule,
       amount_type: amountType,
-      fixed_amount: amountType === 'fixed' ? (parseInt(fixedAmount.replace(/,/g, ''), 10) || 0) : 0,
+      fixed_amount: amountType === 'fixed' ? (evaluateFormula(fixedAmount) || 0) : 0,
       auto_payment_method: amountType === 'auto' ? autoPaymentMethod : '',
       auto_register: true,
       register_months_ahead: parseInt(monthsAhead, 10) || 2,
@@ -861,10 +893,9 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
           {amountType === 'fixed' && (
             <label>
               금액 (원)
-              <input
-                type="number"
+              <AmountInput
                 value={fixedAmount}
-                onChange={e => setFixedAmount(e.target.value)}
+                onChange={setFixedAmount}
                 placeholder="예상 금액 입력"
               />
             </label>

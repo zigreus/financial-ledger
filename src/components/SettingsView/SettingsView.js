@@ -20,6 +20,8 @@ import {
   getTripDefaultCategory,
 } from '../../services/dbManager';
 import './SettingsView.css';
+import AmountInput from '../common/AmountInput';
+import { evaluateFormula, parseForeignAmount } from '../../services/formulaEvaluator';
 
 const IconEyeOpen = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -178,7 +180,7 @@ const [dragId, setDragId] = useState(null);
       setRecurringForm(f => ({ ...f, discount_amount: '' }));
       return;
     }
-    const amt = parseInt(amount, 10);
+    const amt = evaluateFormula(amount);
     if (!amt || amt <= 0) {
       setRecurringForm(f => ({ ...f, discount_amount: '' }));
       return;
@@ -232,10 +234,10 @@ const [dragId, setDragId] = useState(null);
   };
 
   const handleAddDiscountRule = () => {
-    const val = parseFloat(addingRuleValue);
-    if (isNaN(val) || val <= 0) { setError('값을 올바르게 입력하세요.'); return; }
+    const val = parseForeignAmount(addingRuleValue);
+    if (val === null || val <= 0) { setError('값을 올바르게 입력하세요.'); return; }
     const storedValue = addingRuleType === 'percent' ? val / 100 : val;
-    const minAmt = parseInt(addingRuleMinAmount) || 0;
+    const minAmt = evaluateFormula(addingRuleMinAmount) || 0;
     try {
       addDiscountRule(db, {
         payment_method_name: drilldownPayment.name,
@@ -298,8 +300,8 @@ const [dragId, setDragId] = useState(null);
 
   // ── 예산 핸들러 ──
   const handleSaveDefaultGoal = () => {
-    const val = parseInt(defaultGoalInput, 10);
-    if (isNaN(val) || val <= 0) { setError('올바른 금액을 입력하세요.'); return; }
+    const val = evaluateFormula(defaultGoalInput);
+    if (val === null || isNaN(val) || val <= 0) { setError('올바른 금액을 입력하세요.'); return; }
     try {
       changeDefaultMonthlyGoal(db, val);
       onChanged();
@@ -360,11 +362,11 @@ const [dragId, setDragId] = useState(null);
   const handleSaveRecurring = () => {
     if (!recurringForm.payment_method) { setError('결제수단을 선택하세요.'); return; }
     if (!recurringForm.budget_category) { setError('카테고리를 선택하세요.'); return; }
-    const amount = parseInt(recurringForm.amount, 10);
-    if (isNaN(amount) || amount <= 0) { setError('금액을 올바르게 입력하세요.'); return; }
+    const amount = evaluateFormula(recurringForm.amount);
+    if (amount === null || isNaN(amount) || amount <= 0) { setError('금액을 올바르게 입력하세요.'); return; }
     const dayOfMonth = parseInt(recurringForm.day_of_month, 10);
     if (isNaN(dayOfMonth) || dayOfMonth < 0 || dayOfMonth > 31) { setError('납부일은 0(말일)~31 사이로 입력하세요.'); return; }
-    const discountAmount = recurringForm.discount_amount ? parseInt(recurringForm.discount_amount, 10) : 0;
+    const discountAmount = recurringForm.discount_amount ? (evaluateFormula(recurringForm.discount_amount) || 0) : 0;
     const data = {
       ...recurringForm,
       amount,
@@ -422,8 +424,8 @@ const [dragId, setDragId] = useState(null);
     if (!favoriteForm.sub_category) { setError('세부카테고리를 선택하세요.'); return; }
     // 금액은 선택 — 비워두면 거래 추가 시 직접 입력한다
     const hasAmount = String(favoriteForm.amount).trim() !== '';
-    const amount = hasAmount ? parseInt(favoriteForm.amount, 10) : null;
-    if (hasAmount && (isNaN(amount) || amount <= 0)) { setError('금액을 올바르게 입력하세요.'); return; }
+    const amount = hasAmount ? evaluateFormula(favoriteForm.amount) : null;
+    if (hasAmount && (amount === null || isNaN(amount) || amount <= 0)) { setError('금액을 올바르게 입력하세요.'); return; }
     const data = { ...favoriteForm, amount };
     try {
       if (editingFavoriteId !== null) {
@@ -792,7 +794,7 @@ const [dragId, setDragId] = useState(null);
                 </div>
                 <div className="form-group">
                   <label>금액 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '12px' }}>(선택)</span></label>
-                  <input type="number" value={favoriteForm.amount ?? ''} onChange={e => setFavoriteForm({...favoriteForm, amount: e.target.value})} placeholder="비워두면 거래 추가 시 직접 입력" />
+                  <AmountInput value={favoriteForm.amount ?? ''} onChange={v => setFavoriteForm({...favoriteForm, amount: v})} placeholder="비워두면 거래 추가 시 직접 입력" />
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
                   <button type="button" className="btn-secondary" onClick={() => { setShowFavoriteForm(false); setEditingFavoriteId(null); setFavoriteForm(emptyFavoriteForm); setError(''); }} style={{ flex: 1 }}>취소</button>
@@ -862,12 +864,11 @@ const [dragId, setDragId] = useState(null);
               </div>
               {editingDefaultGoal ? (
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="number"
+                  <AmountInput
                     className="settings-inline-input"
-                    style={{ flex: 1 }}
+                    containerStyle={{ flex: 1 }}
                     value={defaultGoalInput}
-                    onChange={e => setDefaultGoalInput(e.target.value)}
+                    onChange={setDefaultGoalInput}
                     onKeyDown={e => { if (e.key === 'Enter') handleSaveDefaultGoal(); if (e.key === 'Escape') setEditingDefaultGoal(false); }}
                     autoFocus
                     placeholder="예: 1500000"
@@ -1284,13 +1285,12 @@ const [dragId, setDragId] = useState(null);
 
                 <div className="rule-form-row">
                   <label className="rule-form-label">금액 (원)</label>
-                  <input
+                  <AmountInput
                     className="rule-form-input"
-                    type="number"
                     value={recurringForm.amount}
-                    onChange={e => {
+                    onChange={v => {
                       skipAutoDiscountRef.current = false;
-                      setRecurringForm(f => ({ ...f, amount: e.target.value }));
+                      setRecurringForm(f => ({ ...f, amount: v }));
                     }}
                     placeholder="예: 13500"
                   />
@@ -1299,14 +1299,13 @@ const [dragId, setDragId] = useState(null);
                 <div className="rule-form-row">
                   <label className="rule-form-label">할인 (원)</label>
                   <div style={{ display: 'flex', gap: '6px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-                    <input
+                    <AmountInput
                       className="rule-form-input"
-                      type="number"
-                      style={{ flex: '1 1 80px' }}
+                      containerStyle={{ flex: '1 1 80px' }}
                       value={recurringForm.discount_amount}
-                      onChange={e => {
+                      onChange={v => {
                         skipAutoDiscountRef.current = true;
-                        setRecurringForm(f => ({ ...f, discount_amount: e.target.value }));
+                        setRecurringForm(f => ({ ...f, discount_amount: v }));
                       }}
                       placeholder="자동계산 (0=없음)"
                     />
@@ -1491,12 +1490,11 @@ const [dragId, setDragId] = useState(null);
                 <label className="rule-form-label">
                   {addingRuleType === 'percent' ? '할인율 (%)' : addingRuleType === 'fixed' ? '할인 금액 (원)' : '단위 (원)'}
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  step={addingRuleType === 'percent' ? '0.01' : '1'}
+                <AmountInput
+                  decimal={addingRuleType === 'percent'}
+                  unit={addingRuleType === 'percent' ? '%' : '원'}
                   value={addingRuleValue}
-                  onChange={e => setAddingRuleValue(e.target.value)}
+                  onChange={setAddingRuleValue}
                   placeholder={addingRuleType === 'percent' ? '예: 1.2' : addingRuleType === 'fixed' ? '예: 500' : '예: 1000'}
                   className="rule-form-input"
                 />
@@ -1505,12 +1503,9 @@ const [dragId, setDragId] = useState(null);
               {addingRuleType === 'remainder' && (
                 <div className="rule-form-row">
                   <label className="rule-form-label">최소 금액 (원)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
+                  <AmountInput
                     value={addingRuleMinAmount}
-                    onChange={e => setAddingRuleMinAmount(e.target.value)}
+                    onChange={setAddingRuleMinAmount}
                     placeholder="예: 5000"
                     className="rule-form-input"
                   />

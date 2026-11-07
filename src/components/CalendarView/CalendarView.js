@@ -19,6 +19,7 @@ import { parseRate, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
 import TripCashModal from '../TripCash/TripCashModal';
 import ModalOverlay from '../common/ModalOverlay';
+import AmountInput from '../common/AmountInput';
 
 // ── 카테고리 컬러 ──────────────────────────────────────────
 const DEFAULT_CATEGORY_COLORS = {
@@ -307,17 +308,20 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
                     </div>
                     <div className="cv-form-rate-row">
                       <span className="cv-form-rate-prefix">1 {unit} =</span>
-                      <input
-                        className="cv-form-input cv-form-rate-input"
-                        type="text" inputMode="decimal" placeholder="환율 (선택)"
+                      <AmountInput
+                        decimal
+                        preview={false}
+                        className="cv-form-input"
+                        containerClassName="cv-form-rate-input"
+                        placeholder="환율 (예: 950/100)"
                         value={c.exchange_rate || ''}
-                        onChange={e => updateCountryField(i, 'exchange_rate', e.target.value)}
+                        onChange={v => updateCountryField(i, 'exchange_rate', v)}
                       />
                       <span className="cv-form-rate-suffix">원</span>
                     </div>
                     {rate > 0 && (
                       <div className="cv-form-rate-hint">
-                        예) 1,000 {unit} = {formatAmount(Math.round(1000 * rate))}원
+                        1 {unit} = {Math.round(rate * 10000) / 10000}원 · 예) 1,000 {unit} = {formatAmount(Math.round(1000 * rate))}원
                       </div>
                     )}
                   </div>

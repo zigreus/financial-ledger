@@ -3,6 +3,8 @@ import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRu
 import { evaluateFormula, formatAmount, today, parseRate, parseForeignAmount, toKrw } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
+import AmountInput from '../common/AmountInput';
+import { useStoredToggle } from '../../hooks/useStoredToggle';
 
 
 const EMPTY_FORM = {
@@ -17,132 +19,16 @@ const EMPTY_FORM = {
   foreign_amounts: {},
 };
 
-const FORMULA_SYMBOLS = ['+', '-', '×', '÷', '(', ')'];
-
-// 수식이 연산자/괄호로 끝나는 미완성 상태 여부
-function isIncomplete(v) {
-  return /[+\-*/(%]$/.test(v.trim());
-}
-
-const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
-
+// 라벨이 붙은 금액 입력 — 수식·툴바·미리보기는 공통 AmountInput이 처리
 function FormulaInput({ label, value, onChange, required, placeholder }) {
-  const parsed = evaluateFormula(value);
-  const isFormula = value && value.trim() && !/^-?\d+$/.test(value.trim());
-  const isValid = parsed !== null && !isNaN(parsed);
-  const [focused, setFocused] = useState(false);
-  const [toolbarBottom, setToolbarBottom] = useState(0);
-  const inputRef = useRef(null);
-  const containerRef = useRef(null);
-  const touchHandledRef = useRef(false);
-
-  const scrollContainerUp = () => {
-    if (!containerRef.current) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const scrollable = containerRef.current.closest('.modal-content');
-    if (!scrollable) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    // rect은 visual viewport 기준 — vv.height에서 툴바+여백을 빼면 실제 보이는 영역 하단
-    const visibleBottom = vv.height - 52 - 8;
-    if (rect.bottom > visibleBottom) {
-      scrollable.scrollTop += rect.bottom - visibleBottom;
-    }
-  };
-
-  useEffect(() => {
-    if (!focused || !isTouchDevice) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const scrollable = containerRef.current?.closest('.modal-content');
-    const update = () => {
-      const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
-      setToolbarBottom(kb);
-      // 모달 패딩을 늘려 스크롤 공간 확보
-      if (scrollable) {
-        scrollable.style.paddingBottom = kb > 0 ? `${kb + 52 + 16}px` : '';
-      }
-      requestAnimationFrame(scrollContainerUp);
-    };
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    update();
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-      setToolbarBottom(0);
-      if (scrollable) scrollable.style.paddingBottom = '';
-    };
-  }, [focused]);
-
-  // 타이핑으로 수식 미리보기가 생겼을 때도 스크롤 재조정
-  useEffect(() => {
-    if (!focused || !isTouchDevice) return;
-    const vv = window.visualViewport;
-    if (!vv || window.innerHeight - vv.offsetTop - vv.height <= 0) return;
-    requestAnimationFrame(scrollContainerUp);
-  }, [value, focused]);
-
-  const insertSymbol = (sym) => {
-    const input = inputRef.current;
-    if (!input) return;
-    const actual = sym === '×' ? '*' : sym === '÷' ? '/' : sym;
-    const start = input.selectionStart ?? value.length;
-    const end = input.selectionEnd ?? value.length;
-    const next = value.slice(0, start) + actual + value.slice(end);
-    // focus를 onChange 이전에 동기 호출 — Android에서 키보드가 닫히지 않도록
-    input.focus();
-    onChange(next);
-    requestAnimationFrame(() => {
-      input.setSelectionRange(start + 1, start + 1);
-    });
-  };
-
-  const handleBlur = () => {
-    // 심볼 버튼 탭 후 focus가 돌아올 시간을 한 프레임 기다림
-    requestAnimationFrame(() => {
-      if (document.activeElement !== inputRef.current) {
-        setFocused(false);
-      }
-    });
-  };
-
   return (
-    <div className="form-group" ref={containerRef}>
+    <div className="form-group">
       <label>{label}{required && <span className="required">*</span>}</label>
-      <input
-        ref={inputRef}
-        type="text"
-        inputMode="decimal"
+      <AmountInput
         value={value}
-        onChange={e => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={handleBlur}
+        onChange={onChange}
         placeholder={placeholder || '금액 (예: 12000+3000)'}
-        className={value && !isValid && !isIncomplete(value) ? 'input-error' : ''}
       />
-      {focused && isTouchDevice && (
-        <div className="formula-toolbar" style={{ bottom: toolbarBottom }}>
-          {FORMULA_SYMBOLS.map(sym => (
-            <button
-              key={sym}
-              type="button"
-              className="formula-toolbar-btn"
-              onMouseDown={e => e.preventDefault()}
-              onTouchStart={e => { e.preventDefault(); touchHandledRef.current = true; insertSymbol(sym); }}
-              onClick={() => { if (touchHandledRef.current) { touchHandledRef.current = false; return; } insertSymbol(sym); }}
-            >
-              {sym}
-            </button>
-          ))}
-        </div>
-      )}
-      {isFormula && isValid && (
-        <span className="formula-preview">= {formatAmount(parsed)}원</span>
-      )}
-      {value && !isValid && !isIncomplete(value) && (
-        <span className="formula-error">올바른 숫자 또는 수식을 입력하세요</span>
-      )}
     </div>
   );
 }
@@ -196,8 +82,16 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
   const [splitAmount, setSplitAmount] = useState('');
   const [splitMethod, setSplitMethod] = useState('');
   const [splitSibling, setSplitSibling] = useState(null);
-  const skipAutoDiscountRef = React.useRef(false);
-  const skipSubResetRef = React.useRef(false);
+  const [continuous, setContinuous] = useStoredToggle('tx_form_continuous');
+  const [addedCount, setAddedCount] = useState(0);
+  const skipAutoDiscountRef = useRef(false);
+  const skipSubResetRef = useRef(false);
+  const formRef = useRef(null);
+
+  // 저장 후 백그라운드 새로고침으로 db 객체가 바뀌어도 입력 중인 폼은 건드리지 않는다.
+  // 폼 값에만 반응해야 하는 effect는 db를 의존성에 넣지 않고 이 ref로 읽는다.
+  const dbRef = useRef(db);
+  dbRef.current = db;
 
   useEffect(() => {
     setPaymentMethods(getPaymentMethods(db));
@@ -228,7 +122,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
 
       // 분할된 거래를 열면 묶음 전체를 합쳐 총액으로 보여주고 분할 칸을 채워 둔다
       const group = editingTx.split_group_id
-        ? getSplitGroupTransactions(db, editingTx.split_group_id) : [];
+        ? getSplitGroupTransactions(dbRef.current, editingTx.split_group_id) : [];
       const sibling = group.find(t => t.id !== editingTx.id) || null;
 
       if (sibling) {
@@ -269,7 +163,8 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       setSplitSibling(null);
       setForm({ ...EMPTY_FORM, date: defaultDate || today() });
     }
-  }, [db, editingTx, defaultDate]);
+    setAddedCount(0);
+  }, [editingTx, defaultDate]);
 
   useEffect(() => {
     const subs = getSubCategories(db, form.budget_category);
@@ -296,10 +191,10 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       return;
     }
 
-    const rules = getDiscountRules(db, pm);
+    const rules = getDiscountRules(dbRef.current, pm);
     const d = evaluateDiscountRule(rules, form.budget_category, form.sub_category, amount, form.detail);
     setForm(prev => ({ ...prev, discount_amount: d > 0 ? String(d) : '' }));
-  }, [db, form.payment_method, form.amount, form.budget_category, form.sub_category, form.detail]);
+  }, [form.payment_method, form.amount, form.budget_category, form.sub_category, form.detail]);
 
   const set = (key, value) => {
     if (key === 'payment_method') {
@@ -382,7 +277,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       const secondDiscount = splitMethod === '현금' ? 0 : evaluateDiscountRule(
         secondRules, form.budget_category, form.sub_category, secondaryKrw, form.detail);
 
-      onSave([
+      submit([
         { ...base, id: editingTx?.id, payment_method: form.payment_method, amount: primaryKrw,
           discount_amount: discountAmount || 0, foreign_amounts: primaryForeign, split_group_id: groupId },
         { ...base, id: splitSibling?.id, payment_method: splitMethod, amount: secondaryKrw,
@@ -392,7 +287,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
     }
 
     // 분할을 해제한 경우 — 짝은 App에서 정리된다 (rows에 없는 묶음 멤버는 삭제)
-    onSave({
+    submit({
       ...base,
       id: editingTx?.id,
       payment_method: form.payment_method,
@@ -402,6 +297,33 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
       split_group_id: '',
     });
   };
+
+  // 연속 입력이면 창을 닫지 않고 저장은 뒤에서 진행, 폼은 다음 거래용으로 비운다
+  const submit = (payload) => {
+    const keepOpen = continuous && !editingTx;
+    onSave(payload, { keepOpen });
+    if (keepOpen) resetForNext();
+  };
+
+  // 다음 거래 입력용 초기화 — 날짜·결제수단·카테고리·일정은 유지한다
+  const resetForNext = () => {
+    skipAutoDiscountRef.current = false;
+    setForm(prev => ({
+      ...EMPTY_FORM,
+      date: prev.date,
+      payment_method: prev.payment_method,
+      budget_category: prev.budget_category,
+      event_id: prev.event_id,
+    }));
+    setSplit(false);
+    setSplitAmount('');
+    setSplitMethod('');
+    setSplitSibling(null);
+    setAddedCount(c => c + 1);
+    const scroller = formRef.current?.closest('.modal-content');
+    if (scroller) scroller.scrollTop = 0;
+  };
+
 
   const amountParsed = evaluateFormula(form.amount);
 
@@ -552,6 +474,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
         <div className="modal-header">
           <h2>
             {editingTx ? '거래 수정' : '거래 추가'}
+            {addedCount > 0 && (
+              <span className="continuous-count">{addedCount}건 추가됨</span>
+            )}
             <button
               type="button"
               className={`btn-star ${!canStar ? 'disabled' : ''} ${starredFavoriteId ? 'active' : ''}`}
@@ -586,7 +511,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="tx-form">
+        <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
           {/* 즐겨찾기 칩 */}
           {favorites.length > 0 && (
             <div className="favorite-chips">
@@ -752,12 +677,12 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
                           <span className="fx-rate">1 {c.currency} = {formatAmount(rate)}원</span>
                         )}
                       </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
+                      <AmountInput
+                        decimal
+                        unit={c.currency}
                         value={raw}
-                        onChange={e => handleForeignAmountChange(c.currency, e.target.value, countries)}
-                        placeholder={`${c.currency} 금액`}
+                        onChange={v => handleForeignAmountChange(c.currency, v, countries)}
+                        placeholder={`${c.currency} 금액 (예: 1200+800)`}
                       />
                       {converted !== null && (
                         <span className="formula-preview">≈ {formatAmount(converted)}원</span>
@@ -807,11 +732,11 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
                     {form.payment_method || '첫 번째 결제수단'}(으)로 낸 금액
                     <span className="split-cur"> ({splitCurrency})</span>
                   </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <AmountInput
+                    decimal={splitCurrency !== 'KRW'}
+                    unit={splitCurrency === 'KRW' ? '원' : splitCurrency}
                     value={splitAmount}
-                    onChange={e => setSplitAmount(e.target.value)}
+                    onChange={setSplitAmount}
                     placeholder={splitCurrency === 'KRW' ? '예: 30000' : `예: 10000 (${splitCurrency})`}
                   />
                   {primaryKrw > 0 && splitCurrency !== 'KRW' && (
@@ -863,11 +788,27 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onCancel }) {
             />
           </div>
 
+          {!editingTx && (
+            <label className="continuous-toggle">
+              <input
+                type="checkbox"
+                checked={continuous}
+                onChange={e => setContinuous(e.target.checked)}
+              />
+              <span>
+                <b>연속 입력</b>
+                <small>추가 후 창을 닫지 않고 바로 다음 거래 입력 (날짜·결제수단·카테고리·일정 유지)</small>
+              </span>
+            </label>
+          )}
+
           <div className="form-actions">
-            <button type="button" className="btn-secondary" onClick={onCancel}>취소</button>
+            <button type="button" className="btn-secondary" onClick={onCancel}>
+              {addedCount > 0 ? '닫기' : '취소'}
+            </button>
             <div className="submit-tooltip-wrapper" onClick={e => { if (!canSubmit) e.currentTarget.classList.toggle('tooltip-visible'); }}>
               <button type="submit" className="btn-primary" disabled={!canSubmit}>
-                {editingTx ? '수정' : '추가'}
+                {editingTx ? '수정' : continuous ? '추가하고 계속' : '추가'}
               </button>
               {!canSubmit && (
                 <div className="submit-tooltip">
