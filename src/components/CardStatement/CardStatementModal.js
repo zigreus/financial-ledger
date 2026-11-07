@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import {
-  getPaymentMethods, addTransaction, updateTransaction, deleteTransaction,
-} from '../../services/dbManager';
+import { getPaymentMethods, updateTransaction, deleteTransaction } from '../../services/dbManager';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { prepareDocuments } from '../../services/imageUtils';
-import { analyzeStatement, reconcileStatement, txWithAmount, TOLERANCE_DAYS } from '../../services/cardStatement';
-import { suggestionToTransaction } from '../../services/receiptAssistant';
+import {
+  analyzeStatement, reconcileStatement, addMissingRows, txWithAmount, TOLERANCE_DAYS,
+} from '../../services/cardStatement';
 import { formatAmount } from '../../services/formulaEvaluator';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import ModalOverlay from '../common/ModalOverlay';
 import AISettingsForm from '../AIEntry/AISettingsForm';
 import { SourceBadge, CategoryPathSelect, splitCategoryPath, categoryText, fmtForeign } from '../AIEntry/SuggestionCard';
@@ -45,8 +45,9 @@ function Section({ title, count, tone, children, defaultOpen = true, hint }) {
  * 카드 결제 내역(캡처·명세서 PDF)을 AI로 읽어 가계부와 대조한다.
  * 비교는 로컬에서 하므로, 추가·수정하면 결과가 바로 다시 계산된다.
  */
-export default function CardStatementModal({ db, onChanged, onClose }) {
-  const methods = useMemo(() => getPaymentMethods(db).filter(m => m !== '현금'), [db]);
+export default function CardStatementModal({ db, dataVersion, onChanged, onClose }) {
+  const live = useDbSnapshot(db, dataVersion);
+  const methods = useMemo(() => getPaymentMethods(live.db).filter(m => m !== '현금'), [live]);
   const [method, setMethod] = useState(() => {
     const saved = loadMethod();
     return methods.includes(saved) ? saved : '';
@@ -59,19 +60,16 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
   const [edits, setEdits] = useState({});   // 가계부에 없음 행별 { checked, path }
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [notice, setNotice] = useState('');
-  const [version, setVersion] = useState(0);
   const fileRef = useRef(null);
   const abortRef = useRef(null);
 
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
-  // 추가·수정 후 db가 바뀌면 다시 계산 (version은 같은 db 객체를 고쳤을 때용)
-  /* eslint-disable react-hooks/exhaustive-deps */
+  // 추가·수정하면 App이 dataVersion을 올려 다시 계산된다
   const result = useMemo(
-    () => (statement && method ? reconcileStatement(db, { paymentMethod: method, ...statement }) : null),
-    [db, statement, method, version]
+    () => (statement && method ? reconcileStatement(live.db, { paymentMethod: method, ...statement }) : null),
+    [live, statement, method]
   );
-  /* eslint-enable react-hooks/exhaustive-deps */
 
   const chooseMethod = (m) => {
     setMethod(m);
@@ -123,7 +121,6 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
   };
 
   const afterChange = async (message) => {
-    setVersion(v => v + 1);
     setNotice(message);
     if (onChanged) await onChanged();
   };
@@ -139,17 +136,28 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
   const setRow = (id, patch) => setEdits(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
 
   const addSelected = async () => {
-    const picked = result.missing.filter(m => rowState(m).checked);
-    picked.forEach(m => {
-      const { budget_category, sub_category } = rowState(m);
-      addTransaction(db, suggestionToTransaction(db, { ...m.suggestion, budget_category, sub_category }));
-    });
-    await afterChange(`${picked.length}건을 가계부에 추가했습니다`);
+    const picks = result.missing
+      .filter(m => rowState(m).checked)
+      .map(m => {
+        const { budget_category, sub_category } = rowState(m);
+        return { suggestion: m.suggestion, budget_category, sub_category };
+      });
+    try {
+      addMissingRows(db, picks);   // 한 묶음 — 실패하면 아무것도 들어가지 않는다
+    } catch (e) {
+      setNotice('');
+      setError(`추가하지 못했습니다 — 아무것도 바뀌지 않았습니다 (${e.message})`);
+      return;
+    }
+    setError('');
+    await afterChange(`${picks.length}건을 가계부에 추가했습니다`);
   };
 
+  // 가계부가 한 건일 때만 — 여러 건이면 한 건만 고치면 이중 계산된다
   const fixAmount = async (m) => {
-    updateTransaction(db, m.tx.id, txWithAmount(m.tx, m.row.amount));
-    await afterChange(`${m.tx.detail || '거래'} 금액을 ${won(m.row.amount)}으로 고쳤습니다`);
+    const [tx] = m.txs;
+    updateTransaction(db, tx.id, txWithAmount(tx, m.cardTotal));
+    await afterChange(`${tx.detail || '거래'} 금액을 ${won(m.cardTotal)}으로 고쳤습니다`);
   };
 
   const removeCancelled = async (c) => {
@@ -187,7 +195,8 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
       </div>
     );
   } else if (step === 'result' && result) {
-    const { matched, mismatched, missing, notOnCard, cancelled, period } = result;
+    const { matched, grouped, mismatched, missing, notOnCard, cancelled, period } = result;
+    const matchCount = matched.length + grouped.length;
     const toRemove = cancelled.filter(c => c.tx);
     const selectedCount = missing.filter(m => rowState(m).checked).length;
     const selectedTotal = missing.filter(m => rowState(m).checked).reduce((s, m) => s + m.row.amount, 0);
@@ -201,7 +210,7 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
             <span>카드 {statement.rows.length}건</span>
           </div>
           <div className="cs-chips">
-            <span className="cs-chip ok">일치 {matched.length}</span>
+            <span className="cs-chip ok">일치 {matchCount}</span>
             {mismatched.length > 0 && <span className="cs-chip warn">금액 차이 {mismatched.length}</span>}
             {missing.length > 0 && <span className="cs-chip add">가계부에 없음 {missing.length}</span>}
             {notOnCard.length > 0 && <span className="cs-chip info">카드에 없음 {notOnCard.length}</span>}
@@ -210,6 +219,7 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
         </div>
 
         {notice && <div className="cs-notice">✓ {notice}</div>}
+        {error && <div className="rs-box rs-error"><div className="rs-error-text">{error}</div></div>}
         {allGood && <div className="cs-allgood">카드 내역과 가계부가 모두 맞습니다 👍</div>}
         {(statement.note || statement.unreadable > 0) && (
           <ul className="rs-warnings">
@@ -259,23 +269,34 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
         </Section>
 
         <Section title="금액 차이" count={mismatched.length} tone="warn" hint="같은 날 같은 곳인데 금액이 다릅니다.">
-          {mismatched.map(m => (
-            <div key={m.row.id} className="cs-row">
-              <div className="cs-row-head">
-                <span className="cs-row-main">
-                  <b>{m.tx.detail || m.row.merchant}</b>
-                  <small>{md(m.tx.date)} · 카드: {m.row.merchant}</small>
-                </span>
-                <span className="cs-row-amount">
-                  <s>{won(m.tx.amount)}</s>
-                  <b>→ {won(m.row.amount)}</b>
-                </span>
+          {mismatched.map(m => {
+            const row = m.rows[0];
+            const single = m.txs.length === 1;
+            return (
+              <div key={row.id} className="cs-row">
+                <div className="cs-row-head">
+                  <span className="cs-row-main">
+                    <b>{m.txs[0].detail || row.merchant}{single ? '' : ` 외 ${m.txs.length - 1}건`}</b>
+                    <small>{md(m.txs[0].date)} · 카드: {row.merchant}</small>
+                  </span>
+                  <span className="cs-row-amount">
+                    <s>{won(m.ledgerTotal)}</s>
+                    <b>→ {won(m.cardTotal)}</b>
+                  </span>
+                </div>
+                {single ? (
+                  <div className="rs-actions">
+                    <button type="button" className="rs-btn-secondary" onClick={() => fixAmount(m)}>카드 금액으로 수정</button>
+                  </div>
+                ) : (
+                  <div className="cs-group-note">
+                    가계부에 {m.txs.length}건으로 나눠 적혀 있어요 ({m.txs.map(t => won(t.amount)).join(' + ')}).
+                    합이 카드와 다르니 거래내역에서 직접 확인해 주세요.
+                  </div>
+                )}
               </div>
-              <div className="rs-actions">
-                <button type="button" className="rs-btn-secondary" onClick={() => fixAmount(m)}>카드 금액으로 수정</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </Section>
 
         <Section title="취소된 결제" count={toRemove.length} tone="warn" hint="카드에서는 결제 후 취소됐는데 가계부에는 결제만 남아 있습니다.">
@@ -320,7 +341,32 @@ export default function CardStatementModal({ db, onChanged, onClose }) {
           ))}
         </Section>
 
-        <Section title="일치" count={matched.length} tone="ok" defaultOpen={false} hint={`금액이 같고 날짜가 ±${TOLERANCE_DAYS}일 안인 건입니다.`}>
+        <Section
+          title="일치"
+          count={matchCount}
+          tone="ok"
+          defaultOpen={false}
+          hint={`금액이 같고 날짜가 ±${TOLERANCE_DAYS}일 안인 건입니다. 같은 가게에서 나눠 적거나 합쳐 적은 것도 합계가 같으면 일치로 봅니다.`}
+        >
+          {grouped.map(g => (
+            <div key={`g-${g.rows[0].id}`} className="cs-row cs-row-plain">
+              <span className="cs-row-main">
+                <b>
+                  {g.txs[0].detail || g.rows[0].merchant}
+                  <span className="cs-group-tag">{g.kind === 'split' ? '나눠 적음' : '합쳐 적음'}</span>
+                </b>
+                <small>
+                  {g.kind === 'split'
+                    ? `가계부 ${g.txs.length}건 (${g.txs.map(t => won(t.amount)).join(' + ')})`
+                    : `카드 ${g.rows.length}건 (${g.rows.map(r => won(r.amount)).join(' + ')})`}
+                  {' · '}{md(g.rows[0].date)}
+                </small>
+              </span>
+              <span className="cs-row-amount">
+                {won(g.kind === 'split' ? g.rows[0].amount : g.rows.reduce((s, r) => s + r.amount, 0))}
+              </span>
+            </div>
+          ))}
           {matched.map(m => (
             <div key={m.row.id} className="cs-row cs-row-plain">
               <span className="cs-row-main">

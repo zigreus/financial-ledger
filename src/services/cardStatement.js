@@ -2,7 +2,10 @@
  * 카드 결제 내역 대조 — 카드 앱 캡처·명세서 PDF를 AI로 읽어 가계부와 비교한다.
  *
  *   일치          : 금액이 같고 날짜가 ±3일 안 (한 건은 한 건하고만 짝지음)
- *   금액 차이     : 날짜·가게는 맞는데 금액이 다름 → 카드 금액으로 수정 가능
+ *   일치(묶음)    : 같은 가게·±1일에서 여러 건의 합이 같음 — 데이터는 고치지 않는다
+ *                   · 나눠 적음: 카드 1건 = 가계부 여러 건 (카테고리별로 나눠 적은 경우)
+ *                   · 합쳐 적음: 카드 여러 건 = 가계부 1건
+ *   금액 차이     : 날짜·가게는 맞는데 금액이 다름 → 가계부가 1건일 때만 카드 금액으로 수정 가능
  *   가계부에 없음 : 카드에만 있음 → 분류를 추천해 바로 추가
  *   카드에 없음   : 그 기간 이 결제수단으로 적었는데 카드에 없음 → 결제수단 확인 필요
  *   취소된 결제   : 카드에 승인과 취소가 함께 있음 → 가계부에 승인만 남아 있으면 알림
@@ -11,11 +14,15 @@
  */
 import { analyzeWithAI, AIError } from './aiClient';
 import {
-  buildDataContext, classify, findTrip, normalizeName, matchHistory, isValidDate, addDays,
+  buildDataContext, classify, findTrip, normalizeName, matchHistory, suggestionToTransaction,
 } from './receiptAssistant';
-import { today as todayStr } from './formulaEvaluator';
+import { addTransaction, withTransaction } from './dbManager';
+import { todayStr, addDays, isValidDateStr, parseDateStr } from './dateUtils';
 
 export const TOLERANCE_DAYS = 3;
+/** 묶음 일치는 같은 가게·이 날짜 차이 안에서만, 이 건수까지만 본다 (아무 금액이나 더해 맞추는 오탐 방지) */
+export const GROUP_DAYS = 1;
+export const GROUP_MAX = 4;
 
 const SCHEMA = {
   type: 'object',
@@ -92,7 +99,7 @@ export function normalizeStatement(raw, today = todayStr()) {
   (Array.isArray(raw.rows) ? raw.rows : []).forEach((r, i) => {
     const amount = Math.round(Number(r.amount) || 0);
     if (!amount) return;
-    if (!isValidDate(r.date) || r.date > addDays(today, 1)) { unreadable += 1; return; }
+    if (!isValidDateStr(r.date) || r.date > addDays(today, 1)) { unreadable += 1; return; }
     const currency = /^[A-Za-z]{3}$/.test(String(r.currency || '').trim()) ? String(r.currency).trim().toUpperCase() : 'KRW';
     rows.push({
       id: `r${i}`,
@@ -109,8 +116,8 @@ export function normalizeStatement(raw, today = todayStr()) {
   });
   return {
     cardName: String(raw.card_name || '').trim(),
-    periodFrom: isValidDate(raw.period_from) ? raw.period_from : '',
-    periodTo: isValidDate(raw.period_to) ? raw.period_to : '',
+    periodFrom: isValidDateStr(raw.period_from) ? raw.period_from : '',
+    periodTo: isValidDateStr(raw.period_to) ? raw.period_to : '',
     rows,
     unreadable,
     note: String(raw.note || '').trim(),
@@ -120,22 +127,69 @@ export function normalizeStatement(raw, today = todayStr()) {
 // ── 대조 ────────────────────────────────────────────────────────
 
 function dayDiff(a, b) {
-  return Math.round(Math.abs(new Date(`${a}T00:00:00`) - new Date(`${b}T00:00:00`)) / 86400000);
+  return Math.round(Math.abs(parseDateStr(a) - parseDateStr(b)) / 86400000);
 }
 
-/** 카드 가맹점명과 가계부 세부내역이 같은 곳을 가리키는지 */
+// 카드 가맹점명 앞뒤의 법인 표기는 비교에서 뺀다 — "(주)이마트 성수점" → "이마트성수점"
+const merchantKey = s => normalizeName(String(s || '').replace(/\(주\)|㈜|주식회사|\(유\)|유한회사/g, ''));
+
+/** 두 문자열에서 연속으로 같은 가장 긴 부분의 길이 */
+function longestCommonRun(a, b) {
+  let best = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    for (let j = 0; j < b.length; j += 1) {
+      let k = 0;
+      while (a[i + k] && a[i + k] === b[j + k]) k += 1;
+      if (k > best) best = k;
+    }
+  }
+  return best;
+}
+
+/**
+ * 카드 가맹점명과 가계부 세부내역이 같은 곳을 가리키는지.
+ * 가계부는 "이마트 장보기"처럼 설명을 덧붙여 적는 경우가 많아,
+ * 한쪽이 다른 쪽을 포함하거나 3글자 이상 이어서 같으면 같은 곳으로 본다.
+ * (2글자만 같은 건 인정하지 않는다 — 스타벅스/스타필드, 롯데마트/롯데리아)
+ */
 function sameMerchant(db, row, tx) {
-  const m = normalizeName(row.merchant);
-  const d = normalizeName(tx.detail);
-  if (m.length >= 2 && d.length >= 2 && (m.includes(d) || d.includes(m))) return true;
+  const m = merchantKey(row.merchant);
+  const d = merchantKey(tx.detail);
+  if (m.length >= 2 && d.length >= 2) {
+    if (m.includes(d) || d.includes(m)) return true;
+    if (longestCommonRun(m, d) >= 3) return true;
+  }
   const hist = matchHistory(db, row.merchant);
   return !!(hist && tx.detail && hist.detail === tx.detail);
 }
 
+const gross = tx => Number(tx.amount) || 0;
+const net = tx => gross(tx) - (Number(tx.discount_amount) || 0);
+
 function amountMatches(row, tx) {
-  const amount = Number(tx.amount) || 0;
-  const discount = Number(tx.discount_amount) || 0;
-  return row.amount === amount || (discount > 0 && row.amount === amount - discount);
+  return row.amount === gross(tx) || (net(tx) !== gross(tx) && row.amount === net(tx));
+}
+
+/**
+ * items 중 2~GROUP_MAX개를 골라 value 합이 target인 조합 (건수가 적은 것 먼저).
+ * 후보는 같은 가게·가까운 날짜로 이미 걸러져 있어 몇 개 안 된다.
+ */
+function findCombination(items, value, target) {
+  const pool = items.slice(0, 10);
+  for (let size = 2; size <= Math.min(GROUP_MAX, pool.length); size += 1) {
+    const pick = [];
+    const search = (start, sum) => {
+      if (pick.length === size) return sum === target;
+      for (let i = start; i < pool.length; i += 1) {
+        pick.push(pool[i]);
+        if (search(i + 1, sum + value(pool[i]))) return true;
+        pick.pop();
+      }
+      return false;
+    };
+    if (search(0, 0)) return [...pick];
+  }
+  return null;
 }
 
 function ledgerFor(db, paymentMethod, from, to) {
@@ -184,13 +238,15 @@ export function rowSuggestion(db, row, paymentMethod) {
 
 /**
  * 카드 행 목록과 가계부를 비교한다.
- * 반환: { period, matched, mismatched, missing, notOnCard, cancelled }
+ * 반환: { period, matched, grouped, mismatched, missing, notOnCard, cancelled }
+ *   grouped:    [{ kind: 'split' | 'merged', rows, txs }] — 나눠 적음 / 합쳐 적음 (일치로 본다)
+ *   mismatched: [{ rows, txs, cardTotal, ledgerTotal }] — txs가 1건일 때만 자동 수정 가능
  */
 export function reconcileStatement(db, { paymentMethod, rows, periodFrom, periodTo, toleranceDays = TOLERANCE_DAYS }) {
   const dates = rows.map(r => r.date).sort();
   const from = periodFrom || dates[0] || '';
   const to = periodTo || dates[dates.length - 1] || '';
-  const empty = { period: { from, to }, matched: [], mismatched: [], missing: [], notOnCard: [], cancelled: [] };
+  const empty = { period: { from, to }, matched: [], grouped: [], mismatched: [], missing: [], notOnCard: [], cancelled: [] };
   if (!from || !to) return empty;
 
   // 1) 카드 안에서 승인·취소 짝 — 가계부에 둘 다 없으면 서로 상쇄되므로 비교에서 뺀다
@@ -228,20 +284,44 @@ export function reconcileStatement(db, { paymentMethod, rows, periodFrom, period
     matched.push({ row: c.row, tx: c.tx, dayDiff: c.dd });
   });
 
-  // 3) 금액만 다른 건 — 날짜 ±1일, 같은 가게
-  const mismatched = [];
-  comparable.forEach(row => {
-    if (usedRows.has(row.id) || row.isCancel) return;
-    const tx = ledger.find(t => !usedTx.has(t.id) && dayDiff(row.date, t.date) <= 1
-      && Number(t.amount) > 0 && sameMerchant(db, row, t));
-    if (tx) {
-      usedRows.add(row.id);
-      usedTx.add(tx.id);
-      mismatched.push({ row, tx });
-    }
+  // 3) 묶음 일치 — 같은 가게·±1일에서 여러 건의 합이 같으면 맞게 적은 것으로 본다
+  const freeRow = r => !usedRows.has(r.id) && !r.isCancel && !pairedApproval.has(r.id);
+  const freeTx = t => !usedTx.has(t.id) && gross(t) > 0;
+  const grouped = [];
+
+  // 3-1) 나눠 적음: 카드 1건 = 가계부 여러 건 (예: 이마트 50,000 → 식비 30,000 + 생활용품 20,000)
+  comparable.filter(freeRow).forEach(row => {
+    const pool = ledger.filter(t => freeTx(t) && dayDiff(row.date, t.date) <= GROUP_DAYS && sameMerchant(db, row, t));
+    const txs = findCombination(pool, gross, row.amount) || findCombination(pool, net, row.amount);
+    if (!txs) return;
+    usedRows.add(row.id);
+    txs.forEach(t => usedTx.add(t.id));
+    grouped.push({ kind: 'split', rows: [row], txs });
   });
 
-  // 4) 취소 짝 — 승인 건이 가계부에 남아 있으면 알린다
+  // 3-2) 합쳐 적음: 카드 여러 건 = 가계부 1건 (예: 커피 4,500 두 번 → 9,000 한 번)
+  ledger.filter(freeTx).forEach(tx => {
+    const pool = comparable.filter(r => freeRow(r) && dayDiff(r.date, tx.date) <= GROUP_DAYS && sameMerchant(db, r, tx));
+    const picked = findCombination(pool, r => r.amount, gross(tx))
+      || (net(tx) !== gross(tx) ? findCombination(pool, r => r.amount, net(tx)) : null);
+    if (!picked) return;
+    usedTx.add(tx.id);
+    picked.forEach(r => usedRows.add(r.id));
+    grouped.push({ kind: 'merged', rows: picked, txs: [tx] });
+  });
+
+  // 4) 금액 차이 — 같은 가게·±1일인데 합이 다름.
+  //    가계부가 여러 건이면 한 건만 카드 금액으로 고치면 이중 계산되므로 묶어서 보여주기만 한다
+  const mismatched = [];
+  comparable.filter(freeRow).forEach(row => {
+    const txs = ledger.filter(t => freeTx(t) && dayDiff(row.date, t.date) <= GROUP_DAYS && sameMerchant(db, row, t));
+    if (!txs.length) return;
+    usedRows.add(row.id);
+    txs.forEach(t => usedTx.add(t.id));
+    mismatched.push({ rows: [row], txs, cardTotal: row.amount, ledgerTotal: txs.reduce((sum, t) => sum + gross(t), 0) });
+  });
+
+  // 5) 취소 짝 — 승인 건이 가계부에 남아 있으면 알린다
   const cancelled = [];
   pairedApproval.forEach((cancelRow, approvalId) => {
     const approval = rows.find(r => r.id === approvalId);
@@ -250,13 +330,26 @@ export function reconcileStatement(db, { paymentMethod, rows, periodFrom, period
   });
   const matchedOut = matched.filter(m => !pairedApproval.has(m.row.id));
 
-  // 5) 남은 것
+  // 6) 남은 것
   const missing = comparable
     .filter(r => !usedRows.has(r.id) && !pairedApproval.has(r.id))
     .map(row => ({ row, suggestion: rowSuggestion(db, row, paymentMethod) }));
   const notOnCard = ledger.filter(t => !usedTx.has(t.id) && t.date >= from && t.date <= to);
 
-  return { period: { from, to }, matched: matchedOut, mismatched, missing, notOnCard, cancelled };
+  return { period: { from, to }, matched: matchedOut, grouped, mismatched, missing, notOnCard, cancelled };
+}
+
+/**
+ * "가계부에 없음"에서 고른 건을 한 번에 추가한다. 중간에 실패하면 전부 되돌린다.
+ * picks: [{ suggestion, budget_category, sub_category }] — 화면에서 바꾼 분류를 덮어쓴다.
+ */
+export function addMissingRows(db, picks) {
+  withTransaction(db, () => {
+    picks.forEach(({ suggestion, budget_category, sub_category }) => {
+      addTransaction(db, suggestionToTransaction(db, { ...suggestion, budget_category, sub_category }));
+    });
+  });
+  return picks.length;
 }
 
 /** "카드 금액으로 수정"에 쓸 갱신 데이터 — DB 행을 updateTransaction 형식으로 */
