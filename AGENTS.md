@@ -38,7 +38,7 @@
 4. **db를 읽는 useMemo/useEffect는 `dataVersion`이 바뀌면 다시 계산되게 합니다.**
    - sql.js는 같은 객체를 제자리에서 바꾸므로 `[db]`만으로는 화면이 갱신되지 않습니다.
    - App이 모든 화면에 `dataVersion` prop을 넘깁니다. (B-014)
-   - 새 코드는 `useDbSnapshot`을 씁니다. eslint 예외 주석이 필요 없습니다. 예전의 `[db, dataVersion]` + eslint-disable 방식은 I-010에서 이쪽으로 통일합니다.
+   - `useDbSnapshot`을 씁니다(I-010에서 통일). eslint 예외 주석이 필요 없습니다.
      ```js
      const live = useDbSnapshot(db, dataVersion);
      const items = useMemo(() => getItems(live.db), [live]);
@@ -95,7 +95,7 @@
 
 ## 5. 날짜
 
-- 날짜는 로컬 `'YYYY-MM-DD'` 문자열로 다룹니다.
+- 날짜는 로컬 `'YYYY-MM-DD'` 문자열로 다루고, `src/services/dateUtils.js`의 함수를 씁니다(직접 포맷하지 않음, I-006).
 - **금지:** `toISOString()`(UTC라 한국에서 하루 전 날짜가 나옴), `new Date('YYYY-MM-DD')`(UTC 자정으로 해석). (B-011)
 - 문자열을 Date로 바꿀 때는 `new Date(y, m - 1, d)`를 씁니다.
 - 날짜 입력은 실제 달력 기준으로 검증합니다. 2월 30일, 종료일 < 시작일은 막습니다. (B-029, B-050)

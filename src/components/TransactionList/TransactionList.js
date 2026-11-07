@@ -8,6 +8,8 @@ import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
+import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateUtils';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
@@ -37,32 +39,30 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const [filterBarHeight, setFilterBarHeight] = useState(58);
 
   // 현재 월 (YYYY-MM 형식)
-  const currentMonth = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  }, []);
+  const currentMonth = useMemo(() => currentYearMonth(), []);
 
   // sql.js DB는 같은 객체가 제자리에서 바뀌므로, db만으로는 변경을 알 수 없다.
   // App이 쓰기마다 올리는 dataVersion을 의존성에 넣어 다시 읽는다.
-  /* eslint-disable react-hooks/exhaustive-deps */
-  const months = useMemo(() => getAvailableMonths(db), [db, dataVersion]);
-  const monthlyGoalsMap = useMemo(() => getAllMonthlyGoals(db), [db, dataVersion]);
+  // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
+  const live = useDbSnapshot(db, dataVersion);
+  const months = useMemo(() => getAvailableMonths(live.db), [live]);
+  const monthlyGoalsMap = useMemo(() => getAllMonthlyGoals(live.db), [live]);
   const defaultGoal = useMemo(() => {
-    const v = getSetting(db, 'default_monthly_goal', '');
+    const v = getSetting(live.db, 'default_monthly_goal', '');
     return v !== '' ? parseInt(v, 10) : null;
-  }, [db, dataVersion]);
+  }, [live]);
   const isMobile = useIsMobile();
   const showGoal = useMemo(
-    () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
-    [db, isMobile, dataVersion]
+    () => getSetting(live.db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
+    [live, isMobile]
   );
   const showCalendarBtn = useMemo(
-    () => getSetting(db, isMobile ? 'show_calendar_btn_mobile' : 'show_calendar_btn_pc', '1') !== '0',
-    [db, isMobile, dataVersion]
+    () => getSetting(live.db, isMobile ? 'show_calendar_btn_mobile' : 'show_calendar_btn_pc', '1') !== '0',
+    [live, isMobile]
   );
   const calendarAmountUnit = useMemo(
-    () => getSetting(db, 'calendar_mini_amount_unit', '만'),
-    [db, dataVersion]
+    () => getSetting(live.db, 'calendar_mini_amount_unit', '만'),
+    [live]
   );
 
   const getGoalForMonth = (yearMonth) => {
@@ -72,29 +72,28 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
 
   // 결제수단 필터: 비숨김 먼저, 그 다음 숨김 (sort_order 기준)
   const paymentMethods = useMemo(() => {
-    const all = getAllPaymentMethods(db);
+    const all = getAllPaymentMethods(live.db);
     return [...all].sort((a, b) => {
       if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
       return a.sort_order - b.sort_order;
     });
-  }, [db, dataVersion]);
+  }, [live]);
 
-  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db, dataVersion]);
+  const budgetCategories = useMemo(() => getAllBudgetCategories(live.db), [live]);
   const eventMap = useMemo(() => {
     const map = {};
-    getCalendarEvents(db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
+    getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
     return map;
-  }, [db, dataVersion]);
+  }, [live]);
 
 
   // 이슈 감지용 공통 컨텍스트 (ImportModal과 동일한 로직)
-  const validationCtx = useMemo(() => buildValidationContext(db), [db, dataVersion]);
+  const validationCtx = useMemo(() => buildValidationContext(live.db), [live]);
 
   const allTransactions = useMemo(
-    () => getTransactions(db, filters),
-    [db, filters, dataVersion]
+    () => getTransactions(live.db, filters),
+    [live, filters]
   );
-  /* eslint-enable react-hooks/exhaustive-deps */
 
   const hasAnyIssue = useMemo(
     () => allTransactions.some(tx => hasIssue(tx, validationCtx)),
@@ -131,8 +130,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
       if (saved) return new Set(JSON.parse(saved));
     } catch (e) {}
     // 첫 방문 기본값: 현재 월 (또는 데이터가 없으면 가장 최신 월)
-    const now = new Date();
-    const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const cur = currentYearMonth();
     const available = getAvailableMonths(db);
     const hasCurrentMonth = available.includes(cur);
     const defaultMonth = hasCurrentMonth ? cur : (available.length > 0 ? available[0] : cur);
@@ -159,10 +157,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   // 거래내역 탭 버튼 재클릭 시 오늘 날짜로 포커스
   useEffect(() => {
     if (goTodayKey === 0) return;
-    const todayStr = (() => {
-      const now = new Date();
-      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    })();
+    const todayStr = todayDateStr();
     setFilters(f => ({ ...f, month: '' }));
     setFocusedDate(todayStr);
     setExpandedMonths(prev => prev.has(currentMonth) ? prev : new Set([...prev, currentMonth]));
@@ -216,10 +211,10 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const dailyTotalsCache = useMemo(() => {
     const cache = {};
     calendarOpenMonths.forEach(month => {
-      cache[month] = getDailyTotals(db, month);
+      cache[month] = getDailyTotals(live.db, month);
     });
     return cache;
-  }, [db, calendarOpenMonths, dataVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, calendarOpenMonths]);
 
   const handleCalendarDateClick = useCallback((dateStr) => {
     setFocusedDate(dateStr);

@@ -11,9 +11,11 @@ import {
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
 import './SummaryView.css';
+import { toDateStr, toYearMonth, currentYearMonth } from '../../services/dateUtils';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 // 날짜 포맷 헬퍼
-const _fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const _fmt = toDateStr;
 
 // 앱 종료 전까지 필터 상태 유지 (모듈 레벨)
 const _initNow = new Date();
@@ -21,7 +23,7 @@ const _initWeekAgo = new Date(_initNow);
 _initWeekAgo.setDate(_initNow.getDate() - 6);
 const _filterState = {
   filterType: 'month',
-  selectedMonth: `${_initNow.getFullYear()}-${String(_initNow.getMonth()+1).padStart(2,'0')}`,
+  selectedMonth: toYearMonth(_initNow),
   selectedYear: String(_initNow.getFullYear()),
   dateFrom: _fmt(_initWeekAgo),
   dateTo: _fmt(_initNow),
@@ -107,10 +109,7 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
   const [eventSortType, setEventSortType] = useState(() => _filterState.eventSortType || 'date_desc');
   const [categorySortType, setCategorySortType] = useState('amount_desc');
 
-  const currentMonth = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  }, []);
+  const currentMonth = useMemo(() => currentYearMonth(), []);
 
   const [selectedMonth, setSelectedMonth] = useState(() => _filterState.selectedMonth);
 
@@ -124,52 +123,53 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
   useEffect(() => { _filterState.eventTypeFilter = eventTypeFilter; }, [eventTypeFilter]);
   useEffect(() => { _filterState.eventSortType = eventSortType; }, [eventSortType]);
 
-  /* eslint-disable react-hooks/exhaustive-deps -- dataVersion은 db 내용이 바뀌었다는 신호라 본문에서 쓰지 않아도 의존성에 둔다 */
-  const months = useMemo(() => getAvailableMonths(db), [db, dataVersion]);
-  const years = useMemo(() => getAvailableYears(db), [db, dataVersion]);
-  const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(db, monthlyLimit), [db, dataVersion, monthlyLimit]);
+  // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
+  const live = useDbSnapshot(db, dataVersion);
+  const months = useMemo(() => getAvailableMonths(live.db), [live]);
+  const years = useMemo(() => getAvailableYears(live.db), [live]);
+  const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(live.db, monthlyLimit), [live, monthlyLimit]);
   const isMobile = useIsMobile();
   const showGoal = useMemo(
-    () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
-    [db, dataVersion, isMobile]
+    () => getSetting(live.db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
+    [live, isMobile]
   );
-  const calendarEvents = useMemo(() => getCalendarEvents(db), [db, dataVersion]);
+  const calendarEvents = useMemo(() => getCalendarEvents(live.db), [live]);
 
   const categorySummary = useMemo(() => {
-    if (filterType === 'month') return getMonthlySummary(db, selectedMonth);
-    if (filterType === 'year') return selectedYear ? getYearlySummary(db, selectedYear) : [];
-    if (filterType === 'range') return dateFrom && dateTo ? getRangeSummary(db, dateFrom, dateTo) : [];
+    if (filterType === 'month') return getMonthlySummary(live.db, selectedMonth);
+    if (filterType === 'year') return selectedYear ? getYearlySummary(live.db, selectedYear) : [];
+    if (filterType === 'range') return dateFrom && dateTo ? getRangeSummary(live.db, dateFrom, dateTo) : [];
     return [];
-  }, [db, dataVersion, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+  }, [live, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const subCategorySummary = useMemo(() => {
     if (!drilldownCategory) return [];
-    if (filterType === 'month') return getMonthlySubCategorySummary(db, selectedMonth, drilldownCategory);
-    if (filterType === 'year') return selectedYear ? getYearlySubCategorySummary(db, selectedYear, drilldownCategory) : [];
-    if (filterType === 'range') return dateFrom && dateTo ? getRangeSubCategorySummary(db, dateFrom, dateTo, drilldownCategory) : [];
+    if (filterType === 'month') return getMonthlySubCategorySummary(live.db, selectedMonth, drilldownCategory);
+    if (filterType === 'year') return selectedYear ? getYearlySubCategorySummary(live.db, selectedYear, drilldownCategory) : [];
+    if (filterType === 'range') return dateFrom && dateTo ? getRangeSubCategorySummary(live.db, dateFrom, dateTo, drilldownCategory) : [];
     return [];
-  }, [db, dataVersion, drilldownCategory, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+  }, [live, drilldownCategory, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const paymentSummary = useMemo(() => {
-    if (filterType === 'month') return getPaymentMethodSummary(db, selectedMonth);
-    if (filterType === 'year') return selectedYear ? getYearlyPaymentMethodSummary(db, selectedYear) : [];
-    if (filterType === 'range') return dateFrom && dateTo ? getRangePaymentMethodSummary(db, dateFrom, dateTo) : [];
+    if (filterType === 'month') return getPaymentMethodSummary(live.db, selectedMonth);
+    if (filterType === 'year') return selectedYear ? getYearlyPaymentMethodSummary(live.db, selectedYear) : [];
+    if (filterType === 'range') return dateFrom && dateTo ? getRangePaymentMethodSummary(live.db, dateFrom, dateTo) : [];
     // 특정 일정을 고르지 않았으면 유형 필터를 적용해 상단 총액(eventSummary)과 같은 범위로 집계한다
     if (filterType === 'event') {
       return selectedEventId
-        ? getEventPaymentMethodSummary(db, Number(selectedEventId))
-        : getEventPaymentMethodSummary(db, null, eventTypeFilter || null);
+        ? getEventPaymentMethodSummary(live.db, Number(selectedEventId))
+        : getEventPaymentMethodSummary(live.db, null, eventTypeFilter || null);
     }
     return [];
-  }, [db, dataVersion, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId, eventTypeFilter]);
+  }, [live, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId, eventTypeFilter]);
 
-  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db, dataVersion]);
+  const eventTypes = useMemo(() => getCalendarEventTypes(live.db), [live]);
   const eventTypeMap = useMemo(
     () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
     [eventTypes]
   );
 
-  const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, dataVersion, eventTypeFilter]);
+  const eventSummary = useMemo(() => getEventSummary(live.db, eventTypeFilter || null), [live, eventTypeFilter]);
   const sortedEventSummary = useMemo(() => {
     const arr = [...eventSummary];
     if (eventSortType === 'date_desc') return arr.sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
@@ -218,10 +218,9 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
     return '';
   };
   const eventDetailSummary = useMemo(
-    () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
-    [db, dataVersion, selectedEventId]
+    () => selectedEventId ? getEventDetailSummary(live.db, Number(selectedEventId)) : [],
+    [live, selectedEventId]
   );
-  /* eslint-enable react-hooks/exhaustive-deps */
 
   // 월·연 선택 목록 — 거래가 있는 달만 있으면, 이번 달에 아직 거래가 없을 때 선택값이 목록에 없어 빈칸으로 보인다.
   // 이번 달(올해)과 지금 고른 값은 항상 목록에 넣는다.

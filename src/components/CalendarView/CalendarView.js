@@ -23,16 +23,14 @@ import TripCashModal from '../TripCash/TripCashModal';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
+import { todayStr, addMonths, ymd } from '../../services/dateUtils';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 // ── 상수 ───────────────────────────────────────────────────
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const SWIPE_MIN_DX = 50;   // 이만큼 가로로 밀어야 달을 넘긴다
 const SWIPE_MAX_SLOPE = 0.6; // 세로 이동이 가로의 이 비율을 넘으면 스크롤로 본다
 
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
 
 function formatDateKo(dateStr) {
   if (!dateStr) return '';
@@ -69,7 +67,7 @@ function buildWeekRows(year, mon, days, firstDow) {
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= days; d++) {
-    cells.push(`${year}-${String(mon).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+    cells.push(ymd(year, mon, d));
   }
   while (cells.length % 7 !== 0) cells.push(null);
   const rows = [];
@@ -407,19 +405,20 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
 
   // dataVersion: DB에 쓰기가 있을 때마다 App이 올리는 숫자. sql.js는 같은 db 객체를 제자리에서 바꾸므로
   // db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
-  /* eslint-disable react-hooks/exhaustive-deps -- dataVersion은 db 내용이 바뀌었다는 신호라 본문에서 쓰지 않아도 의존성에 둔다 */
-  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db, dataVersion]);
+  // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
+  const live = useDbSnapshot(db, dataVersion);
+  const eventTypes = useMemo(() => getCalendarEventTypes(live.db), [live]);
   const eventTypeMap = useMemo(
     () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
     [eventTypes]
   );
 
-  const events = useMemo(() => db ? getCalendarEventsInRange(db, monthStart, monthEnd) : [], [db, dataVersion, monthStart, monthEnd]);
-  const undatedEvents = useMemo(() => db ? getUndatedCalendarEvents(db) : [], [db, dataVersion]);
-  const dailyTotals   = useMemo(() => db ? getDailyTotals(db, currentMonth) : {}, [db, dataVersion, currentMonth]);
+  const events = useMemo(() => live.db ? getCalendarEventsInRange(live.db, monthStart, monthEnd) : [], [live, monthStart, monthEnd]);
+  const undatedEvents = useMemo(() => live.db ? getUndatedCalendarEvents(live.db) : [], [live]);
+  const dailyTotals   = useMemo(() => live.db ? getDailyTotals(live.db, currentMonth) : {}, [live, currentMonth]);
 
   const weekRows = useMemo(() => buildWeekRows(year, mon, days, firstDow), [year, mon, days, firstDow]);
-  const emptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db, dataVersion]);
+  const emptyDateAction = useMemo(() => getSetting(live.db, 'calendar_empty_date_action', 'event'), [live]);
 
   // max total for heatmap intensity
   const maxTotal = useMemo(() => {
@@ -434,10 +433,9 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
 
   // bottom sheet transactions
   const bottomSheetTx = useMemo(() => {
-    if (!selectedDate || !db) return [];
-    return getTransactions(db, { dateFrom: selectedDate, dateTo: selectedDate });
-  }, [db, dataVersion, selectedDate]);
-  /* eslint-enable react-hooks/exhaustive-deps */
+    if (!selectedDate || !live.db) return [];
+    return getTransactions(live.db, { dateFrom: selectedDate, dateTo: selectedDate });
+  }, [live, selectedDate]);
 
   const bottomSheetEvents = useMemo(() => {
     if (!selectedDate) return [];
@@ -445,14 +443,10 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
   }, [selectedDate, events]);
 
   function prevMonth() {
-    const [y, m] = currentMonth.split('-').map(Number);
-    const d = new Date(y, m - 2, 1);
-    setCurrentMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+    setCurrentMonth(addMonths(currentMonth, -1));
   }
   function nextMonth() {
-    const [y, m] = currentMonth.split('-').map(Number);
-    const d = new Date(y, m, 1);
-    setCurrentMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+    setCurrentMonth(addMonths(currentMonth, 1));
   }
   function pickYearMonth(y, m) {
     setCurrentMonth(`${y}-${String(m).padStart(2,'0')}`);

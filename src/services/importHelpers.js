@@ -5,14 +5,11 @@
  *  - 여행 이름·일정 → 캘린더 여행 일정 연결
  */
 import { getCalendarEventTypes, addCalendarEvent } from './dbManager';
-
-const pad2 = (n) => String(n).padStart(2, '0');
+import { ymd, isValidDateStr } from './dateUtils';
 
 function toDateStr(y, m, d) {
-  if (m < 1 || m > 12 || d < 1) return null;
-  const lastDay = new Date(y, m, 0).getDate(); // 로컬 기준, 문자열 파싱 없음
-  if (d > lastDay) return null;
-  return `${y}-${pad2(m)}-${pad2(d)}`;
+  const s = ymd(y, m, d);
+  return isValidDateStr(s) ? s : null;
 }
 
 /**

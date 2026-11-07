@@ -82,11 +82,11 @@
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
 | I-004 | ⏸ | - | 구조 | SettingsView·TransactionForm·dbManager 파일 분리 |
 | I-005 | ✅ | - | 구조 | CSV 파서 중복, 따옴표 안 줄바꿈 미지원 |
-| I-006 | ⏸ | - | 구조 | 로컬 날짜 포맷 함수 5벌 이상 중복 |
+| I-006 | ✅ | - | 구조 | 로컬 날짜 포맷 함수 5벌 이상 중복 |
 | I-007 | ✅ | - | 정리 | README가 CRA 기본 문서, 0바이트 sqlite 파일이 커밋됨 |
 | I-008 | ⏸ | - | 인프라 | CRA(react-scripts 5) 지원 종료 → Vite 이전 |
 | I-009 | ✅ | - | DB | 스키마 버전 관리 없음 |
-| I-010 | ⬜ | - | 구조 | dataVersion 반영 방식이 두 가지(eslint-disable vs useDbSnapshot) |
+| I-010 | ✅ | - | 구조 | dataVersion 반영 방식이 두 가지(eslint-disable vs useDbSnapshot) |
 
 
 ## 상세
@@ -681,12 +681,12 @@
 - 파일: src/services/csv.js(신규), src/components/ImportModal/ImportModal.js, src/components/AccountManagement/AccountManagement.js
 
 ### I-006 로컬 날짜 포맷 함수 5벌 이상 중복
-- 상태: ⏸ 보류(동작 변화 없는 정리라 이번 버그 수정과 분리)
+- 상태: ✅ 해결 (2026-11-07)
 - 영역: 구조
 - 문제: 'YYYY-MM-DD' 로컬 날짜를 만드는 코드가 여러 파일에 따로 있어, 실수로 toISOString을 쓰기 쉽다.
 - 원인: 공통 날짜 유틸이 없다.
-- 해결: (보류) 규칙은 AGENTS.md 5장에 정리했고, 공통 유틸로 합치는 작업은 다음 정리 때 한다.
-- 파일: 여러 파일
+- 해결: src/services/dateUtils.js(toDateStr·toYearMonth·ymd·parseDateStr·todayStr·addMonths·addDays·isValidDateStr)로 모으고 9개 파일의 복사본을 지웠다. 기존 export 이름(today, isValidDate, addDays)은 유지하고, 다른 시간대(UTC-8·UTC+14)에서도 같은 결과임을 테스트로 확인했다.
+- 파일: src/services/dateUtils.js(신규), src/services/__tests__/dateUtils.test.js(신규), dbManager.js, holidays.js, formulaEvaluator.js, importHelpers.js, receiptAssistant.js, AccountManagement·CalendarView·CalendarMini·SummaryView·TransactionList
 
 ### I-007 README가 CRA 기본 문서, 0바이트 sqlite 파일이 커밋됨
 - 상태: ✅ 해결 (2026-11-07)
@@ -713,11 +713,11 @@
 - 파일: src/services/dbManager.js, src/hooks/useLedgerSync.js
 
 ### I-010 dataVersion 반영 방식이 두 가지
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-07)
 - 영역: 구조
 - 문제: 화면 갱신(B-014)을 반영하는 방식이 두 가지로 섞여 있다.
   - 요약·캘린더·거래 화면: `[db, dataVersion]` 의존성 + eslint-disable 주석
   - 설정·계좌 화면: useDbSnapshot 훅
 - 원인: 세 에이전트가 동시에 고치면서 방식이 갈렸다.
-- 해결:
-- 파일: src/hooks/useDbSnapshot.js, src/components/SummaryView, CalendarView, TransactionList, TransactionForm, TripCash
+- 해결: 요약·캘린더·거래 목록·입력 폼·여행 현금 화면을 useDbSnapshot(live)으로 바꾸고 dataVersion 관련 eslint-disable을 모두 지웠다. TripCashModal의 자체 version 카운터도 필요 없어져 지웠다. 다른 세션 소유인 CardStatementModal은 자체 카운터로 정상 동작해 그대로 두었다.
+- 파일: src/components/SummaryView/SummaryView.js, CalendarView.js, TransactionList.js, TransactionForm.js, TripCash/TripCashModal.js

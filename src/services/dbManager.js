@@ -1,5 +1,6 @@
 import initSqlJs from 'sql.js';
 import { getNextBusinessDay, getPrevBusinessDay } from '../data/holidays';
+import { toDateStr, toYearMonth, todayStr, addDays } from './dateUtils';
 
 let SQL = null;
 
@@ -761,10 +762,7 @@ export function deleteEventCountry(db, id) {
 
 const KRW = 'KRW';
 
-function todayLocal() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+const todayLocal = todayStr;
 
 export function getEventCashFlows(db, eventId) {
   if (!db || !eventId) return [];
@@ -2235,7 +2233,7 @@ export function getDetailPatterns(db, { sinceMonths = 12, limit = 500 } = {}) {
   if (!db) return [];
   const d = new Date();
   d.setMonth(d.getMonth() - sinceMonths);
-  const since = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const since = toDateStr(d);
   const res = db.exec(
     `SELECT detail, budget_category, sub_category, payment_method,
             COUNT(*) AS cnt, MAX(date) AS last_date
@@ -2336,9 +2334,7 @@ function resolveDay(year, month1based, dayOfMonth) {
   return Math.min(dayOfMonth, lastDay);
 }
 
-function ymOf(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
+const ymOf = toYearMonth;
 
 function nextYm(ym) {
   const [y, m] = ym.split('-').map(Number);
@@ -2445,7 +2441,7 @@ export function getAccount(db, id) {
  */
 export function getAccountsActualBalances(db) {
   const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const todayYmd = toDateStr(today);
   const res = db.exec(
     `SELECT t.account_id,
             COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE -t.amount END), 0) AS tx_sum
@@ -2453,7 +2449,7 @@ export function getAccountsActualBalances(db) {
      JOIN accounts a ON a.id = t.account_id
      WHERE t.date <= ? AND t.date >= COALESCE(a.balance_date, '')
      GROUP BY t.account_id`,
-    [todayStr]
+    [todayYmd]
   );
   const txSums = {};
   if (res.length) res[0].values.forEach(([id, sum]) => { txSums[id] = sum; });
@@ -2817,17 +2813,15 @@ export function getBalanceForecast(db, accountId, daysAhead = 90) {
   if (!account) return [];
 
   const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const endDate = new Date(today);
-  endDate.setDate(endDate.getDate() + daysAhead);
-  const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+  const todayYmd = toDateStr(today);
+  const endStr = addDays(todayYmd, daysAhead);
 
   // current_balance(잔액 기준일 시작 잔액)에 기준일~오늘 거래를 순서대로 적용 → 실제 현재 잔액 (B-022)
   // 기준일 이전 거래는 이미 current_balance에 들어 있으므로 제외한다.
   const balanceDate = account.balance_date || '';
   const pastRes = db.exec(
     'SELECT * FROM account_transactions WHERE account_id = ? AND date <= ? AND date >= ? ORDER BY date ASC, id ASC',
-    [accountId, todayStr, balanceDate]
+    [accountId, todayYmd, balanceDate]
   );
   const pastTxs = dbRowsToObjects(pastRes);
 
@@ -2840,7 +2834,7 @@ export function getBalanceForecast(db, accountId, daysAhead = 90) {
   // 오늘 이후 거래를 예측 이벤트로 처리
   const futureRes = db.exec(
     'SELECT * FROM account_transactions WHERE account_id = ? AND date > ? AND date <= ? AND date >= ? ORDER BY date ASC, id ASC',
-    [accountId, todayStr, endStr, balanceDate]
+    [accountId, todayYmd, endStr, balanceDate]
   );
   const futureTxs = dbRowsToObjects(futureRes);
 

@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { ymd } from '../../services/dateUtils';
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -50,7 +51,7 @@ function CalendarMini({ month, dailyTotals, onDateClick, focusedDate, amountUnit
         ))}
         {cells.map((day, idx) => {
           if (!day) return <div key={`e-${idx}`} className="cal-mini-cell cal-mini-empty" />;
-          const dateStr = `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const dateStr = ymd(year, mon, day);
           const info = dailyTotals[dateStr];
           const net = info ? info.total - info.discount : 0;
           const ratio = maxTotal > 0 && net > 0 ? net / maxTotal : 0;

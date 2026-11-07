@@ -17,6 +17,7 @@ import {
   accountTxDuplicateKey, countExistingAccountTransactions,
 } from '../../services/importHelpers';
 import './AccountManagement.css';
+import { todayStr } from '../../services/dateUtils';
 
 // ── 날짜 포맷 헬퍼 ──────────────────────────────────────────────
 const THIS_YEAR = new Date().getFullYear();
@@ -69,10 +70,6 @@ function computeRunningBalances(account, descTransactions) {
   return { balanceAfterMap, currentBalance };
 }
 
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 // ── 메인 컴포넌트 ────────────────────────────────────────────────
 

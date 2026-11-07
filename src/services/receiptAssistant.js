@@ -17,6 +17,7 @@ import {
 } from './dbManager';
 import { analyzeImage, AIError } from './aiClient';
 import { today as todayStr } from './formulaEvaluator';
+import { isValidDateStr as isValidDate, addDays } from './dateUtils';
 
 const UNKNOWN = '모름';
 const PATTERN_LIMIT = 40;
@@ -117,20 +118,8 @@ export function matchHistory(db, ...names) {
   return best;
 }
 
-// 로컬 날짜로 비교한다 — toISOString()은 UTC라 한국 시간에선 하루 전 날짜가 나온다
-export function isValidDate(s) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
-  if (!m) return false;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const date = new Date(y, mo - 1, d);
-  return date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d;
-}
-
-export function addDays(date, n) {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// 로컬 날짜 도우미는 dateUtils에 있다 — 다른 모듈이 이 이름으로 가져다 쓰므로 그대로 내보낸다
+export { isValidDate, addDays };
 
 /** 읽은 날짜가 올바르고 미래(하루 넘게)가 아니면 그 날짜, 아니면 오늘 */
 export function resolveDate(raw, today, readSource) {

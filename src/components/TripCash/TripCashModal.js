@@ -10,6 +10,7 @@ import { evaluateFormula, parseForeignAmount, formatAmount, today } from '../../
 import './TripCashModal.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 const KRW = 'KRW';
 
@@ -69,24 +70,21 @@ function Tabs({ value, onChange, items }) {
 
 export default function TripCashModal({ db, dataVersion = 0, event, onClose, onChanged }) {
   const [tab, setTab] = useState('wallets');
-  const [version, setVersion] = useState(0);
   const [error, setError] = useState('');
 
+  // 이 창에서 DB를 바꾸면 App이 dataVersion을 올려 화면이 다시 계산된다. onChanged는 즉시 저장·안내용.
   const bump = useCallback(() => {
-    setVersion(v => v + 1);
     onChanged?.();
   }, [onChanged]);
 
-  // version·dataVersion은 sql.js DB가 제자리에서 바뀌므로 다시 읽기 위한 캐시 무효화 키
-  // (version: 이 창에서 바꾼 것, dataVersion: 앱 어디서든 DB에 쓴 것)
-  /* eslint-disable react-hooks/exhaustive-deps */
-  const wallets = useMemo(() => getEventWallets(db, event.id), [db, event.id, version, dataVersion]);
-  const ledger = useMemo(() => getEventCashLedger(db, event.id), [db, event.id, version, dataVersion]);
-  const countries = useMemo(() => getEventCountries(db, event.id), [db, event.id, version, dataVersion]);
-  const accounts = useMemo(() => getAllAccounts(db), [db, dataVersion]);
-  const categories = useMemo(() => getBudgetCategories(db), [db, dataVersion]);
-  const tripCategory = useMemo(() => getTripDefaultCategory(db), [db, dataVersion]);
-  /* eslint-enable react-hooks/exhaustive-deps */
+  // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
+  const live = useDbSnapshot(db, dataVersion);
+  const wallets = useMemo(() => getEventWallets(live.db, event.id), [live, event.id]);
+  const ledger = useMemo(() => getEventCashLedger(live.db, event.id), [live, event.id]);
+  const countries = useMemo(() => getEventCountries(live.db, event.id), [live, event.id]);
+  const accounts = useMemo(() => getAllAccounts(live.db), [live]);
+  const categories = useMemo(() => getBudgetCategories(live.db), [live]);
+  const tripCategory = useMemo(() => getTripDefaultCategory(live.db), [live]);
 
   const handleDeleteFlow = (id) => {
     const links = getCashFlowLinks(db, id);
@@ -97,11 +95,11 @@ export default function TripCashModal({ db, dataVersion = 0, event, onClose, onC
 
   // 이월 대상 후보 — 다른 여행 유형 일정
   const tripEvents = useMemo(() => {
-    const typeMap = Object.fromEntries(getCalendarEventTypes(db).map(t => [t.value, t]));
-    return getCalendarEvents(db)
+    const typeMap = Object.fromEntries(getCalendarEventTypes(live.db).map(t => [t.value, t]));
+    return getCalendarEvents(live.db)
       .filter(e => e.id !== event.id && typeMap[e.event_type]?.is_trip_type)
       .sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
-  }, [db, event.id, dataVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, event.id]);
 
   // 원화는 환전 대상이 아니므로 환전/출금 통화 목록에서 제외한다
   const currencyOptions = useMemo(() => {

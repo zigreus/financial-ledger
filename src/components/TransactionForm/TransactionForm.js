@@ -6,6 +6,7 @@ import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
 import AIEntry from '../AIEntry/AIEntry';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 
 const EMPTY_FORM = {
@@ -108,12 +109,14 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
   const dbRef = useRef(db);
   dbRef.current = db;
 
+  // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
+  const live = useDbSnapshot(db, dataVersion);
   useEffect(() => {
-    setPaymentMethods(getPaymentMethods(db));
-    setBudgetCategories(getBudgetCategories(db));
-    const types = getCalendarEventTypes(db);
+    setPaymentMethods(getPaymentMethods(live.db));
+    setBudgetCategories(getBudgetCategories(live.db));
+    const types = getCalendarEventTypes(live.db);
     setEventTypeMap(Object.fromEntries(types.map(t => [t.value, t])));
-    const events = getCalendarEvents(db);
+    const events = getCalendarEvents(live.db);
     events.sort((a, b) => {
       if (!a.date_from && !b.date_from) return 0;
       if (!a.date_from) return 1;
@@ -121,9 +124,9 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
       return b.date_from.localeCompare(a.date_from);
     });
     setCalendarEvents(events);
-    setFavorites(getFavorites(db));
-    setTripCategory(getTripDefaultCategory(db));
-  }, [db, dataVersion]);
+    setFavorites(getFavorites(live.db));
+    setTripCategory(getTripDefaultCategory(live.db));
+  }, [live]);
 
   useEffect(() => {
     discountTouchedRef.current = false;
@@ -200,8 +203,8 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
 
   // 세부카테고리 목록 — 앱 어디서든 DB가 바뀌면(dataVersion) 다시 읽는다
   useEffect(() => {
-    setSubCategories(getSubCategories(db, form.budget_category));
-  }, [db, dataVersion, form.budget_category]);
+    setSubCategories(getSubCategories(live.db, form.budget_category));
+  }, [live, form.budget_category]);
 
   // 카테고리가 바뀌면 그 카테고리에 없는 세부카테고리를 비운다 (즐겨찾기·AI 입력 등).
   // 수정 화면을 처음 채울 때는 건너뛴다 — 숨긴 세부카테고리도 그대로 남아야 한다 (B-043).
@@ -371,9 +374,9 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
   // 지갑 계산은 SQL 여러 번이라 키 입력마다 돌리지 않는다 — 일정이나 DB가 바뀔 때만 (B-046)
   const wallets = useMemo(
     () => (isTripEvent && selectedEventId
-      ? getEventWallets(db, selectedEventId).filter(w => Math.abs(w.balance) >= 0.005)
+      ? getEventWallets(live.db, selectedEventId).filter(w => Math.abs(w.balance) >= 0.005)
       : []),
-    [db, dataVersion, isTripEvent, selectedEventId] // eslint-disable-line react-hooks/exhaustive-deps
+    [live, isTripEvent, selectedEventId]
   );
 
   // 현지 금액이 입력된 통화 — 저장될 값(foreign_amounts) 기준으로 센다.

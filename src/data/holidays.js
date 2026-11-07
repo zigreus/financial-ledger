@@ -9,6 +9,8 @@
  * 매년 하반기에 다음 해 데이터를 추가해야 한다 — 없으면 계좌 자동등록의 휴일 보정이 주말만 반영된다.
  */
 
+import { parseDateStr, toDateStr } from '../services/dateUtils';
+
 const HOLIDAYS_BY_YEAR = {
   2026: [
     // ── 1월 ──
@@ -100,19 +102,8 @@ const HOLIDAYS_BY_YEAR = {
   // 2028년 공휴일은 확정 후 추가 — 없으면 앱이 "공휴일 데이터 없음"을 알린다 (hasHolidayData)
 };
 
-// 'YYYY-MM-DD'를 로컬 날짜로 해석한다.
-// new Date('YYYY-MM-DD')는 UTC 자정으로 해석되어 음수 시간대에서 하루 전 날짜가 된다 (B-011).
-function parseLocalDate(dateStr) {
-  const [y, m, d] = String(dateStr).split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function toDateStr(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+// 'YYYY-MM-DD'는 로컬 날짜로 해석한다 — new Date('YYYY-MM-DD')는 UTC 자정이라 하루 밀릴 수 있다 (B-011)
+const parseLocalDate = parseDateStr;
 
 /** 해당 연도의 공휴일 데이터가 있는지 — 없으면 휴일 보정이 주말만 반영된다 */
 export function hasHolidayData(year) {
