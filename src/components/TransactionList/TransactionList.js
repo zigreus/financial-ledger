@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, MEMBER_NONE } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
-import { formatAmount, evaluateFormula } from '../../services/formulaEvaluator';
+import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import BalanceAlertBanner from './BalanceAlertBanner';
 import './TransactionList.css';
@@ -23,10 +23,16 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [editingGoalMonth, setEditingGoalMonth] = useState(null);
   const [editingGoalValue, setEditingGoalValue] = useState('');
+  const [goalError, setGoalError] = useState('');
 
   const saveMonthGoal = (month) => {
     const amt = evaluateFormula(editingGoalValue);
-    if (amt !== null && !isNaN(amt) && amt > 0) {
+    // 잘못된 값("50만")·음수·입력 중인 수식은 조용히 버리고 닫지 않는다 — 이유를 보여 주고 고치게 둔다 (B-069)
+    if (Number.isNaN(amt) || amt < 0) {
+      setGoalError(isIncompleteFormula(editingGoalValue) ? '수식을 마저 입력하세요' : '0 이상의 금액을 입력하세요');
+      return;
+    }
+    if (amt !== null && amt > 0) {
       setMonthlyGoal(db, month, amt);
       onChanged && onChanged();
     }
@@ -439,7 +445,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                             className="month-goal-input"
                             containerStyle={{ flex: '0 0 100px' }}
                             value={editingGoalValue}
-                            onChange={setEditingGoalValue}
+                            onChange={v => { setEditingGoalValue(v); setGoalError(''); }}
                             onKeyDown={e => {
                               if (e.key === 'Enter') saveMonthGoal(month);
                               if (e.key === 'Escape') setEditingGoalMonth(null);
@@ -455,6 +461,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                             className="month-goal-btn"
                             onClick={() => setEditingGoalMonth(null)}
                           >✕</button>
+                          {goalError && <span className="month-goal-error" role="alert">{goalError}</span>}
                         </div>
                       ) : (
                         <div className="month-goal-stack" onClick={e => e.stopPropagation()}>
@@ -470,6 +477,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                               e.stopPropagation();
                               setEditingGoalMonth(month);
                               setEditingGoalValue(goal !== null ? String(goal) : '');
+                              setGoalError('');
                             }}
                           >
                             {goal !== null ? `목표 ${formatAmount(goal)}` : '목표 설정'}

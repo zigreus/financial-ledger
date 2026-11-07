@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-067, I-017
+다음 번호: B-071, I-017
 
 ## 요약표
 
@@ -80,8 +80,12 @@
 | B-062 | ✅ | 높음 | 카드 대조 | 한 결제를 가계부에 나눠 적었으면 "카드 금액으로 수정"이 이중 계산을 만듦 |
 | B-063 | ✅ | 중간 | 카드 대조 | "N건 추가"가 중간에 실패하면 일부만 들어감 |
 | B-064 | ✅ | 높음 | AI | AI 서버 혼잡(503)이면 바로 실패, 다시 시도·다른 모델 전환 없음 |
-| B-065 | ⬜ | 중간 | 금액 입력 | 계좌·고정 입출금·할인 입력의 잘못된 금액이 조용히 0으로 저장됨 |
+| B-065 | ✅ | 중간 | 금액 입력 | 계좌·고정 입출금·할인 입력의 잘못된 금액이 조용히 0으로 저장됨 |
 | B-066 | ✅ | 중간 | 계좌 | 위험 임계값을 설정해도 어느 화면에서도 경고하지 않음 |
+| B-067 | ✅ | 중간 | 금액 입력 | 거래의 현지 금액을 잘못 입력하면 외화 기록만 조용히 빠지고 저장됨 |
+| B-068 | ✅ | 중간 | 여행 | 여행 일정의 환율을 잘못 입력하면 조용히 '환율 없음'으로 저장됨 |
+| B-069 | ✅ | 낮음 | 금액 입력 | 월 목표 금액을 잘못 입력하면 오류 없이 편집이 닫히고 값이 버려짐 |
+| B-070 | ✅ | 낮음 | 여행 | 여행 일정에서 국가 이름을 지우고 저장해도 그 국가·환율이 그대로 남음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -679,13 +683,13 @@
 - 파일: src/services/aiClient.js, receiptAssistant.js, textEntry.js, cardStatement.js, src/components/AIEntry/ReceiptPanel.js, TextPanel.js, AIEntry.css, src/components/CardStatement/CardStatementModal.js
 
 ### B-065 계좌·고정 입출금·할인 입력의 잘못된 금액이 조용히 0으로 저장됨
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-08)
 - 심각도: 중간
 - 영역: 금액 입력
 - 문제: 계좌의 최초 잔액에 "100만"처럼 허용되지 않는 값을 넣으면 오류 없이 0원으로 저장되어 잔액 예측이 틀어진다(위험 임계값·고정 입출금 금액·할인 규칙 최소금액·정기지출 할인도 같음).
 - 원인: `evaluateFormula(...) || 0`으로 NaN을 0으로 바꿔 저장해 AGENTS.md §4(B-036, B-041)의 "잘못된 입력은 오류로 보여 준다" 규칙을 어긴다.
-- 해결: (예정) 각 폼에서 NaN이면 오류를 보여 주고 저장을 막으며, 빈 칸만 0으로 본다.
-- 파일: src/components/AccountManagement/AccountManagement.js(657·659·846행), src/components/SettingsView/sections/DiscountRulesSection.js(37행), src/components/SettingsView/sections/RecurringSection.js(91행)
+- 해결: 빈 칸만 0으로 보고 잘못된 값·음수(기준 잔액 제외)는 NaN으로 돌려주는 `parseOptionalAmount`를 만들어, 네 폼이 NaN이면 이유(입력 중인 수식이면 "수식을 마저 입력하세요")를 보여 주고 저장을 막게 했다.
+- 파일: src/services/formulaEvaluator.js, src/components/AccountManagement/AccountManagement.js, src/components/SettingsView/sections/DiscountRulesSection.js, src/components/SettingsView/sections/RecurringSection.js
 
 ### B-066 위험 임계값을 설정해도 어느 화면에서도 경고하지 않음
 - 상태: ✅ 해결 (2026-11-08)
@@ -695,6 +699,42 @@
 - 원인: `getBalanceForecast`가 `isBelowDanger`를 계산하지만 이 함수를 부르는 화면이 없고, 계좌 내역의 잔액은 0 미만일 때만 빨갛게 표시한다.
 - 해결: getBalanceAlerts가 35일 안에 하루 끝 잔액이 임계값 아래로 내려가는 첫날(이미 아래면 오늘)을 찾아 거래 목록 첫 화면에 배너(누르면 그 계좌, 닫으면 같은 내용은 그날 다시 안 보임)로 알리고, 계좌 내역의 잔액도 임계값 아래면 주황으로 표시한다.
 - 파일: src/services/db/accounts.js, src/components/TransactionList/BalanceAlertBanner.js, TransactionList.js, src/components/AccountManagement/AccountManagement.js, src/components/App/App.js
+
+### B-067 거래의 현지 금액을 잘못 입력하면 외화 기록만 조용히 빠지고 저장됨
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 중간
+- 영역: 금액 입력
+- 문제: 여행 거래에서 현지 금액을 1000 → "1만"으로 고치면 원화는 앞 값(9,500원)이 남고 엔화 기록은 오류 없이 빠진 채 저장된다.
+- 원인: 저장할 때 `parseForeignAmount`가 null인 값을 건너뛰기만 하고, 저장 전 검사(`missingReasons`)에 현지 금액이 없었다.
+- 해결: 비어 있지 않은 현지 금액이 잘못됐으면 "현지 금액을 올바르게 입력하세요"를 보여 주고 저장을 막는다(빈 칸은 그대로 외화 기록을 지운다).
+- 파일: src/components/TransactionForm/TransactionForm.js
+
+### B-068 여행 일정의 환율을 잘못 입력하면 조용히 '환율 없음'으로 저장됨
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 중간
+- 영역: 여행
+- 문제: 일정의 환율 칸에 "약950"처럼 잘못된 값을 넣고 저장하면 오류 없이 환율 0(없음)으로 저장되어 원화 자동 계산이 꺼진다.
+- 원인: 저장할 때 `parseRate`가 잘못된 값을 0으로 바꾸고, 저장 전에 환율을 검사하지 않았다.
+- 해결: 여행 유형일 때 국가가 있는 줄의 환율이 비어 있지 않은데 잘못됐거나 음수면 "○○ 환율을 올바르게 입력하세요"를 보여 주고 저장을 막는다(빈 칸·0은 환율 없음, 환율 칸이 안 보이는 유형은 검사하지 않음).
+- 파일: src/components/CalendarView/CalendarView.js
+
+### B-069 월 목표 금액을 잘못 입력하면 오류 없이 편집이 닫히고 값이 버려짐
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 낮음
+- 영역: 금액 입력
+- 문제: 거래 목록의 월 목표에 "50만"·"-5000"을 넣고 ✓를 누르면 아무 안내 없이 편집이 닫히고 입력이 사라진다.
+- 원인: `saveMonthGoal`이 유효한 양수가 아니면 저장 없이 편집을 닫았다.
+- 해결: 잘못된 값·음수·입력 중인 수식이면 편집을 닫지 않고 칸 아래에 이유를 띄워 고치게 둔다(빈 칸·0은 전처럼 저장 없이 닫기).
+- 파일: src/components/TransactionList/TransactionList.js, TransactionList.css
+
+### B-070 여행 일정에서 국가 이름을 지우고 저장해도 그 국가·환율이 그대로 남음
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 낮음
+- 영역: 여행
+- 문제: 저장된 여행 일정을 고칠 때 국가 이름 칸을 비우고 저장하면 오류 없이 저장되지만 그 국가와 환율은 지워지지도 바뀌지도 않고 남는다.
+- 원인: 지울 국가를 고르는 `keepIds`는 id만 보고 남기고, 저장 루프는 이름이 빈 줄을 건너뛰어 그 줄이 지우기·고치기 어느 쪽에도 들어가지 않았다.
+- 해결: 이름이 빈 줄은 ✕로 지운 것과 같이 삭제한다(`keepIds`에 이름이 있는 줄만 넣음).
+- 파일: src/components/CalendarView/CalendarView.js
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { evaluateExpression, formatAmount } from '../../services/formulaEvaluator';
+import { evaluateExpression, formatAmount, isIncompleteFormula } from '../../services/formulaEvaluator';
 import './AmountInput.css';
 
 /**
@@ -26,11 +26,6 @@ const TOOLBAR_HEIGHT = 52;
 
 const isTouchDevice = typeof window !== 'undefined'
   && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-
-// 연산자나 여는 괄호로 끝나면 아직 입력 중인 수식
-function isIncomplete(v) {
-  return /[+\-*/(×÷]$/.test(String(v).trim());
-}
 
 function isPlainNumber(v) {
   return /^-?[\d,]+(\.\d+)?(\s*원)?$/.test(String(v).trim());
@@ -92,7 +87,7 @@ export default function AmountInput({
   const trimmed = text.trim();
   const result = evaluateExpression(text, { allowNegative });
   const isValid = result !== null && !isNaN(result);
-  const showError = trimmed !== '' && !isValid && !isIncomplete(trimmed);
+  const showError = trimmed !== '' && !isValid && !isIncompleteFormula(trimmed);
   const showPreview = preview && isValid && trimmed !== '' && !isPlainNumber(trimmed);
 
   const [focused, setFocused] = useState(false);

@@ -6,7 +6,7 @@ import {
   deleteRecurringTransaction, getRegistrationLog,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
-import { evaluateFormula } from '../../../services/formulaEvaluator';
+import { evaluateFormula, parseOptionalAmount } from '../../../services/formulaEvaluator';
 import AmountInput from '../../common/AmountInput';
 import { IconEdit, IconTrash } from '../icons';
 
@@ -88,13 +88,15 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
     if (amount === null || isNaN(amount) || amount <= 0) { setError('금액을 올바르게 입력하세요.'); return; }
     const dayOfMonth = parseInt(recurringForm.day_of_month, 10);
     if (isNaN(dayOfMonth) || dayOfMonth < 0 || dayOfMonth > 31) { setError('납부일은 0(말일)~31 사이로 입력하세요.'); return; }
-    const discountAmount = recurringForm.discount_amount ? (evaluateFormula(recurringForm.discount_amount) || 0) : 0;
+    // 할인은 빈 칸만 0원 — 잘못된 금액·음수는 막는다 (B-065)
+    const discountAmount = parseOptionalAmount(recurringForm.discount_amount);
+    if (isNaN(discountAmount)) { setError('할인을 올바르게 입력하세요.'); return; }
     const data = {
       ...recurringForm,
       amount,
       day_of_month: dayOfMonth,
       month_of_year: recurringForm.frequency === 'annual' ? parseInt(recurringForm.month_of_year, 10) : null,
-      discount_amount: isNaN(discountAmount) ? 0 : discountAmount,
+      discount_amount: discountAmount,
     };
     try {
       if (editingRecurringId !== null) {

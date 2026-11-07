@@ -11,7 +11,7 @@ import { downloadText } from '../common/download';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
-import { evaluateFormula } from '../../services/formulaEvaluator';
+import { evaluateFormula, parseOptionalAmount, isIncompleteFormula } from '../../services/formulaEvaluator';
 import { parseCSV } from '../../services/csv';
 import {
   normalizeDateStr, parseImportAmount, markDuplicates,
@@ -649,7 +649,7 @@ function AccountSettingsTab({ db, dataVersion, account, onChanged, onBack }) {
 
 // ── 계좌 추가/편집 폼 ────────────────────────────────────────────
 
-function AccountForm({ account, onSave, onCancel }) {
+export function AccountForm({ account, onSave, onCancel }) {
   const [name, setName] = useState(account?.name || '');
   const [bank, setBank] = useState(account?.bank || '');
   const [accountNumber, setAccountNumber] = useState(account?.account_number || '');
@@ -659,16 +659,26 @@ function AccountForm({ account, onSave, onCancel }) {
   const [isDefault, setIsDefault] = useState(account?.is_default === 1);
   const [note, setNote] = useState(account?.note || '');
 
+  // 빈 칸만 0원 — 잘못된 금액은 조용히 0으로 저장하지 않고 막는다 (B-065)
+  const balanceVal = parseOptionalAmount(balance, { allowNegative: true });
+  const thresholdVal = parseOptionalAmount(dangerThreshold);
+  const amountInvalid = isNaN(balanceVal) || isNaN(thresholdVal);
+  // 입력 중인 수식("1000+")은 오류 대신 마저 입력하라고 안내한다 — 저장이 막힌 이유는 늘 보여 준다
+  const amountProblem = [
+    isNaN(balanceVal) && (isIncompleteFormula(balance) ? '기준 잔액 수식을 마저 입력하세요' : '기준 잔액을 올바르게 입력하세요'),
+    isNaN(thresholdVal) && (isIncompleteFormula(dangerThreshold) ? '위험 임계값 수식을 마저 입력하세요' : '위험 임계값을 올바르게 입력하세요 (0 이상)'),
+  ].filter(Boolean).join(' · ');
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || amountInvalid) return;
     onSave({
       name: name.trim(),
       bank: bank.trim(),
       account_number: accountNumber.trim(),
-      current_balance: evaluateFormula(balance, { allowNegative: true }) || 0,
+      current_balance: balanceVal,
       balance_date: balanceDate,
-      danger_threshold: evaluateFormula(dangerThreshold) || 0,
+      danger_threshold: thresholdVal,
       is_default: isDefault,
       note: note.trim(),
     });
@@ -726,9 +736,10 @@ function AccountForm({ account, onSave, onCancel }) {
             메모
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="선택 사항" />
           </label>
+          {amountProblem && <p className="acct-form-error" role="alert">{amountProblem}</p>}
           <div className="acct-form-actions">
             <button type="button" className="acct-btn-cancel" onClick={onCancel}>취소</button>
-            <button type="submit" className="acct-btn-save">저장</button>
+            <button type="submit" className="acct-btn-save" disabled={amountInvalid}>저장</button>
           </div>
         </form>
     </ModalOverlay>
@@ -835,7 +846,7 @@ function AccountTxForm({ tx, onSave, onCancel }) {
 
 // ── 고정 입출금 항목 폼 ───────────────────────────────────────────
 
-function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
+export function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
   const [name, setName] = useState(item?.name || '');
   const [type, setType] = useState(item?.type || 'expense');
   const [dayOfMonth, setDayOfMonth] = useState(item?.day_of_month != null ? String(item.day_of_month) : '1');
@@ -846,16 +857,22 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
   const [monthsAhead, setMonthsAhead] = useState(item?.register_months_ahead != null ? String(item.register_months_ahead) : '2');
   const [note, setNote] = useState(item?.note || '');
 
+  // 고정 금액은 빈 칸만 0원 — 잘못된 금액·음수는 막는다 (B-065)
+  const fixedVal = amountType === 'fixed' ? parseOptionalAmount(fixedAmount) : 0;
+  const amountInvalid = isNaN(fixedVal);
+  const amountProblem = !amountInvalid ? ''
+    : isIncompleteFormula(fixedAmount) ? '금액 수식을 마저 입력하세요' : '금액을 올바르게 입력하세요 (0 이상)';
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || amountInvalid) return;
     onSave({
       name: name.trim(),
       type,
       day_of_month: parseInt(dayOfMonth, 10) || 1,
       holiday_rule: holidayRule,
       amount_type: amountType,
-      fixed_amount: amountType === 'fixed' ? (evaluateFormula(fixedAmount) || 0) : 0,
+      fixed_amount: fixedVal,
       auto_payment_method: amountType === 'auto' ? autoPaymentMethod : '',
       auto_register: true,
       register_months_ahead: parseInt(monthsAhead, 10) || 2,
@@ -958,9 +975,10 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
             메모
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="선택 사항" />
           </label>
+          {amountProblem && <p className="acct-form-error" role="alert">{amountProblem}</p>}
           <div className="acct-form-actions">
             <button type="button" className="acct-btn-cancel" onClick={onCancel}>취소</button>
-            <button type="submit" className="acct-btn-save">저장</button>
+            <button type="submit" className="acct-btn-save" disabled={amountInvalid}>저장</button>
           </div>
         </form>
     </ModalOverlay>

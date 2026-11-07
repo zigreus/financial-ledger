@@ -450,6 +450,22 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  position: relative;
+}
+/* 목표 금액 오류 — 좁은 헤더 줄을 밀어내지 않게 칸 아래에 띄운다 (B-069) */
+.month-goal-error {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--danger);
+  white-space: nowrap;
 }
 .month-goal-input {
   width: 100px;

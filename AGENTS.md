@@ -89,10 +89,12 @@
 
 - **모든 금액·환율 입력은 `AmountInput` + `formulaEvaluator`를 씁니다.** `parseInt`·`parseFloat`·`Number()`로 직접 읽지 않습니다. (B-025)
   - `evaluateFormula`: 원화(정수)
+  - `parseOptionalAmount`: 비워 둘 수 있는 원화 칸(빈 칸만 0, 잘못된 값은 NaN, 음수는 `allowNegative`일 때만)
   - `parseForeignAmount`: 외화(소수)
   - `parseRate`: 환율
 - **잘못된 입력은 NaN으로 보고 오류를 보여 줍니다.**
-  - `|| 0`으로 조용히 0을 만들지 않습니다. (B-036, B-041)
+  - `|| 0`으로 조용히 0을 만들지 않고, 잘못된 값을 저장에서 조용히 빼지도 않습니다. 저장을 막고 이유를 보여 줍니다. (B-036, B-041, B-065, B-067~B-069)
+  - 입력 중인 수식("1000+")은 오류 대신 "수식을 마저 입력하세요"로 안내합니다(`isIncompleteFormula`). 화면에 보이지 않는 칸 때문에 저장을 막지 않습니다.
   - 허용 문자는 숫자, 사칙연산, 괄호, 쉼표, ×, ÷, 끝의 '원'입니다.
 - **순지출은 `amount - discount_amount`입니다.** 화면 막대·합계·정렬이 같은 값을 써야 합니다. (B-051)
   - 예외로, 계좌의 카드 결제 자동 금액(`getCardPaymentTotal`)은 할인을 빼지 않은 `amount` 합계를 씁니다. (I-016)

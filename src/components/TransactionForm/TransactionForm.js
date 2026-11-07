@@ -64,6 +64,9 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
   // 할인·수익 — 빈칸은 null(=0). 잘못된 수식·음수는 조용히 0으로 바꾸지 않고 막는다 (B-036)
   const discountParsed = evaluateFormula(form.discount_amount);
   const discountInvalid = discountParsed !== null && (isNaN(discountParsed) || discountParsed < 0);
+  // 현지 금액 — 빈 칸은 저장하지 않지만, 잘못된 값("1만")을 조용히 빼고 원화만 저장하지 않는다 (B-067)
+  const foreignInvalid = Object.values(form.foreign_amounts)
+    .some(v => String(v ?? '').trim() !== '' && parseForeignAmount(v) === null);
 
   // ── 여행 현금 지갑 / 분할 결제 ────────────────────────────────
   const trip = useTripAmounts({ live, form, setForm, calendarEvents, eventTypeMap });
@@ -206,6 +209,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
     !form.sub_category && '세부카테고리를 선택하세요',
     (amountParsed === null || isNaN(amountParsed)) && '금액을 올바르게 입력하세요',
     discountInvalid && `${discountLabel}을 올바르게 입력하세요`,
+    foreignInvalid && '현지 금액을 올바르게 입력하세요',
     sp.splitProblem,
     sp.split && !sp.splitMethod && '나머지 결제수단을 선택하세요',
   ].filter(Boolean);

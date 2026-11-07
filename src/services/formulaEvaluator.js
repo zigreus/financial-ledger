@@ -1,12 +1,18 @@
 /**
  * 금액 입력 공통 규칙: 앱의 모든 금액·환율 입력란은 사칙연산 수식을 받는다.
  * 입력은 components/common/AmountInput 으로, 계산은 이 파일의 함수로 한다.
- *   evaluateFormula    — 원화 등 정수 금액 (반올림)
- *   parseForeignAmount — 외화처럼 소수가 의미 있는 금액
- *   parseRate          — 환율 (0보다 큰 값만)
+ *   evaluateFormula     — 원화 등 정수 금액 (반올림)
+ *   parseOptionalAmount — 비워 둘 수 있는 원화 금액 칸 (빈 칸만 0, 잘못된 값은 NaN)
+ *   parseForeignAmount  — 외화처럼 소수가 의미 있는 금액
+ *   parseRate           — 환율 (0보다 큰 값만)
  */
 
 import { todayStr } from './dateUtils';
+
+/** 연산자나 여는 괄호로 끝나면 아직 입력 중인 수식 ("1000+") — 오류 문구는 숨기고 저장만 막는다 */
+export function isIncompleteFormula(v) {
+  return /[+\-*/(×÷]$/.test(String(v ?? '').trim());
+}
 
 function normalize(expr) {
   return String(expr)
@@ -57,6 +63,19 @@ export function evaluateExpression(expr, { allowNegative = false } = {}) {
 export function evaluateFormula(expr, opts) {
   const n = evaluateExpression(expr, opts);
   return n === null || isNaN(n) ? n : Math.round(n);
+}
+
+/**
+ * 비워 둘 수 있는 원화 금액 칸(기준 잔액·임계값·할인·최소금액 등) — 빈 값만 0이다.
+ * 잘못된 값은 NaN이고, allowNegative가 아니면 음수("-5000")도 NaN이다.
+ * 저장 전에 isNaN으로 검사해 오류를 보여 주고 막는다. `|| 0`으로 0을 만들지 않는다 (B-065).
+ * 예) "" → 0, "1,000+500" → 1500, "100만" → NaN, "-5000" → NaN (allowNegative면 -5000)
+ */
+export function parseOptionalAmount(expr, { allowNegative = false } = {}) {
+  const n = evaluateFormula(expr, { allowNegative });
+  if (n === null) return 0;
+  if (isNaN(n) || (!allowNegative && n < 0)) return NaN;
+  return n;
 }
 
 /**

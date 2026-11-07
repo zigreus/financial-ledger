@@ -3,7 +3,7 @@ import {
   getDiscountRules, addDiscountRule, deleteDiscountRule, getBudgetCategories, getSubCategories,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
-import { evaluateFormula, parseForeignAmount } from '../../../services/formulaEvaluator';
+import { parseOptionalAmount, parseForeignAmount } from '../../../services/formulaEvaluator';
 import AmountInput from '../../common/AmountInput';
 import { IconTrash } from '../icons';
 
@@ -34,7 +34,9 @@ export default function DiscountRulesSection({ db, dataVersion, onChanged, setEr
     const val = parseForeignAmount(addingRuleValue);
     if (val === null || val <= 0) { setError('값을 올바르게 입력하세요.'); return; }
     const storedValue = addingRuleType === 'percent' ? val / 100 : val;
-    const minAmt = evaluateFormula(addingRuleMinAmount) || 0;
+    // 빈 칸만 0원 — 잘못된 금액·음수를 조용히 0(조건 없음)으로 저장하지 않는다 (B-065)
+    const minAmt = parseOptionalAmount(addingRuleMinAmount);
+    if (isNaN(minAmt)) { setError('최소 금액을 올바르게 입력하세요.'); return; }
     try {
       addDiscountRule(db, {
         payment_method_name: drilldownPayment.name,

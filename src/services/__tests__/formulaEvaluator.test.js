@@ -2,7 +2,28 @@
  * @vitest-environment node
  */
 // 금액 수식 입력 규칙 (B-041)
-import { evaluateFormula, evaluateExpression, parseForeignAmount, parseRate } from '../formulaEvaluator';
+import { evaluateFormula, evaluateExpression, parseForeignAmount, parseRate, parseOptionalAmount } from '../formulaEvaluator';
+
+describe('비워 둘 수 있는 금액 칸 (B-065)', () => {
+  test('빈 칸만 0이고, 수식은 계산한다', () => {
+    expect(parseOptionalAmount('')).toBe(0);
+    expect(parseOptionalAmount('  ')).toBe(0);
+    expect(parseOptionalAmount(null)).toBe(0);
+    expect(parseOptionalAmount('1,000+500')).toBe(1500);
+    expect(parseOptionalAmount('0')).toBe(0);
+  });
+
+  test.each(['100만', '3만원', 'abc', '1000+'])('잘못된 값 %s은 0이 아니라 NaN', (input) => {
+    expect(Number.isNaN(parseOptionalAmount(input))).toBe(true);
+  });
+
+  test('음수는 allowNegative일 때만 받는다', () => {
+    expect(Number.isNaN(parseOptionalAmount('-5000'))).toBe(true);
+    expect(Number.isNaN(parseOptionalAmount('1000-5000'))).toBe(true);
+    expect(parseOptionalAmount('-5000', { allowNegative: true })).toBe(-5000);
+    expect(parseOptionalAmount('1000-5000', { allowNegative: true })).toBe(-4000);
+  });
+});
 
 describe('evaluateFormula', () => {
   test.each([

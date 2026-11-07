@@ -17,7 +17,7 @@ import {
   getCalendarEventLinkCounts,
   withTransaction,
 } from '../../services/dbManager';
-import { parseRate, formatAmount } from '../../services/formulaEvaluator';
+import { parseRate, parseForeignAmount, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
 import TripCashModal from '../TripCash/TripCashModal';
 import ModalOverlay from '../common/ModalOverlay';
@@ -109,7 +109,7 @@ const EMPTY_FORM = {
   countries: [], // [{id, country, currency}]
 };
 
-function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, onOpenCash, eventTypes = [], eventTypeMap = {} }) {
+export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, onOpenCash, eventTypes = [], eventTypeMap = {} }) {
   const [form, setForm] = useState(() => {
     if (editingEvent) {
       return {
@@ -168,6 +168,12 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
       setError('종료일이 시작일보다 빠릅니다');
       return;
     }
+    // 환율 — 빈 칸·0은 '환율 없음'이지만, 잘못된 값("약950")을 조용히 '없음'으로 저장하지 않는다 (B-068)
+    // 환율 칸은 여행 유형에서만 보이므로, 칸이 보일 때만 검사한다 (안 보이는 칸 때문에 저장이 막히지 않게)
+    const isTrip = eventTypeMap[form.event_type]?.is_trip_type === 1;
+    const badRate = isTrip && form.countries.find(c => c.country.trim()
+      && String(c.exchange_rate ?? '').trim() !== '' && parseForeignAmount(c.exchange_rate) === null);
+    if (badRate) { setError(`${badRate.country.trim()} 환율을 올바르게 입력하세요`); return; }
     setSaving(true);
     setError('');
     try {
@@ -186,7 +192,8 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
           updateCalendarEvent(db, editingEvent.id, payload);
           // sync countries
           const oldCountries = editingEvent.countries || [];
-          const keepIds = new Set(form.countries.filter(c => c.id).map(c => c.id));
+          // 국가 이름을 지운 줄은 ✕로 지운 것과 같이 삭제한다 — 저장 루프가 건너뛰어 옛 값이 남지 않게 (B-070)
+          const keepIds = new Set(form.countries.filter(c => c.id && c.country.trim()).map(c => c.id));
           oldCountries.forEach(oc => { if (!keepIds.has(oc.id)) deleteEventCountry(db, oc.id); });
           form.countries.forEach(c => {
             if (!c.country.trim()) return;
