@@ -60,6 +60,7 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
   const [edits, setEdits] = useState({});   // 가계부에 없음 행별 { checked, path }
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [notice, setNotice] = useState('');
+  const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
   const fileRef = useRef(null);
   const abortRef = useRef(null);
 
@@ -105,9 +106,13 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
     abortRef.current = controller;
     setError('');
     setNotice('');
+    setProgress('');
     setStep('analyzing');
     try {
-      const st = await analyzeStatement({ db, ai, files: docs.parts, paymentMethod: method, signal: controller.signal });
+      const st = await analyzeStatement({
+        db, ai, files: docs.parts, paymentMethod: method, signal: controller.signal,
+        onProgress: msg => { if (!controller.signal.aborted) setProgress(msg); },
+      });
       setStatement(st);
       setEdits({});
       setStep('result');
@@ -187,7 +192,10 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
         <div className="rs-box rs-analyzing">
           <div className="rs-analyzing-text">
             <span className="rs-spinner" />
-            카드 내역 읽는 중…{providerLabel && <small> ({providerLabel})</small>}
+            <span className="rs-analyzing-label">
+              <span>카드 내역 읽는 중…{providerLabel && <small> ({providerLabel})</small>}</span>
+              {progress && <span className="rs-progress">{progress}</span>}
+            </span>
           </div>
           <button type="button" className="rs-btn-link" onClick={() => abortRef.current && abortRef.current.abort()}>취소</button>
         </div>

@@ -17,6 +17,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
   const [image, setImage] = useState(null);
   const [suggestion, setSuggestion] = useState(null);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
   const abortRef = useRef(null);
   const dbRef = useRef(db);
   dbRef.current = db;
@@ -30,10 +31,14 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
     abortRef.current = controller;
     if (controller.signal.aborted) return;
     setError('');
+    setProgress('');
     setSuggestion(null);
     setPhase('analyzing');
     try {
-      const s = await analyzeReceipt({ db: dbRef.current, ai, image: img, signal: controller.signal });
+      const s = await analyzeReceipt({
+        db: dbRef.current, ai, image: img, signal: controller.signal,
+        onProgress: msg => { if (!controller.signal.aborted) setProgress(msg); },
+      });
       if (controller.signal.aborted) return;
       setSuggestion(s);
       setPhase('review');
@@ -83,7 +88,10 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
         {image && <img className="rs-thumb" src={image.dataUrl} alt="영수증" />}
         <div className="rs-analyzing-text">
           <span className="rs-spinner" />
-          영수증 읽는 중…{providerLabel && <small> ({providerLabel})</small>}
+          <span className="rs-analyzing-label">
+            <span>영수증 읽는 중…{providerLabel && <small> ({providerLabel})</small>}</span>
+            {progress && <span className="rs-progress">{progress}</span>}
+          </span>
         </div>
         <button type="button" className="rs-btn-link" onClick={onClose}>취소</button>
       </div>

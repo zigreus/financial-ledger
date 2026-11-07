@@ -79,7 +79,7 @@
 | B-061 | ✅ | 낮음 | 설정 | 여행 기본 카테고리를 '사용 안 함'으로 골라도 다시 선택됨 |
 | B-062 | ✅ | 높음 | 카드 대조 | 한 결제를 가계부에 나눠 적었으면 "카드 금액으로 수정"이 이중 계산을 만듦 |
 | B-063 | ✅ | 중간 | 카드 대조 | "N건 추가"가 중간에 실패하면 일부만 들어감 |
-| B-064 | 🔧 | 높음 | AI | AI 서버 혼잡(503)이면 바로 실패, 다시 시도·다른 모델 전환 없음 |
+| B-064 | ✅ | 높음 | AI | AI 서버 혼잡(503)이면 바로 실패, 다시 시도·다른 모델 전환 없음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -662,13 +662,13 @@
 - 파일: src/services/cardStatement.js, src/components/CardStatement/CardStatementModal.js
 
 ### B-064 AI 서버 혼잡(503)이면 바로 실패, 다시 시도·다른 모델 전환 없음
-- 상태: 🔧 진행 중
+- 상태: ✅ 해결 (2026-11-08)
 - 심각도: 높음
 - 영역: AI
 - 문제: Gemini가 "model overloaded"(503)를 주면 몇 번 쓰지 않았는데도 바로 "AI 서버가 혼잡합니다"로 끝난다.
 - 원인: 일시적인 서버 혼잡을 한도 초과와 같은 오류로 취급하고 다시 시도하지 않았다.
-- 해결: (진행 중)
-- 파일: src/services/aiClient.js
+- 해결: 500·502·503·504·529는 2초·5초 뒤 다시 하고, 계속 붐비면 그 키의 다른 안정판 모델(최대 3개)로 바꾸며, 진행 문구를 화면에 보여 주고, 429는 서버가 30초 이하로 기다리라 할 때만 한 번 다시 한다.
+- 파일: src/services/aiClient.js, receiptAssistant.js, textEntry.js, cardStatement.js, src/components/AIEntry/ReceiptPanel.js, TextPanel.js, AIEntry.css, src/components/CardStatement/CardStatementModal.js
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)

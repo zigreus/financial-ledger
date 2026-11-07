@@ -19,6 +19,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   const [text, setText] = useState('');
   const [items, setItems] = useState([]);       // [{ s, checked }]
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
   const abortRef = useRef(null);
   const textRef = useRef(null);
 
@@ -34,9 +35,13 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
     const controller = new AbortController();
     abortRef.current = controller;
     setError('');
+    setProgress('');
     setPhase('analyzing');
     try {
-      const list = await parseTextEntry({ db, ai, text, signal: controller.signal });
+      const list = await parseTextEntry({
+        db, ai, text, signal: controller.signal,
+        onProgress: msg => { if (!controller.signal.aborted) setProgress(msg); },
+      });
       if (controller.signal.aborted) return;
       setItems(list.map(s => ({ s, checked: isSuggestionComplete(s) })));
       setPhase('review');
@@ -98,7 +103,10 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
       <div className="rs-box rs-analyzing">
         <div className="rs-analyzing-text">
           <span className="rs-spinner" />
-          정리하는 중…{providerLabel && <small> ({providerLabel})</small>}
+          <span className="rs-analyzing-label">
+            <span>정리하는 중…{providerLabel && <small> ({providerLabel})</small>}</span>
+            {progress && <span className="rs-progress">{progress}</span>}
+          </span>
         </div>
         <button type="button" className="rs-btn-link" onClick={cancelAnalysis}>취소</button>
       </div>

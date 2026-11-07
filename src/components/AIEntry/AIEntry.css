@@ -298,3 +298,7 @@
 }
 .tp-item-missing { font-size: 11px; color: var(--text-muted); }
 .tp-item-warn { font-size: 11px; color: #92400E; }
+
+/* 분석 중 진행 상황 ("서버가 붐벼서 다시 시도하는 중…") */
+.rs-analyzing-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rs-progress { font-size: 11px; color: #B45309; line-height: 1.4; }

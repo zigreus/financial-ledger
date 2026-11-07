@@ -81,11 +81,11 @@ export function buildStatementPrompt(db, paymentMethod, today = todayStr()) {
 }
 
 /** 파일들을 AI로 읽어 카드 결제 행 목록을 만든다 */
-export async function analyzeStatement({ db, ai, files, paymentMethod, signal, today = todayStr() }) {
+export async function analyzeStatement({ db, ai, files, paymentMethod, signal, onProgress, today = todayStr() }) {
   const raw = await analyzeWithAI({
     ai, system: SYSTEM, prompt: buildStatementPrompt(db, paymentMethod, today), schema: SCHEMA,
     toolName: 'record_card_statement', description: '카드 결제 내역을 행 단위로 기록한다',
-    files, signal, maxTokens: 16000,
+    files, signal, onProgress, maxTokens: 16000,
   });
   if (raw && raw.is_card_statement === false) {
     throw new AIError('카드 결제 내역으로 보이지 않습니다 — 카드 앱의 이용내역이나 명세서를 올려 주세요', 'parse');

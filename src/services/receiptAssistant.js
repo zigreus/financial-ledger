@@ -301,11 +301,11 @@ export function buildReceiptContext(db, today = todayStr()) {
 }
 
 /** 영수증 이미지를 분석해 입력 추천을 돌려준다 */
-export async function analyzeReceipt({ db, ai, image, signal, today = todayStr() }) {
+export async function analyzeReceipt({ db, ai, image, signal, onProgress, today = todayStr() }) {
   const context = buildReceiptContext(db, today);
   const raw = await analyzeImage({
     ai, system: RECEIPT_SYSTEM, prompt: context.prompt, schema: RECEIPT_SCHEMA,
-    toolName: 'record_receipt', image, signal,
+    toolName: 'record_receipt', image, signal, onProgress,
   });
   if (raw && raw.is_receipt === false) {
     throw new AIError('영수증으로 보이지 않습니다 — 영수증이 잘 보이게 다시 찍어 주세요', 'parse');

@@ -55,13 +55,13 @@ export function buildTextPrompt(db, text, today = todayStr()) {
 }
 
 /** 문장 하나를 거래 추천 목록으로 */
-export async function parseTextEntry({ db, ai, text, signal, today = todayStr() }) {
+export async function parseTextEntry({ db, ai, text, signal, onProgress, today = todayStr() }) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new AIError('입력할 내용을 적어 주세요', 'parse');
 
   const raw = await analyzeWithAI({
     ai, system: SYSTEM, prompt: buildTextPrompt(db, trimmed, today), schema: SCHEMA,
-    toolName: 'record_entries', description: '사용자가 말한 지출을 거래 기록으로 정리한다', signal,
+    toolName: 'record_entries', description: '사용자가 말한 지출을 거래 기록으로 정리한다', signal, onProgress,
   });
   const entries = Array.isArray(raw?.entries) ? raw.entries : [];
   if (!entries.length) {
