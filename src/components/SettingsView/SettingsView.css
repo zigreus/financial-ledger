@@ -410,3 +410,75 @@
   color: #fff;
   border-color: var(--primary);
 }
+
+/* 탭이 6개라 좁은 화면에서는 글자를 줄이고 넘치면 가로로 밀어 본다 (데이터 탭 추가, I-013·I-014) */
+@media (max-width: 420px) {
+  .settings-tabs { padding: 0 8px; overflow-x: auto; scrollbar-width: none; }
+  .settings-tabs::-webkit-scrollbar { display: none; }
+  .settings-tabs .tab { flex: 1 0 auto; padding: 12px 6px; font-size: 13px; white-space: nowrap; }
+}
+/* 360px 안팎 휴대폰에서도 6개 탭이 한 줄에 다 보이게 (가려진 탭이 없도록) */
+@media (max-width: 370px) {
+  .settings-tabs { padding: 0 4px; }
+  .settings-tabs .tab { padding: 12px 3px; font-size: 12px; letter-spacing: -0.3px; }
+}
+
+/* ── 설정 › 데이터 ── */
+.data-member-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.data-member-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.data-member-name { flex: 1; min-width: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.data-member-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #EFF6FF;
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+.data-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.data-device-row span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.data-device-row small { font-size: 11px; color: var(--text-muted); }
+.data-device-row select,
+.data-export-row select,
+.data-export-row input {
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--surface);
+}
+.data-export-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.data-export-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.data-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.data-actions button { flex: 1 1 160px; }
+.data-message { font-size: 13px; color: #047857; margin-bottom: 8px; }
+.data-muted { font-size: 13px; color: var(--text-muted); }
+.data-backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.data-backup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.data-backup-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.data-backup-main b { font-size: 14px; }
+.data-backup-main small { font-size: 11px; color: var(--text-muted); }
+.data-backup-btn { flex: none; padding: 6px 12px; font-size: 13px; }

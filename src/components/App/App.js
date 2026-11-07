@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import './App.css';
 
@@ -17,6 +17,7 @@ import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTran
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
+import { resolveDeviceMember } from '../../services/deviceMember';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
@@ -27,7 +28,13 @@ function App() {
   const {
     db, dataVersion, loading, saving, error, setError, notice,
     dirty, pendingCount, loadDb, saveNow, resetForLogout,
+    listBackups, createBackup, restoreBackup,
   } = useLedgerSync({ instance, accounts });
+  // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
+  const backupApi = useMemo(
+    () => ({ list: listBackups, create: createBackup, restore: restoreBackup }),
+    [listBackups, createBackup, restoreBackup],
+  );
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -147,9 +154,14 @@ function App() {
 
   // 저장은 자동으로 된다 — 여기서는 DB에 반영하고 결과만 알린다.
   // 저장 실패는 헤더의 '저장 안 됨' 표시와 오류 배너로 따로 보여준다 (B-003).
+  // '누가'를 정하지 않고 들어온 새 거래는 이 기기 사용자로 (I-013) — 폼은 직접 고른 값(빈 값 포함)을 넘긴다
+  const withMember = useCallback((row) => (
+    row.member === undefined ? { ...row, member: resolveDeviceMember(db) } : row
+  ), [db]);
+
   const handleAdd = useCallback((txData, { keepOpen = false } = {}) => {
     // 분할 결제는 거래 2건으로 들어온다
-    const rows = Array.isArray(txData) ? txData : [txData];
+    const rows = (Array.isArray(txData) ? txData : [txData]).map(withMember);
     withTransaction(db, () => rows.forEach(row => addTransaction(db, row)));
 
     // 연속 입력 중이면 폼을 열어둔 채 뒤에서 저장한다
@@ -163,18 +175,25 @@ function App() {
       ? `${rows[0].budget_category} ${total.toLocaleString()}원 분할 ${rows.length}건`
       : `${rows[0].budget_category} ${total.toLocaleString()}원`;
     showToast(`✓ ${label} 추가됨`);
-  }, [db, showToast]);
+  }, [db, showToast, withMember]);
 
-  // 말로 입력한 여러 건을 한 번에 추가
-  const handleBulkAdd = useCallback((rows) => {
-    if (!rows.length) return;
-    withTransaction(db, () => rows.forEach(row => addTransaction(db, row)));
+  // 말로 입력·카드 문자로 여러 건을 한 번에 반영 — 카드 문자의 승인 취소는 지울 거래(deleteIds)로 함께 온다 (I-012)
+  const handleBulkAdd = useCallback((inputRows, { deleteIds = [] } = {}) => {
+    const rows = inputRows.map(withMember);
+    if (!rows.length && !deleteIds.length) return;
+    withTransaction(db, () => {
+      rows.forEach(row => addTransaction(db, row));
+      deleteIds.forEach(id => deleteTransaction(db, id));
+    });
     setShowForm(false);
     setEditingTx(null);
     window.history.back();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
-    showToast(`✓ ${rows.length}건 ${total.toLocaleString()}원 추가됨`);
-  }, [db, showToast]);
+    const parts = [];
+    if (rows.length) parts.push(`${rows.length}건 ${total.toLocaleString()}원 추가`);
+    if (deleteIds.length) parts.push(`취소된 거래 ${deleteIds.length}건 삭제`);
+    showToast(`✓ ${parts.join(', ')}됨`);
+  }, [db, showToast, withMember]);
 
   const handleUpdate = useCallback((txData) => {
     // 분할 결제는 묶음 전체를 한 번에 반영한다.
@@ -310,6 +329,10 @@ function App() {
             onChanged={() => saveWithToast()}
             onOpenImport={() => navigate({ showImport: true })}
             onOpenCardCheck={() => navigate({ showCardCheck: true })}
+            onOpenAccount={(id) => {
+              navigate({ activeTab: 'account', accountDrilldown: { id }, accountDetailTab: 'transactions' });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
           />
         )}
         {activeTab === 'summary' && (
@@ -356,6 +379,7 @@ function App() {
             db={db}
             dataVersion={dataVersion}
             onChanged={() => saveWithToast('✓ 설정이 저장됨')}
+            backup={backupApi}
             activeSection={settingsSection}
             drilldownCategory={settingsDrilldownCategory}
             drilldownTrip={settingsDrilldownTrip}

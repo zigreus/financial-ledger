@@ -8,6 +8,7 @@ import RecurringSection from './sections/RecurringSection';
 import BudgetSection from './sections/BudgetSection';
 import CalendarSection from './sections/CalendarSection';
 import AISection from './sections/AISection';
+import DataSection from './sections/DataSection';
 
 /**
  * 설정 화면 — 섹션 전환과 공통 상태(오류 문구, 서브탭)만 가진다.
@@ -17,7 +18,7 @@ import AISection from './sections/AISection';
  *  - 결제수단·카테고리: 상단 탭·서브탭을 누를 때마다 (예전 switchSection이 입력·편집·드래그 상태를 비우던 것)
  *  - 즐겨찾기: '즐겨찾기' 서브탭을 누를 때 / 정기지출: '정기지출' 서브탭이나 '지출계획' 탭을 누를 때
  */
-function SettingsView({ db, dataVersion, onChanged, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
+function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
   const [error, setError] = useState('');
   // 지출계획 섹션
   const [financeSubTab, setFinanceSubTab] = useState('favorites');
@@ -47,6 +48,7 @@ function SettingsView({ db, dataVersion, onChanged, activeSection, drilldownCate
         <button className={(activeSection === 'budget' || activeSection === 'recurring') ? 'tab active' : 'tab'} onClick={() => { switchSection(financeSubTab); setRecurringKey(k => k + 1); }}>지출계획</button>
         <button className={activeSection === 'calendar' ? 'tab active' : 'tab'} onClick={() => switchSection('calendar')}>캘린더</button>
         <button className={activeSection === 'ai' ? 'tab active' : 'tab'} onClick={() => switchSection('ai')}>AI</button>
+        <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
       </div>
 
       {/* 드릴다운 뒤로가기 */}
@@ -90,6 +92,7 @@ function SettingsView({ db, dataVersion, onChanged, activeSection, drilldownCate
         {activeSection === 'budget' && <BudgetSection {...sectionProps} />}
 
         {activeSection === 'ai' && <AISection />}
+        {activeSection === 'data' && <DataSection key={masterKey} {...sectionProps} backup={backup} />}
 
         {activeSection === 'calendar' && (
           <CalendarSection

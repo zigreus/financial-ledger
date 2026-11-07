@@ -7,13 +7,14 @@ import {
   withTransaction,
 } from '../../services/dbManager';
 import { buildValidationContext, detectIssues } from '../../services/txValidator';
-import { parseCSV } from '../../services/csv';
+import { parseCSV, unescapeSpreadsheetText } from '../../services/csv';
 import {
   normalizeDateStr, parseImportAmount, markDuplicates, txDuplicateKey, countExistingTransactions,
   loadTripEvents, findTripEvent, createTripEvent,
 } from '../../services/importHelpers';
 import './ImportModal.css';
 import ModalOverlay from '../common/ModalOverlay';
+import { downloadText } from '../common/download';
 
 // ── 템플릿 ────────────────────────────────────────────────────────────
 // JSON: _no 필드로 행 번호를 명시 → 오류 발생 시 해당 행을 즉시 찾을 수 있음
@@ -86,16 +87,6 @@ const CSV_TEMPLATE =
   '4,KB국민카드,2026-01-22,차량교통비,주유,GS칼텍스,70000,1400,주유 1% 할인,,\r\n' +
   '5,카카오페이,2026-02-05,여행,숙박,도쿄 호텔,220000,0,,일본 도쿄,2026-02-03 ~ 2026-02-07\r\n';
 
-function downloadFile(content, filename, mime) {
-  const blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 // ── 행 읽기·검사 ─────────────────────────────────────────────────────
 const FIELDS = [
   'payment_method', 'date', 'budget_category', 'sub_category', 'detail',
@@ -105,7 +96,8 @@ const FIELDS = [
 /** 칸 값 → 문자열. 글자·숫자만 받고, 그 밖의 타입(객체·배열·true 등)이면 null */
 function cellText(v) {
   if (v === undefined || v === null) return '';
-  if (typeof v === 'string') return v.trim();
+  // 내보내기가 엑셀 수식 방지로 붙인 ' 는 뗀다 (I-014)
+  if (typeof v === 'string') return unescapeSpreadsheetText(v.trim());
   if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   return null;
 }
@@ -372,13 +364,13 @@ function ImportModal({ db, onImport, onClose }) {
               <div className="import-template-buttons">
                 <button
                   className="btn-template"
-                  onClick={() => downloadFile(JSON_TEMPLATE, '거래내역_양식.json', 'application/json')}
+                  onClick={() => downloadText(JSON_TEMPLATE, '거래내역_양식.json', 'application/json')}
                 >
                   JSON 양식
                 </button>
                 <button
                   className="btn-template"
-                  onClick={() => downloadFile(CSV_TEMPLATE, '거래내역_양식.csv', 'text/csv')}
+                  onClick={() => downloadText(CSV_TEMPLATE, '거래내역_양식.csv', 'text/csv')}
                 >
                   CSV 양식
                 </button>

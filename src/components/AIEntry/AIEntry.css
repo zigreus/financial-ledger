@@ -135,6 +135,7 @@
 .rs-src-ai { background: #F5F3FF; color: #6D28D9; }
 .rs-src-trip { background: #FFF7ED; color: #C2410C; }
 .rs-src-text,
+.rs-src-sms,
 .rs-src-statement { background: #EFF6FF; color: var(--primary-dark); }
 
 .rs-warnings {
@@ -302,3 +303,14 @@
 /* 분석 중 진행 상황 ("서버가 붐벼서 다시 시도하는 중…") */
 .rs-analyzing-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rs-progress { font-size: 11px; color: #B45309; line-height: 1.4; }
+
+/* 빠른 입력 버튼이 3개라 좁은 화면에서는 아이콘 위·글자 아래로 (I-012) */
+@media (max-width: 480px) {
+  .ai-entry-btn { flex-direction: column; gap: 2px; padding: 8px 4px; font-size: 12px; }
+  .ai-entry-icon { font-size: 18px; }
+}
+
+/* 카드 문자 — 승인 취소 항목 */
+.sms-cancel { cursor: pointer; }
+.sms-cancel.checked { border-color: var(--danger, #DC2626); background: #FEF2F2; }
+.sms-cancel-note { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.5; }

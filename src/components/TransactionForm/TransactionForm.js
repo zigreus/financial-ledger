@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { getPaymentMethods, getBudgetCategories, getSubCategories, getCalendarEvents, getCalendarEventTypes, getAutoPaymentMethod, getTripDefaultCategory, getSplitGroupTransactions } from '../../services/dbManager';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { getPaymentMethods, getBudgetCategories, getSubCategories, getCalendarEvents, getCalendarEventTypes, getAutoPaymentMethod, getTripDefaultCategory, getSplitGroupTransactions, getMemberNames } from '../../services/dbManager';
+import { resolveDeviceMember } from '../../services/deviceMember';
 import { evaluateFormula, today, parseForeignAmount } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
@@ -11,6 +12,7 @@ import BasicFields from './BasicFields';
 import FavoritesBar, { FavoriteStar } from './FavoritesBar';
 import TripAmountSection from './TripAmountSection';
 import SplitPaymentSection from './SplitPaymentSection';
+import MemberPicker from './MemberPicker';
 import { useFavorites } from './useFavorites';
 import { useTripAmounts } from './useTripAmounts';
 import { useSplitPayment, splitFromEditingTx } from './useSplitPayment';
@@ -31,6 +33,7 @@ const EMPTY_FORM = {
   discount_amount: '',
   event_id: '',
   foreign_amounts: {},
+  member: '',
 };
 
 function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, onBulkAdd, onCancel }) {
@@ -55,6 +58,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
 
   // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
   const live = useDbSnapshot(db, dataVersion);
+  const members = useMemo(() => getMemberNames(live.db), [live]);
 
   const amountParsed = evaluateFormula(form.amount);
   // 할인·수익 — 빈칸은 null(=0). 잘못된 수식·음수는 조용히 0으로 바꾸지 않고 막는다 (B-036)
@@ -107,11 +111,13 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
         discount_amount: editingTx.discount_amount ? String(editingTx.discount_amount) : '',
         event_id: editingTx.event_id ? String(editingTx.event_id) : '',
         foreign_amounts,
+        member: editingTx.member || '',
       });
     } else {
       skipSubResetRef.current = null;
       resetSplit();
-      setForm({ ...EMPTY_FORM, date: defaultDate || today() });
+      // 새 거래의 '누가'는 이 기기 사용자 (I-013)
+      setForm({ ...EMPTY_FORM, date: defaultDate || today(), member: resolveDeviceMember(dbRef.current) });
     }
     setAddedCount(0);
   }, [editingTx, defaultDate, discount, loadSplit, resetSplit]);
@@ -227,6 +233,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
       sub_category: form.sub_category,
       detail: form.detail,
       event_id: form.event_id ? Number(form.event_id) : null,
+      member: form.member || '',
     };
 
     // 분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 2건으로 기록한다.
@@ -275,7 +282,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
     if (keepOpen) resetForNext();
   };
 
-  // 다음 거래 입력용 초기화 — 날짜·결제수단·카테고리·일정은 유지한다
+  // 다음 거래 입력용 초기화 — 날짜·결제수단·카테고리·일정·누가는 유지한다
   const resetForNext = () => {
     discount.recalc();
     discount.resetEdited();
@@ -285,6 +292,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
       payment_method: prev.payment_method,
       budget_category: prev.budget_category,
       event_id: prev.event_id,
+      member: prev.member,
     }));
     resetSplit();
     setAddedCount(c => c + 1);
@@ -315,6 +323,12 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
     });
   };
 
+  // 영수증·말로 입력·카드 문자로 여러 건을 한 번에 넣을 때도 폼에서 고른 '누가'를 쓴다
+  const bulkAdd = (rows, opts) => onBulkAdd(
+    rows.map(r => (r.member === undefined ? { ...r, member: form.member || '' } : r)),
+    opts,
+  );
+
   const applyFavorite = (fav) => {
     favs.recordUse(fav);
     setForm(prev => ({
@@ -344,7 +358,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
           {/* AI 입력 — 영수증 사진 / 말로 입력 */}
           {!editingTx && (
-            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={onBulkAdd} resetKey={addedCount} />
+            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={bulkAdd} resetKey={addedCount} />
           )}
 
           {/* 즐겨찾기 칩 */}
@@ -365,6 +379,8 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
             calendarEvents={calendarEvents}
             eventTypeMap={eventTypeMap}
           />
+
+          <MemberPicker members={members} value={form.member} onChange={v => set('member', v)} />
 
           {/* 남은 현금 · 현지 금액 */}
           <TripAmountSection
@@ -419,7 +435,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
               />
               <span>
                 <b>연속 입력</b>
-                <small>추가 후 창을 닫지 않고 바로 다음 거래 입력 (날짜·결제수단·카테고리·일정 유지)</small>
+                <small>추가 후 창을 닫지 않고 바로 다음 거래 입력 (날짜·결제수단·카테고리·일정·누가 유지)</small>
               </span>
             </label>
           )}

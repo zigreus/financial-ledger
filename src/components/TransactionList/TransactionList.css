@@ -474,3 +474,52 @@
   color: #16A34A;
   border-color: #16A34A;
 }
+
+/* 누가 (I-013) */
+.tx-member {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* 잔액 위험 알림 (B-066) */
+.balance-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid #FCD34D;
+  border-radius: 10px;
+  background: #FFFBEB;
+  color: #92400E;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.balance-alert-icon { flex-shrink: 0; }
+.balance-alert-list { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.balance-alert-link {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.balance-alert-more { color: #B45309; font-weight: 600; white-space: nowrap; }
+.balance-alert-close {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #B45309;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}

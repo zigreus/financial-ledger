@@ -6,6 +6,7 @@ import {
   getYearlySummary, getYearlyPaymentMethodSummary, getYearlySubCategorySummary,
   getRangeSummary, getRangePaymentMethodSummary, getRangeSubCategorySummary,
   getAvailableYears, getEventSummary, getEventDetailSummary, getEventPaymentMethodSummary,
+  getMemberSummary, getMemberNames,
   getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
@@ -162,6 +163,16 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
     }
     return [];
   }, [live, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId, eventTypeFilter]);
+
+  // 구성원별 합계 (I-013) — 구성원이 있을 때 월·연·기간 보기에서만
+  const members = useMemo(() => getMemberNames(live.db), [live]);
+  const memberSummary = useMemo(() => {
+    if (!members.length) return [];
+    if (filterType === 'month') return getMemberSummary(live.db, { month: selectedMonth });
+    if (filterType === 'year') return selectedYear ? getMemberSummary(live.db, { year: selectedYear }) : [];
+    if (filterType === 'range') return dateFrom && dateTo ? getMemberSummary(live.db, { from: dateFrom, to: dateTo }) : [];
+    return [];
+  }, [live, members, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const eventTypes = useMemo(() => getCalendarEventTypes(live.db), [live]);
   const eventTypeMap = useMemo(
@@ -789,6 +800,32 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
                 </tfoot>
               </table>
             )
+          )}
+
+          {memberSummary.length > 0 && (
+            <table className="summary-table summary-member-table">
+              <thead>
+                <tr>
+                  <th>누가</th>
+                  <th>건수</th>
+                  <th>지출/할인</th>
+                  <th>총액</th>
+                </tr>
+              </thead>
+              <tbody>
+                {memberSummary.map(r => (
+                  <tr key={r.member || '__none__'}>
+                    <td>{r.member || '지정 안 함'}</td>
+                    <td>{r.cnt}</td>
+                    <td className="amount-cell">
+                      {formatAmount(r.total)}원
+                      {r.discount > 0 && <div className="cell-sub-line cell-sub-discount">-{formatAmount(r.discount)}원</div>}
+                    </td>
+                    <td className="total-cell">{formatAmount(r.total - (r.discount || 0))}원</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

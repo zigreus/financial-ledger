@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   initSQL, createDatabase, exportDatabase, runAutoRegister, runAccountAutoRegister,
+  getAutoIncrementSeqs, raiseAutoIncrementSeqs,
 } from '../services/dbManager';
 import {
   readDbFromOneDrive, writeDbToOneDrive, getRemoteETag, ConflictError, ReauthRedirectError,
@@ -9,7 +10,11 @@ import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId,
   savePending, loadPending, clearPending,
 } from '../services/changeLog';
+import {
+  listBackups as listBackupFiles, uploadBackup, uploadNewBackup, downloadBackup, pruneBackups, backupName,
+} from '../services/oneDriveBackup';
 import { hasHolidayData } from '../data/holidays';
+import { todayStr } from '../services/dateUtils';
 
 const SAVE_DEBOUNCE_MS = 400;
 const OLD_DB_CLOSE_DELAY_MS = 30000;
@@ -25,6 +30,11 @@ const MAX_ATTEMPTS = 5;
  *  - 저장에 성공하면 내 DB가 곧 OneDrive 파일이므로 다시 읽지 않는다 (업로드 1번).
  *  - 저장 안 된 변경은 브라우저에도 보관해, 재로그인 리다이렉트·탭 종료 뒤에도 되살린다.
  *  - dataVersion은 쓰기마다 올라간다. 화면은 db를 읽는 memo 의존성에 이 값을 넣는다.
+ *
+ * 백업 (I-014)
+ *  - 그날 OneDrive에서 파일을 처음 받을 때 backups/ 폴더에 그날 백업을 만든다(기기마다 하루 한 번 시도, 실패해도 앱은 계속).
+ *  - 되돌리기(restoreBackup)는 restoringRef로 자동 저장·불러오기를 멈춘 채 진행한다. 그 사이 이 기기에서 생긴 변경은
+ *    버리지 않고 되돌린 DB에 다시 실행해 이어서 저장한다. 덮어쓰는 OneDrive 파일은 매번 먼저 백업한다.
  */
 export default function useLedgerSync({ instance, accounts }) {
   const [db, setDb] = useState(null);
@@ -47,6 +57,9 @@ export default function useLedgerSync({ instance, accounts }) {
   const bumpScheduledRef = useRef(false);
   const onWriteRef = useRef(() => {});
   const saveNowRef = useRef(() => Promise.resolve(true));
+  const backupDayRef = useRef(''); // 이 세션에서 매일 백업을 시도한 날
+  const restoringRef = useRef(false); // 되돌리는 중 — 자동 저장·불러오기를 멈춘다
+  const loadPromiseRef = useRef(null); // 진행 중인 불러오기 (되돌리기 전에 끝나기를 기다린다)
   accountKeyRef.current = accountKey;
 
   const notify = useCallback((text) => setNotice({ text, seq: Date.now() }), []);
@@ -69,7 +82,8 @@ export default function useLedgerSync({ instance, accounts }) {
       setPendingCount(log ? log.entries.length : 0);
       persist();
       clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
+      // 되돌리는 중에 생긴 변경은 되돌리기가 끝난 뒤 새 DB에서 저장한다
+      if (!restoringRef.current) saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
     });
   };
 
@@ -131,6 +145,7 @@ export default function useLedgerSync({ instance, accounts }) {
   const saveNow = useCallback(() => {
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
+    if (restoringRef.current) return Promise.resolve(false); // 되돌리기가 끝나면 이어서 저장한다
     if (loopRef.current) return loopRef.current;
     if (!dbRef.current) return Promise.resolve(true);
 
@@ -185,10 +200,33 @@ export default function useLedgerSync({ instance, accounts }) {
   saveNowRef.current = () => { saveTimerRef.current = null; return saveNow(); };
 
   /**
+   * 그날의 매일 백업 (I-014) — OneDrive에서 막 받은 파일 그대로를 backups/ledger-YYYY-MM-DD.db로 올린다.
+   * 같은 날 다른 기기가 이미 만들었으면 덮어쓰지 않는다. 새로 만들었을 때만 오래된 백업을 정리한다.
+   * 백업 실패는 가계부 사용을 막지 않는다(다음에 열 때 다시 시도).
+   */
+  const runDailyBackup = useCallback(async (bytes) => {
+    const today = todayStr();
+    const doneKey = `ledger_last_backup:${accountKeyRef.current}`;
+    let doneDay = '';
+    try { doneDay = window.localStorage.getItem(doneKey) || ''; } catch (e) { /* 비공개 모드 */ }
+    if (doneDay === today || backupDayRef.current === today) return;
+    backupDayRef.current = today;
+    try {
+      const created = await uploadBackup(instance, accounts, backupName(new Date()), bytes);
+      try { window.localStorage.setItem(doneKey, today); } catch (e) { /* 다음에 한 번 더 확인할 뿐 */ }
+      if (created) await pruneBackups(instance, accounts);
+    } catch (e) {
+      backupDayRef.current = '';
+      // eslint-disable-next-line no-console
+      console.warn('[매일 백업 실패]', e);
+    }
+  }, [instance, accounts]);
+
+  /**
    * OneDrive에서 불러온다. 처음 열 때와 🔄 새로고침에 쓴다.
    * 저장 안 된 변경이 있으면 버리지 않고 먼저 저장(필요하면 병합)한다 (B-003).
    */
-  const loadDb = useCallback(async ({ silent = false } = {}) => {
+  const loadDbInner = useCallback(async ({ silent = false } = {}) => {
     if (loadingRef.current) return;
     const hadDb = !!dbRef.current;
     const curLog = getChangeLog(dbRef.current);
@@ -259,6 +297,9 @@ export default function useLedgerSync({ instance, accounts }) {
         if (newerSchema) errors.push('이 가계부는 더 새 버전의 앱에서 저장되었습니다 — 페이지를 새로고침해 앱을 업데이트하세요');
         setError(errors.join(' · '));
 
+        // 그날 처음 받은 파일이면 그대로 백업 (기다리지 않는다 — 자정을 넘겨 켜 둔 탭도 다음 날 받을 때 만든다)
+        if (data) runDailyBackup(data);
+
         if (auto.count > 0) notify(`✓ 정기지출 ${auto.count}건 자동 등록됨 (${auto.months.join(', ')})`);
         if (restored.length) {
           if (!hadDb) notify(`저장되지 않았던 변경 ${restored.length}건을 되살려 저장합니다`);
@@ -274,7 +315,129 @@ export default function useLedgerSync({ instance, accounts }) {
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [instance, accounts, saveNow, attach, swapDb, persist, takeRestorable, notify]);
+  }, [instance, accounts, saveNow, attach, swapDb, persist, takeRestorable, notify, runDailyBackup]);
+
+  const loadDb = useCallback((opts) => {
+    if (restoringRef.current) return Promise.resolve();
+    // 이미 불러오는 중이면 그 불러오기를 돌려준다 — 되돌리기가 진짜 진행 중인 불러오기를 기다릴 수 있게
+    if (loadPromiseRef.current) return loadPromiseRef.current;
+    const p = loadDbInner(opts);
+    loadPromiseRef.current = p;
+    p.finally(() => { if (loadPromiseRef.current === p) loadPromiseRef.current = null; }).catch(() => {});
+    return p;
+  }, [loadDbInner]);
+
+  // ── 백업 목록·직접 백업·되돌리기 (I-014) — 설정 › 데이터 화면이 쓴다 ─────────
+
+  const listBackups = useCallback(() => listBackupFiles(instance, accounts), [instance, accounts]);
+
+  /** 저장 안 된 변경을 먼저 저장한 뒤, 지금 가계부를 시각이 붙은 백업으로 남긴다. 파일 이름을 돌려준다. */
+  const createBackup = useCallback(async () => {
+    if (!dbRef.current) throw new Error('가계부가 열려 있지 않습니다');
+    if (restoringRef.current) throw new Error('되돌리는 중입니다 — 끝난 뒤 다시 시도하세요');
+    if (getChangeLog(dbRef.current)?.entries.length) {
+      const ok = await saveNow();
+      if (!ok) throw new Error('저장 안 된 변경을 먼저 저장하지 못했습니다 — 연결을 확인하세요');
+    } else if (loopRef.current) {
+      await loopRef.current;
+    }
+    return uploadNewBackup(instance, accounts, exportDatabase(dbRef.current));
+  }, [instance, accounts, saveNow]);
+
+  /**
+   * 고른 백업으로 되돌린다.
+   *  1) 저장 안 된 변경을 저장하고, 자동 저장·불러오기를 멈춘다(restoringRef)
+   *  2) 지금 OneDrive 파일을 받아 그대로 백업한다 — 다른 기기가 방금 저장한 것까지 남는다
+   *  3) 백업 파일을 열어 검사·마이그레이션하고, AUTOINCREMENT 번호를 지금 파일 이상으로 올린다
+   *     (그 뒤 생겼다 사라진 행의 id를 새 행이 다시 받으면, 다른 기기의 밀린 수정이 엉뚱한 행에 들어간다)
+   *  4) 2)에서 받은 eTag로만 올린다. 그 사이 다른 기기가 저장했으면 2)부터 다시 해 그 저장도 백업한다.
+   *     응답을 못 받았으면 OneDrive 파일의 동기화 표식으로 실제로 올라갔는지 확인한다
+   *  5) 화면의 DB를 바꾼다. 그동안 이 기기에서 생긴 변경은 버리지 않고 새 DB에 다시 실행해 이어서 저장한다
+   * 2)~4)에서 실패하면 ledger.db와 화면은 그대로다.
+   */
+  const restoreBackup = useCallback(async (backup) => {
+    if (!dbRef.current) throw new Error('가계부가 열려 있지 않습니다');
+    if (restoringRef.current) throw new Error('이미 되돌리는 중입니다');
+    if (getChangeLog(dbRef.current)?.entries.length) {
+      const ok = await saveNow();
+      if (!ok) throw new Error('저장 안 된 변경을 먼저 저장하지 못했습니다 — 연결을 확인하세요');
+    }
+
+    restoringRef.current = true;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    let fresh = null;
+    try {
+      // 이미 시작한 저장·불러오기가 끝나기를 기다린다 (그 결과가 되돌린 DB를 덮지 않게)
+      if (loopRef.current) await loopRef.current;
+      if (loadPromiseRef.current) await loadPromiseRef.current.catch(() => {});
+
+      const SQL = await initSQL();
+      const backupBytes = await downloadBackup(instance, accounts, backup.id);
+      let tag = null;
+      for (let attempt = 0; ; attempt += 1) {
+        const current = await readDbFromOneDrive(instance, accounts); // 2)
+        if (current.data) await uploadNewBackup(instance, accounts, current.data);
+
+        if (fresh) { fresh.close(); fresh = null; } // 3)
+        const opened = createDatabase(SQL, backupBytes);
+        fresh = opened.db;
+        if (opened.newerSchema) throw new Error('더 새 버전의 앱에서 만든 백업입니다 — 페이지를 새로고침해 앱을 업데이트하세요');
+        if (opened.migrationErrors.length) throw new Error(`백업 파일을 여는 중 오류: ${opened.migrationErrors.join(' / ')}`);
+        const seqs = getAutoIncrementSeqs(dbRef.current);
+        if (current.data) {
+          const cur = new SQL.Database(current.data);
+          try {
+            Object.entries(getAutoIncrementSeqs(cur)).forEach(([name, seq]) => { seqs[name] = Math.max(seqs[name] || 0, seq); });
+          } finally { cur.close(); }
+        }
+        raiseAutoIncrementSeqs(fresh, seqs);
+        runAutoRegister(fresh);
+        runAccountAutoRegister(fresh);
+        const writeId = stampWriteId(fresh);
+
+        try { // 4)
+          tag = await writeDbToOneDrive(instance, accounts, exportDatabase(fresh), current.eTag);
+          break;
+        } catch (e) {
+          if (e instanceof ConflictError) {
+            if (attempt >= 2) throw new Error('다른 기기와 저장이 계속 겹칩니다 — 잠시 후 다시 시도하세요');
+            continue;
+          }
+          const check = await readDbFromOneDrive(instance, accounts).catch(() => null);
+          let landed = false;
+          if (check?.data) {
+            const remote = new SQL.Database(check.data);
+            try { landed = readWriteId(remote) === writeId; } finally { remote.close(); }
+          }
+          if (!landed) {
+            // 올라갔는지 확인하지 못했다(그 사이 다른 기기가 저장했거나 연결이 끊김) — 결과를 단정하지 않는다
+            throw new Error(`되돌리기 결과를 확인하지 못했습니다 (${e.message}). 🔄 새로고침으로 지금 상태를 확인하세요 — 되돌리기 전 상태는 백업 목록에 있습니다`);
+          }
+          tag = check.eTag;
+          break;
+        }
+      }
+
+      // 5) ↓ 교체는 동기 실행 — 되돌리는 동안 생긴 변경은 새 DB에 다시 실행해 이어서 저장한다
+      const leftover = getChangeLog(dbRef.current)?.entries || [];
+      const carried = leftover.length ? replayChanges(fresh, leftover).entries : [];
+      inFlightRef.current = null;
+      attach(fresh, carried);
+      swapDb(fresh, tag);
+      if (!carried.length) clearPending(accountKeyRef.current);
+      persist();
+      fresh = null;
+      setError('');
+      notify(`✓ ${backup.date} 백업으로 되돌렸습니다`);
+    } finally {
+      if (fresh) { try { fresh.close(); } catch (e) { /* 이미 닫힘 */ } }
+      restoringRef.current = false;
+      if (getChangeLog(dbRef.current)?.entries.length && !saveTimerRef.current) {
+        saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
+      }
+    }
+  }, [instance, accounts, saveNow, attach, swapDb, persist, notify]);
 
   /** 로그아웃 전 — 메모리의 DB와 보관 중인 변경을 모두 지운다 (B-004) */
   const resetForLogout = useCallback(() => {
@@ -338,5 +501,6 @@ export default function useLedgerSync({ instance, accounts }) {
     db, dataVersion, loading, saving, error, setError, notice,
     pendingCount, dirty: pendingCount > 0,
     loadDb, saveNow, resetForLogout,
+    listBackups, createBackup, restoreBackup,
   };
 }

@@ -81,7 +81,7 @@
 | B-063 | ✅ | 중간 | 카드 대조 | "N건 추가"가 중간에 실패하면 일부만 들어감 |
 | B-064 | ✅ | 높음 | AI | AI 서버 혼잡(503)이면 바로 실패, 다시 시도·다른 모델 전환 없음 |
 | B-065 | ⬜ | 중간 | 금액 입력 | 계좌·고정 입출금·할인 입력의 잘못된 금액이 조용히 0으로 저장됨 |
-| B-066 | 🔧 | 중간 | 계좌 | 위험 임계값을 설정해도 어느 화면에서도 경고하지 않음 |
+| B-066 | ✅ | 중간 | 계좌 | 위험 임계값을 설정해도 어느 화면에서도 경고하지 않음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -93,9 +93,9 @@
 | I-009 | ✅ | - | DB | 스키마 버전 관리 없음 |
 | I-010 | ✅ | - | 구조 | dataVersion 반영 방식이 두 가지(eslint-disable vs useDbSnapshot) |
 | I-011 | ✅ | - | 문서 | 설정·가져오기·설계 문서가 Vite 이전·리디렉션 로그인·자동 저장 등 지금 코드와 다름 |
-| I-012 | 🔧 | - | 거래 입력 | 카드 승인 문자를 붙여넣어 AI 없이 거래 입력 (ROADMAP C-2) |
-| I-013 | 🔧 | - | 거래 입력 | 누가 쓴 거래인지(가족 구성원) 기록·필터·요약 (ROADMAP C-3) |
-| I-014 | 🔧 | - | 저장·동기화 | 거래 CSV 내보내기, DB 파일 받기, 매일 자동 백업과 되돌리기 (ROADMAP F-1) |
+| I-012 | ✅ | - | 거래 입력 | 카드 승인 문자를 붙여넣어 AI 없이 거래 입력 (ROADMAP C-2) |
+| I-013 | ✅ | - | 거래 입력 | 누가 쓴 거래인지(가족 구성원) 기록·필터·요약 (ROADMAP C-3) |
+| I-014 | ✅ | - | 저장·동기화 | 거래 CSV 내보내기, DB 파일 받기, 매일 자동 백업과 되돌리기 (ROADMAP F-1) |
 | I-015 | ✅ | - | AI | PC에서 넣은 AI API 키를 휴대폰에서 다시 입력해야 함 |
 | I-016 | ✅ | - | 계좌 | 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임 |
 
@@ -688,13 +688,13 @@
 - 파일: src/components/AccountManagement/AccountManagement.js(657·659·846행), src/components/SettingsView/sections/DiscountRulesSection.js(37행), src/components/SettingsView/sections/RecurringSection.js(91행)
 
 ### B-066 위험 임계값을 설정해도 어느 화면에서도 경고하지 않음
-- 상태: 🔧 진행 중
+- 상태: ✅ 해결 (2026-11-08)
 - 심각도: 중간
 - 영역: 계좌
 - 문제: 계좌에 위험 임계값을 넣어도 앞으로 잔액이 그 아래로 내려가는 날을 알려 주지 않아 자동이체 잔액 부족을 미리 알 수 없다.
 - 원인: `getBalanceForecast`가 `isBelowDanger`를 계산하지만 이 함수를 부르는 화면이 없고, 계좌 내역의 잔액은 0 미만일 때만 빨갛게 표시한다.
-- 해결: (예정) 계좌 내역 잔액을 임계값 기준으로 강조하고 거래 목록 첫 화면에 "N일 뒤 임계값 아래" 배너를 띄운다(docs/ROADMAP.md C-1).
-- 파일: src/services/db/accounts.js(368행), src/components/AccountManagement/AccountManagement.js
+- 해결: getBalanceAlerts가 35일 안에 하루 끝 잔액이 임계값 아래로 내려가는 첫날(이미 아래면 오늘)을 찾아 거래 목록 첫 화면에 배너(누르면 그 계좌, 닫으면 같은 내용은 그날 다시 안 보임)로 알리고, 계좌 내역의 잔액도 임계값 아래면 주황으로 표시한다.
+- 파일: src/services/db/accounts.js, src/components/TransactionList/BalanceAlertBanner.js, TransactionList.js, src/components/AccountManagement/AccountManagement.js, src/components/App/App.js
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
@@ -783,6 +783,30 @@
 - 원인: I-004·I-008·B-001·B-016 등으로 코드가 크게 바뀌는 동안 README·AGENTS.md·BUGS.md만 고쳤다.
 - 해결: SETUP.md(Vite·리디렉션·AI 키·문제 해결)와 IMPORT_GUIDE.md(거래 JSON·CSV, 계좌 CSV)를 코드 기준으로 다시 쓰고, 설계 문서마다 맨 위에 '현재 상태'(구현 여부·코드와 다른 점)를 붙였으며, AGENTS.md 파일 표에 AI·가져오기 모듈을, BUGS.md I-010에 CardStatementModal 후속 변경을 반영했다.
 - 파일: SETUP.md, IMPORT_GUIDE.md, README.md, AGENTS.md, docs/BUGS.md, docs/*-design.md, docs/settings-redesign.md, docs/summary-event-filter-ux-review.md, src/config.js(주석)
+
+### I-012 카드 승인 문자를 붙여넣어 AI 없이 거래 입력
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 거래 입력
+- 문제: 가장 흔한 입력 경로인 카드 승인 문자를 쓰려면 AI 키가 있어야 하는 '말로 입력'을 거치거나 손으로 옮겨 적어야 한다.
+- 원인: 입력 보조가 영수증·말로 입력(둘 다 AI)뿐이었다.
+- 해결: 거래 추가 폼에 '카드 문자'를 두고, 붙여넣은 여러 문자를 규칙으로 읽어(금액·날짜·카드사·끝자리·가맹점·할부·취소, 승인 거절·청구 안내는 건너뜀) 예전 습관으로 분류하며, 카드→결제수단을 기기별로 기억하고, 이미 있는 거래는 중복으로, 승인 취소는 지울 거래 후보(같은 가게·3일 안쪽만 미리 체크)로 보여 준 뒤 고른 것만 한 번에 반영한다.
+- 파일: src/services/cardSms.js, src/components/AIEntry/SmsPanel.js, SuggestionItem.js, AIEntry.js, TextPanel.js, AIEntry.css, src/services/receiptAssistant.js, src/components/App/App.js
+
+### I-013 누가 쓴 거래인지(가족 구성원) 기록·필터·요약
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 거래 입력
+- 문제: 가족이 같은 계정으로 함께 쓰는데 거래마다 누가 썼는지 남길 수 없어 구성원별로 보거나 합계를 낼 수 없다.
+- 원인: transactions에 구성원 칸이 없었다.
+- 해결: members 테이블과 transactions.member(이름 참조, SCHEMA_VERSION 3)를 추가하고, 이름 변경·삭제 때 거래 참조를 함께 고치며(병합으로 목록에 없는 이름이 생기면 열 때 목록에 되살림), 기기별 '이 기기 사용자'를 새 거래 기본값으로 쓰고, 거래 폼 '누가' 칩·목록 필터·배지·요약 구성원별 표·설정 › 데이터의 구성원 관리를 넣었다.
+- 파일: src/services/db/members.js, schema.js, transactions.js, summary.js, src/services/deviceMember.js, src/components/TransactionForm/MemberPicker.js, TransactionForm.js, src/components/TransactionList/TransactionList.js, src/components/SummaryView/SummaryView.js, src/components/SettingsView/sections/DataSection.js, AGENTS.md
+
+### I-014 거래 CSV 내보내기, DB 파일 받기, 매일 자동 백업과 되돌리기
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 저장·동기화
+- 문제: 앱 안에서 데이터를 꺼낼 수 없고, 실수로 지운 것을 되돌리려면 OneDrive 웹의 버전 기록을 찾아야 하는데 자동 저장마다 버전이 쌓여 며칠 전 상태는 금방 밀려난다.
+- 원인: 내보내기·백업 기능이 없었다.
+- 해결: 설정 › 데이터에 가져오기와 같은 칸의 거래 CSV(엑셀 수식 방지, 다시 가져오기 가능)·.db 파일 내려받기를 넣고, 그날 처음 받을 때 OneDrive backups/에 매일 백업(최근 30개)을 만들며, '되돌리기'는 자동 저장을 멈춘 채 덮어쓸 파일을 먼저 백업하고 그 eTag로만 올리며(겹치면 다시 백업 후 재시도) AUTOINCREMENT 번호를 올려 옛 id 재사용을 막고, 그동안 생긴 이 기기 변경은 되돌린 DB에 이어서 저장한다.
+- 파일: src/services/oneDriveBackup.js, src/hooks/useLedgerSync.js, src/services/exportData.js, src/services/csv.js, src/components/common/download.js, src/components/SettingsView/sections/DataSection.js, SettingsView.js, src/components/App/App.js
 
 ### I-015 PC에서 넣은 AI API 키를 휴대폰에서 다시 입력해야 함
 - 상태: ✅ 해결 (2026-11-08)

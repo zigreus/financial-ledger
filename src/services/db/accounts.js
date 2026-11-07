@@ -1,6 +1,6 @@
 // 계좌·고정 입출금 항목·계좌 거래, 계좌 자동등록, 잔액 예측.
 
-import { addDays, toDateStr } from '../dateUtils';
+import { addDays, parseDateStr, toDateStr } from '../dateUtils';
 import { dbRowsToObjects, todayLocal, withTransaction } from './common';
 import { recurringDateFor, ymOf } from './recurringDates';
 
@@ -322,12 +322,11 @@ export function runAccountAutoRegister(db, now = new Date()) {
 
 // ── 잔액 예측 ────────────────────────────────────────────────────
 
-export function getBalanceForecast(db, accountId, daysAhead = 90) {
+export function getBalanceForecast(db, accountId, daysAhead = 90, now = new Date()) {
   const account = getAccount(db, accountId);
   if (!account) return [];
 
-  const today = new Date();
-  const todayYmd = toDateStr(today);
+  const todayYmd = toDateStr(now);
   const endStr = addDays(todayYmd, daysAhead);
 
   // current_balance(잔액 기준일 시작 잔액)에 기준일~오늘 거래를 순서대로 적용 → 실제 현재 잔액 (B-022)
@@ -376,4 +375,38 @@ export function getBalanceForecast(db, accountId, daysAhead = 90) {
   });
 
   return { account, startBalance: actualCurrentBalance, events };
+}
+
+/**
+ * 잔액 위험 알림 (B-066) — 위험 임계값을 넣은 계좌마다, 앞으로 daysAhead일 안에 잔액이 임계값 아래로
+ * 내려가는 첫날을 찾는다. 이미 아래면 오늘(isNow)로 알린다.
+ * 같은 날 입금·출금 순서는 알 수 없으므로 하루가 끝났을 때의 잔액으로 판단한다(같은 날 월급이 들어오면 경고하지 않음).
+ * 반환: [{ accountId, accountName, threshold, date, balance, daysUntil, isNow }] (가까운 날 순)
+ */
+export function getBalanceAlerts(db, { daysAhead = 35, now = new Date() } = {}) {
+  const todayYmd = toDateStr(now);
+  const alerts = [];
+  getAllAccounts(db).forEach(account => {
+    const threshold = Number(account.danger_threshold) || 0;
+    if (threshold <= 0) return;
+    const forecast = getBalanceForecast(db, account.id, daysAhead, now);
+    if (!forecast || !forecast.account) return;
+
+    const base = { accountId: account.id, accountName: account.name, threshold };
+    if (forecast.startBalance < threshold) {
+      alerts.push({ ...base, date: todayYmd, balance: forecast.startBalance, daysUntil: 0, isNow: true });
+      return;
+    }
+    // 날짜별 마지막 잔액
+    const endOfDay = new Map();
+    forecast.events.forEach(ev => endOfDay.set(ev.date, ev.balance));
+    for (const [date, balance] of endOfDay) {
+      if (balance < threshold) {
+        const daysUntil = Math.round((parseDateStr(date) - parseDateStr(todayYmd)) / 86400000);
+        alerts.push({ ...base, date, balance, daysUntil, isNow: false });
+        break;
+      }
+    }
+  });
+  return alerts.sort((a, b) => a.date.localeCompare(b.date) || a.balance - b.balance);
 }

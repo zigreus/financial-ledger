@@ -132,7 +132,7 @@ export function getEventPaymentMethodSummary(db, eventId = null, eventType = nul
 // ── 기간별 요약 (월·연·기간 × 카테고리·세부카테고리·결제수단) ──────────────
 // 아래 9개 함수는 기간 조건과 묶는 기준만 다르다. 쿼리는 summarizeTransactions 한 곳에서 만든다.
 
-const SUMMARY_GROUP_COLUMNS = ['budget_category', 'sub_category', 'payment_method'];
+const SUMMARY_GROUP_COLUMNS = ['budget_category', 'sub_category', 'payment_method', 'member'];
 
 /** 기간 조건 — { month } | { year } | { from, to }. month가 비어 있으면 전체 기간 (연·기간은 항상 적용) */
 function summaryPeriod(period) {
@@ -229,4 +229,23 @@ export function getRangeSubCategorySummary(db, dateFrom, dateTo, budgetCategory)
 
 export function getRangePaymentMethodSummary(db, dateFrom, dateTo) {
   return summarizeTransactions(db, 'payment_method', { from: dateFrom, to: dateTo });
+}
+
+/**
+ * 구성원별 합계 (I-013) — period: { month } | { year } | { from, to }.
+ * 반환 행의 member가 빈 문자열이면 '지정 안 함'이다.
+ */
+export function getMemberSummary(db, period) {
+  // NULL과 ''는 같은 '지정 안 함'으로 합친다
+  const byMember = new Map();
+  summarizeTransactions(db, 'member', period).forEach(r => {
+    const key = r.member || '';
+    const acc = byMember.get(key) || { member: key, total: 0, discount: 0, cnt: 0 };
+    acc.total += r.total || 0;
+    acc.discount += r.discount || 0;
+    acc.cnt += r.cnt || 0;
+    byMember.set(key, acc);
+  });
+  // 표에 보이는 순지출(지출 - 할인) 순 (B-051)
+  return [...byMember.values()].sort((a, b) => (b.total - b.discount) - (a.total - a.discount));
 }

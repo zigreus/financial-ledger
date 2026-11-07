@@ -5,7 +5,7 @@
 **구현됨 — 잔액 예측 탭은 만들지 않음.** 이 문서는 설계 당시의 기록입니다. 본문과 코드가 다르면 코드가 맞고, 코드 작성 규칙은 [AGENTS.md](../AGENTS.md)를 따릅니다.
 
 본문과 다른 점:
-- **잔액 예측 탭(§4-2, [이번달/1개월/3개월])은 없습니다.** 계좌 상세는 내역·설정 탭뿐이고, 고정 입출금을 1~3개월 앞까지 미리 등록해 내역의 '거래 후 잔액'으로 앞날 잔액을 봅니다. `getBalanceForecast`(db/accounts.js)는 있지만 화면에서 쓰지 않습니다.
+- **잔액 예측 탭(§4-2, [이번달/1개월/3개월])은 없습니다.** 계좌 상세는 내역·설정 탭뿐이고, 고정 입출금을 1~3개월 앞까지 미리 등록해 내역의 '거래 후 잔액'으로 앞날 잔액을 봅니다. `getBalanceForecast`(db/accounts.js)는 잔액 위험 알림(`getBalanceAlerts`, B-066)이 씁니다. 35일 안에 하루 끝 잔액이 위험 임계값 아래로 내려가면 거래 목록 첫 화면에 배너를 띄우고, 계좌 내역에서 임계값 아래 잔액을 주황으로 표시합니다.
 - **`holidays` 테이블은 없습니다(I-002).** 공휴일은 `src/data/holidays.js`에서 바로 읽습니다(연도별, §8의 2026년 목록보다 넓음). 휴일 보정은 `db/recurringDates.js`의 `recurringDateFor`·`getNextBusinessDay`·`getPrevBusinessDay`가 하며, 본문의 `getActualPaymentDate()`는 없습니다.
 - 휴일 보정 옵션은 `none`·`next_business`에 더해 `prev_business`(전 영업일)도 있습니다.
 - 자동등록 중복은 날짜(`strftime`)가 아니라 `recurring_month` 컬럼 + UNIQUE 인덱스로 막습니다(B-007). 사용자가 지운 달은 `account_recurring_skips`에 남겨 다시 만들지 않습니다(B-008). 사용자가 고친 내역(`is_modified`)은 건드리지 않습니다.

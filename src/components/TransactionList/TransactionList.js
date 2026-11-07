@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, MEMBER_NONE } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
+import BalanceAlertBanner from './BalanceAlertBanner';
 import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
@@ -11,8 +12,10 @@ import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
 import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
-function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck }) {
-  const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
+const EMPTY_FILTERS = { month: '', payment_method: '', budget_category: '', member: '', search: '' };
+
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount }) {
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
@@ -80,6 +83,9 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   }, [live]);
 
   const budgetCategories = useMemo(() => getAllBudgetCategories(live.db), [live]);
+  const members = useMemo(() => getMemberNames(live.db), [live]);
+  // 계좌 잔액이 위험선 아래로 내려가는 날 (B-066)
+  const balanceAlerts = useMemo(() => getBalanceAlerts(live.db), [live]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
@@ -236,7 +242,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
 
   const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  const clearFilters = () => { setFilters({ month: '', payment_method: '', budget_category: '', search: '' }); setShowIssueOnly(false); };
+  const clearFilters = () => { setFilters(EMPTY_FILTERS); setShowIssueOnly(false); };
   const hasFilters = Object.values(filters).some(v => v !== '') || showIssueOnly;
 
   const toggleSelectForDelete = (txId) => {
@@ -364,12 +370,21 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
               <option value="">전체 카테고리</option>
               {budgetCategories.map(c => <option key={c.id} value={c.name}>{c.name}{c.is_hidden ? ' (숨김)' : ''}</option>)}
             </select>
+            {(members.length > 0 || filters.member) && (
+              <select value={filters.member} onChange={e => setFilter('member', e.target.value)}>
+                <option value="">전체 구성원</option>
+                {members.map(m => <option key={m} value={m}>{m}</option>)}
+                <option value={MEMBER_NONE}>(누가 없음)</option>
+              </select>
+            )}
             {hasFilters && (
               <button className="btn-clear-filter" onClick={clearFilters}>초기화</button>
             )}
           </div>
         )}
       </div>
+
+      {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
 
       {/* 거래 목록 */}
       {transactions.length === 0 ? (
@@ -537,6 +552,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                           )}
                           {tx.detail && <span className="tx-detail-inline">{tx.sub_category ? `· ${tx.detail}` : tx.detail}</span>}
                           <span className="tx-spacer" />
+                          {tx.member && <span className="tx-member">{tx.member}</span>}
                           <span className="tx-payment">{tx.payment_method}</span>
                           {(() => {
                               let foreignEntries = [];
@@ -619,6 +635,12 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>결제수단</div>
                 <div style={{ fontSize: '15px' }}>{selectedDetail.payment_method}</div>
               </div>
+              {selectedDetail.member && (
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>누가</div>
+                  <div style={{ fontSize: '15px' }}>{selectedDetail.member}</div>
+                </div>
+              )}
               {selectedDetail.detail && (
                 <div style={{ marginBottom: '12px' }}>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>세부내역</div>

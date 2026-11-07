@@ -111,6 +111,7 @@
 }
 .acct-detail-balance-label { font-size: 11px; opacity: 0.8; }
 .acct-detail-balance-amount { font-size: 18px; font-weight: 700; margin-top: 1px; }
+.acct-detail-balance-warn { font-size: 11px; font-weight: 600; color: #FDE68A; }
 
 /* ── 탭 ─────────────────────────────────────────────────────── */
 .acct-tabs {
@@ -257,6 +258,7 @@
 .acct-tx-amount.expense { color: var(--danger); }
 .acct-tx-balance { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .acct-tx-balance.negative { color: var(--danger); font-weight: 600; }
+.acct-tx-balance.danger { color: #D97706; font-weight: 600; }
 
 .acct-tx-actions { display: flex; gap: 2px; }
 .acct-auto-badge { font-size: 11px; margin-left: 4px; }

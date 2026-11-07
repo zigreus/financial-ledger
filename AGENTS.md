@@ -15,13 +15,15 @@
 | 위치 | 역할 |
 |---|---|
 | `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
-| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts, discounts. 내부 도우미는 common·recurringDates |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts. 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
-| `src/services/oneDriveService.js` | Graph 호출(eTag 조건부 저장) |
+| `src/services/oneDriveService.js` + oneDriveBackup | Graph 호출(eTag 조건부 저장), 백업 폴더(`backups/`) 목록·생성·내려받기·정리 |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
 | `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
-| `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서, 미등록 카테고리 검사 |
+| `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
+| `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
+| `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/components/*` | 화면 |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
@@ -76,6 +78,8 @@
 - `auto_pattern_settings`(sub_category)
 - `settings`의 `trip_default_category`
 - `account_recurring_items.auto_payment_method`(결제수단)
+
+가족 구성원도 이름으로 참조합니다: `transactions.member` → `members.name`. `db/members.js`의 `renameMember`·`deleteMember`가 거래 참조를 함께 고칩니다(삭제하면 '누가'를 비우고 거래는 남깁니다). 기기별 '이 기기 사용자'(localStorage)와 카드 문자→결제수단 기억은 DB 밖에 있으므로, 쓸 때마다 DB 목록과 대조해 없는 이름은 버립니다. (I-012, I-013)
 
 다음 규칙도 함께 지킵니다.
 - **확인창 문구는 실제 동작과 정확히 일치해야 합니다.** 예: "거래가 비워집니다"라고 썼으면 실제로 비웁니다.

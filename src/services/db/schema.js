@@ -214,6 +214,14 @@ CREATE TABLE IF NOT EXISTS account_recurring_skips (
   PRIMARY KEY (recurring_item_id, recurring_month)
 );
 
+-- 가족 구성원 — 거래의 '누가'(transactions.member)가 이름으로 참조한다 (I-013)
+CREATE TABLE IF NOT EXISTS members (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS event_cash_flows (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id   INTEGER NOT NULL,
@@ -245,7 +253,7 @@ export async function initSQL() {
 // ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
 // 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
 // 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const COLUMN_MIGRATIONS = [
   // [테이블, 컬럼, 정의]
@@ -264,6 +272,8 @@ const COLUMN_MIGRATIONS = [
   ['event_cash_flows', 'account_tx_id', 'INTEGER DEFAULT NULL'],   // 계좌 출금/입금 기록
   ['event_cash_flows', 'linked_flow_id', 'INTEGER DEFAULT NULL'],  // 이월 나감 ↔ 이월 들어옴
   ['event_cash_flows', 'linked_tx_id', 'INTEGER DEFAULT NULL'],    // 재환전의 환차손익 거래
+  // 누가 쓴 거래인지 — members.name을 이름으로 참조한다. 빈 문자열은 '지정 안 함' (I-013)
+  ['transactions', 'member', "TEXT DEFAULT ''"],
 ];
 
 /** 컬럼이 없을 때만 추가한다. 추가했으면 true. */
@@ -411,6 +421,14 @@ export function createDatabase(SQL, existingData = null) {
     return changed > 0;
   });
 
+  // ── 구성원 목록 맞추기 (I-013) ─────────────────────────────────
+  // 한 기기가 이름을 바꾸거나 지운 사이 다른 기기가 옛 이름으로 적은 거래가 병합되면, 목록에 없는 이름이 남는다.
+  // 그 이름을 목록에 되살려 설정에서 바꾸거나 지울 수 있게 한다. 이미 맞으면 아무것도 바꾸지 않는다.
+  step('구성원 목록 맞추기', () => runCount(db, `INSERT INTO members (name, sort_order)
+    SELECT DISTINCT member, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM members)
+    FROM transactions
+    WHERE COALESCE(member, '') != '' AND member NOT IN (SELECT name FROM members)`) > 0);
+
   // ── 계좌 자동등록 내역의 '대상 월' 채우기 + 중복 정리 (B-007) ─────────
   step('계좌 자동등록 대상 월 정리', () => normalizeAccountRecurringMonths(db));
 
@@ -489,4 +507,27 @@ function normalizeAccountRecurringMonths(db) {
     changed = true;
   }
   return changed;
+}
+
+// ── AUTOINCREMENT 번호 (I-014 되돌리기) ─────────────────────────────
+// 백업으로 되돌린 파일은 그때의 sqlite_sequence를 갖고 있어, 그 뒤 만들어졌다 사라진 행의 id를 새 행이 다시 받는다.
+// 그러면 다른 기기가 아직 저장하지 못한 "UPDATE … WHERE id=?"가 엉뚱한 새 행을 고칠 수 있으므로,
+// 되돌리기 전에 쓰던 파일의 번호보다 작아지지 않게 올려 둔다.
+
+/** { 테이블: 마지막으로 쓴 AUTOINCREMENT 번호 } */
+export function getAutoIncrementSeqs(db) {
+  if (!tableExists(db, 'sqlite_sequence')) return {};
+  const out = {};
+  (db.exec('SELECT name, seq FROM sqlite_sequence')[0]?.values || []).forEach(([name, seq]) => { out[name] = seq; });
+  return out;
+}
+
+/** 각 테이블의 번호를 seqs 이상으로 올린다 (낮추지는 않는다). 대상 DB에 없는 테이블은 건너뛴다. */
+export function raiseAutoIncrementSeqs(db, seqs) {
+  Object.entries(seqs || {}).forEach(([name, seq]) => {
+    if (!tableExists(db, name) || !tableExists(db, 'sqlite_sequence')) return;
+    const cur = db.exec('SELECT seq FROM sqlite_sequence WHERE name = ?', [name])[0]?.values[0]?.[0];
+    if (cur === undefined) db.run('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)', [name, seq]);
+    else if (cur < seq) db.run('UPDATE sqlite_sequence SET seq = ? WHERE name = ?', [seq, name]);
+  });
 }

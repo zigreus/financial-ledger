@@ -292,3 +292,4 @@
     color: var(--text-muted);
   }
 }
+.summary-member-table { margin-top: 16px; }

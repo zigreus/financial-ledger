@@ -14,4 +14,5 @@ export * from './db/recurring';
 export * from './db/favorites';
 export * from './db/patterns';
 export * from './db/accounts';
+export * from './db/members';
 export { withTransaction } from './db/common';

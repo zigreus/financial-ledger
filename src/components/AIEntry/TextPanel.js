@@ -3,9 +3,8 @@ import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { parseTextEntry } from '../../services/textEntry';
 import { isSuggestionComplete, suggestionToTransaction } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
-import SuggestionDetails, {
-  SourceBadge, amountText, categoryText, CategoryPathSelect, splitCategoryPath,
-} from './SuggestionCard';
+import SuggestionDetails from './SuggestionCard';
+import SuggestionItem, { patchListItem } from './SuggestionItem';
 import './AIEntry.css';
 
 const EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 4500 카카오페이';
@@ -63,13 +62,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   };
 
   const updateItem = (idx, patch) => {
-    setItems(list => list.map((it, i) => {
-      if (i !== idx) return it;
-      const s = { ...it.s, ...patch, sources: { ...it.s.sources } };
-      if ('payment_method' in patch) delete s.sources.payment_method;
-      if ('budget_category' in patch) delete s.sources.category;
-      return { s, checked: isSuggestionComplete(s) ? (it.checked || !isSuggestionComplete(it.s)) : false };
-    }));
+    setItems(list => list.map((it, i) => (i === idx ? patchListItem(it, patch) : it)));
   };
 
   const ai = activeAI();
@@ -145,56 +138,17 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
       </div>
 
       <div className="tp-list">
-        {items.map((it, idx) => {
-          const s = it.s;
-          const complete = isSuggestionComplete(s);
-          return (
-            <div key={idx} className={`tp-item${it.checked ? ' checked' : ''}`}>
-              <label className="tp-item-head">
-                <input
-                  type="checkbox"
-                  checked={it.checked}
-                  disabled={!complete}
-                  onChange={e => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked: e.target.checked } : x)))}
-                />
-                <span className="tp-item-main">
-                  <b>{s.detail || '(내용 없음)'}</b>
-                  <small>{s.date}{s.eventTitle ? ` · ${s.eventTitle}` : ''}</small>
-                </span>
-                <span className={`tp-item-amount${s.amount === null ? ' missing' : ''}`}>{amountText(s)}</span>
-              </label>
-
-              <div className="tp-item-fields">
-                <span className="tp-field">
-                  <select
-                    value={s.payment_method}
-                    onChange={e => updateItem(idx, { payment_method: e.target.value })}
-                  >
-                    <option value="">결제수단 선택</option>
-                    {methods.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                  <SourceBadge source={s.sources.payment_method} />
-                </span>
-                <span className="tp-field">
-                  <CategoryPathSelect
-                    db={db}
-                    value={categoryText(s)}
-                    onChange={v => updateItem(idx, splitCategoryPath(v))}
-                  />
-                  <SourceBadge source={s.sources.category} />
-                </span>
-              </div>
-
-              {!complete && (
-                <div className="tp-item-missing">
-                  {s.amount === null ? '금액을 몰라요 — ' : '빈 항목을 고르거나 — '}
-                  <button type="button" className="rs-btn-link" onClick={() => onApply(s)}>폼에 채워서 입력</button>
-                </div>
-              )}
-              {s.warnings.length > 0 && <div className="tp-item-warn">{s.warnings.join(' · ')}</div>}
-            </div>
-          );
-        })}
+        {items.map((it, idx) => (
+          <SuggestionItem
+            key={idx}
+            db={db}
+            item={it}
+            methods={methods}
+            onToggle={checked => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked } : x)))}
+            onPatch={patch => updateItem(idx, patch)}
+            onFillForm={onApply}
+          />
+        ))}
       </div>
 
       <div className="rs-actions">

@@ -405,3 +405,21 @@
   color: #fff;
   border-color: var(--primary);
 }
+
+/* 누가 (I-013) */
+.member-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.member-chip {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.member-chip.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}

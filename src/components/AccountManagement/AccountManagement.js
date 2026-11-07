@@ -7,6 +7,7 @@ import {
   bulkInsertAccountTransactions, getPaymentMethods,
 } from '../../services/dbManager';
 import ModalOverlay from '../common/ModalOverlay';
+import { downloadText } from '../common/download';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
@@ -34,6 +35,13 @@ function fmt(dateStr) {
 
 function fmtAmount(n) {
   return Number(n).toLocaleString();
+}
+
+/** 잔액 표시 색 — 0 미만은 빨강, 위험 임계값 미만은 주황 (B-066) */
+function balanceTone(balance, threshold) {
+  if (balance < 0) return ' negative';
+  if (threshold > 0 && balance < threshold) return ' danger';
+  return '';
 }
 
 /**
@@ -264,6 +272,9 @@ function AccountDetail({ db, dataVersion, accountId, activeTab, showNavForm, onN
           <span className={`acct-detail-balance-amount${currentBalance < 0 ? ' negative' : ''}`}>
             {fmtAmount(currentBalance)}원
           </span>
+          {account.danger_threshold > 0 && currentBalance < account.danger_threshold && (
+            <span className="acct-detail-balance-warn">위험선 {fmtAmount(account.danger_threshold)}원 아래</span>
+          )}
         </div>
       </div>
 
@@ -285,6 +296,7 @@ function AccountDetail({ db, dataVersion, accountId, activeTab, showNavForm, onN
           db={db}
           transactions={transactions}
           balanceAfterMap={balanceAfterMap}
+          threshold={account.danger_threshold || 0}
           onOpenAdd={() => { setEditingTx(null); setShowTxForm(true); }}
           onOpenEdit={(tx) => { setEditingTx(tx); setShowTxForm(true); }}
           onOpenImport={() => setShowImport(true)}
@@ -328,7 +340,7 @@ function AccountDetail({ db, dataVersion, accountId, activeTab, showNavForm, onN
 
 // ── 내역 탭 ──────────────────────────────────────────────────────
 
-function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenEdit, onOpenImport, onChanged }) {
+function TransactionsTab({ db, transactions, balanceAfterMap, threshold = 0, onOpenAdd, onOpenEdit, onOpenImport, onChanged }) {
   // 현재 월만 기본 펼침, 지난 월은 접힘
   const [expandedMonths, setExpandedMonths] = useState(() => new Set([todayStr().slice(0, 7)]));
   const [expandedDates, setExpandedDates] = useState(new Set());
@@ -452,7 +464,7 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
                             <div className={`acct-tx-amount ${tx0.type === 'income' ? 'income' : 'expense'}`}>
                               {tx0.type === 'income' ? '+' : '-'}{fmtAmount(tx0.amount)}
                             </div>
-                            <div className={`acct-tx-balance${(balanceAfterMap[tx0.id] ?? 0) < 0 ? ' negative' : ''}`}>
+                            <div className={`acct-tx-balance${balanceTone(balanceAfterMap[tx0.id] ?? 0, threshold)}`}>
                               {fmtAmount(balanceAfterMap[tx0.id] ?? 0)}
                             </div>
                           </div>
@@ -477,7 +489,7 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
                               <div className={`acct-tx-amount ${dg.net >= 0 ? 'income' : 'expense'}`}>
                                 {dg.net >= 0 ? '+' : '-'}{fmtAmount(Math.abs(dg.net))}
                               </div>
-                              <div className={`acct-tx-balance${dg.endingBalance < 0 ? ' negative' : ''}`}>
+                              <div className={`acct-tx-balance${balanceTone(dg.endingBalance, threshold)}`}>
                                 {fmtAmount(dg.endingBalance)}
                               </div>
                             </div>
@@ -493,7 +505,7 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
                                 <div className={`acct-tx-amount ${tx.type === 'income' ? 'income' : 'expense'}`}>
                                   {tx.type === 'income' ? '+' : '-'}{fmtAmount(tx.amount)}
                                 </div>
-                                <div className={`acct-tx-balance${(balanceAfterMap[tx.id] ?? 0) < 0 ? ' negative' : ''}`}>
+                                <div className={`acct-tx-balance${balanceTone(balanceAfterMap[tx.id] ?? 0, threshold)}`}>
                                   {fmtAmount(balanceAfterMap[tx.id] ?? 0)}
                                 </div>
                               </div>
@@ -1014,15 +1026,6 @@ const ACCT_CSV_TEMPLATE =
   '2026-05-13,지출,신한카드 결제,450000\r\n' +
   '2026-05-20,지출,관리비,120000\r\n';
 
-function downloadAcctFile(content, filename) {
-  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 // ── 계좌 불러오기 모달 ────────────────────────────────────────────
 
@@ -1105,7 +1108,7 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
             </p>
             <div className="acct-import-template">
               <span>양식 다운로드</span>
-              <button className="acct-btn-add-sm" onClick={() => downloadAcctFile(ACCT_CSV_TEMPLATE, '계좌내역_양식.csv')}>
+              <button className="acct-btn-add-sm" onClick={() => downloadText(ACCT_CSV_TEMPLATE, '계좌내역_양식.csv')}>
                 CSV 양식
               </button>
             </div>

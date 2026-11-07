@@ -27,6 +27,7 @@ export const SOURCE_LABEL = {
   receipt: '영수증',
   text: '입력한 말',
   statement: '카드 내역',
+  sms: '카드 문자',
   history: '기존 내역',
   ai: 'AI 추천',
   trip: '여행 일정',

@@ -95,3 +95,24 @@ test('paramColumns는 ? 자리의 컬럼을 찾는다', () => {
   expect(paramColumns('UPDATE t SET a=?, b = ? WHERE id = ?')).toEqual({ table: 't', cols: ['a', 'b', 'id'] });
   expect(paramColumns('DELETE FROM t WHERE event_id = ?')).toEqual({ table: 't', cols: ['event_id'] });
 });
+
+test('백업으로 되돌린 파일에 다른 기기의 미저장 변경을 다시 실행하면, 새 입력은 들어가고 없는 행 수정은 무시된다 (I-014)', () => {
+  // 백업 시점: 거래 1건
+  const { db: atBackup } = createDatabase(SQL, null);
+  addTransaction(atBackup, tx('2026-11-01', '백업 전', 1000));
+  const backupBytes = atBackup.export();
+
+  // 그 뒤 다른 기기 B: 거래 1건 추가(저장됨) → 저장 전에 그 거래를 고치고 새 거래를 하나 더 적음
+  const B = createDatabase(SQL, backupBytes).db;
+  const laterId = addTransaction(B, tx('2026-11-05', '백업 뒤', 2000));
+  attachChangeLog(B);
+  B.run('UPDATE transactions SET amount = ? WHERE id = ?', [2500, laterId]);
+  addTransaction(B, tx('2026-11-06', 'B 미저장', 3000));
+
+  // 이 기기가 백업으로 되돌림 → B는 다음 저장에서 412를 받고 되돌린 파일에 기록을 다시 실행한다
+  const restored = createDatabase(SQL, backupBytes).db;
+  const { skipped } = replayChanges(restored, getChangeLog(B).entries);
+  expect(skipped).toBe(0);
+  expect(rows(restored, 'SELECT detail, amount FROM transactions ORDER BY id'))
+    .toEqual([['백업 전', 1000], ['B 미저장', 3000]]);
+});

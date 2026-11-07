@@ -2,6 +2,9 @@
 
 import { dbRowsToObjects } from './common';
 
+/** 거래 목록 필터에서 '누가'를 지정하지 않은 거래만 고를 때 쓰는 값 */
+export const MEMBER_NONE = '__none__';
+
 // ── 거래 내역 ─────────────────────────────────────────────────
 
 export function getTransactions(db, filters = {}) {
@@ -28,6 +31,13 @@ export function getTransactions(db, filters = {}) {
     query += ' AND date <= ?';
     params.push(filters.dateTo);
   }
+  // 구성원(I-013): MEMBER_NONE이면 '지정 안 함'인 거래만
+  if (filters.member === MEMBER_NONE) {
+    query += " AND COALESCE(member, '') = ''";
+  } else if (filters.member) {
+    query += ' AND member = ?';
+    params.push(filters.member);
+  }
   if (filters.search) {
     query += ' AND (detail LIKE ? OR sub_category LIKE ? OR discount_note LIKE ?)';
     const kw = `%${filters.search}%`;
@@ -49,8 +59,8 @@ export function getTransactions(db, filters = {}) {
 export function addTransaction(db, tx) {
   db.run(
     `INSERT INTO transactions
-       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, event_id, foreign_amounts, split_group_id, is_cash_adjustment)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, event_id, foreign_amounts, split_group_id, is_cash_adjustment, member)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tx.payment_method, tx.date, tx.budget_category,
       tx.sub_category || '', tx.detail || '',
@@ -59,6 +69,7 @@ export function addTransaction(db, tx) {
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
       tx.split_group_id || '',
       tx.is_cash_adjustment ? 1 : 0,
+      tx.member || '',
     ]
   );
   return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
@@ -71,6 +82,7 @@ export function updateTransaction(db, id, tx) {
      SET payment_method=?, date=?, budget_category=?, sub_category=?,
          detail=?, amount=?, discount_amount=?, discount_note=COALESCE(?, discount_note),
          event_id=?, foreign_amounts=?, split_group_id=?,
+         member=COALESCE(?, member),
          updated_at=datetime('now','localtime')
      WHERE id=?`,
     [
@@ -80,6 +92,8 @@ export function updateTransaction(db, id, tx) {
       tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
       tx.split_group_id || '',
+      // '누가'는 넘긴 경우에만 바꾼다 — 카드 대조처럼 금액만 고치는 곳이 구성원을 지우지 않게 (I-013)
+      tx.member === undefined ? null : (tx.member || ''),
       id,
     ]
   );

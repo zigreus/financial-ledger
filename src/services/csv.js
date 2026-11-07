@@ -68,3 +68,33 @@ export function parseCSV(text) {
   });
   return rows;
 }
+
+// 엑셀이 =, +, -, @ 로 시작하는 칸을 수식으로 실행하지 않게 앞에 ' 를 붙인다 (CSV 수식 주입 방지).
+// 가져오기는 이 ' 를 다시 떼어 내보낸 파일을 그대로 다시 가져올 수 있게 한다.
+const FORMULA_START = /^[=+\-@\t\r]/;
+
+/** 글자 칸을 엑셀에 안전하게 — 수식으로 읽힐 값이면 ' 를 붙인다 */
+export function escapeSpreadsheetText(value) {
+  return typeof value === 'string' && FORMULA_START.test(value) ? `'${value}` : value;
+}
+
+/** escapeSpreadsheetText로 붙인 ' 를 뗀다 */
+export function unescapeSpreadsheetText(value) {
+  return typeof value === 'string' && value.startsWith("'") && FORMULA_START.test(value.slice(1)) ? value.slice(1) : value;
+}
+
+/** 칸 하나를 CSV용으로 — 쉼표·따옴표·줄바꿈이 있으면 따옴표로 감싸고, 따옴표는 두 번 쓴다 */
+function csvField(value) {
+  const s = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * 헤더와 행(객체 목록)으로 CSV 텍스트를 만든다. parseCSV로 다시 읽으면 같은 값이 나온다.
+ * 엑셀이 한글을 바로 읽도록 BOM은 내려받을 때 붙인다.
+ */
+export function toCSV(headers, rows) {
+  const lines = [headers.map(csvField).join(',')];
+  rows.forEach(row => lines.push(headers.map(h => csvField(row[h])).join(',')));
+  return lines.join('\r\n') + '\r\n';
+}

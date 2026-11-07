@@ -3,18 +3,19 @@ import { activeAI } from '../../services/aiClient';
 import AISettingsForm from './AISettingsForm';
 import ReceiptPanel from './ReceiptPanel';
 import TextPanel from './TextPanel';
+import SmsPanel from './SmsPanel';
 import './AIEntry.css';
 
 /**
- * 거래 폼 위의 AI 입력 — 영수증 찍기 / 말로 입력 / 설정.
+ * 거래 폼 위의 빠른 입력 — 영수증 찍기 / 말로 입력 / 카드 문자 붙여넣기(AI 없이, I-012) / 설정.
  *
  * 사진 선택창은 여기서 연다. 모바일 브라우저는 사용자가 누른 그 순간에만 선택창을 열어 주고,
  * 입력 요소가 다시 만들어지면 고른 사진이 사라지므로 항상 같은 자리에 둔다.
- * AI는 폼을 채우기만 하고(onApply), 여러 건을 한 번에 추가할 때만 onBulkAdd로 저장한다.
+ * 폼을 채우기만 하고(onApply), 여러 건을 한 번에 반영할 때만 onBulkAdd(rows, { deleteIds })로 저장한다.
  * resetKey가 바뀌면(연속 입력으로 다음 거래로 넘어가면) 처음 상태로 돌아간다.
  */
 export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
-  const [mode, setMode] = useState('idle'); // idle | setup | receipt | text
+  const [mode, setMode] = useState('idle'); // idle | setup | receipt | text | sms
   const [pending, setPending] = useState(null); // 설정을 마치면 이어서 할 일
   const [file, setFile] = useState(null);
   const [notice, setNotice] = useState('');
@@ -86,6 +87,15 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
         onSetup={() => needSetup(null)}
       />
     );
+  } else if (mode === 'sms') {
+    body = (
+      <SmsPanel
+        db={db}
+        onApply={s => apply(s, '카드 문자 내용을 채웠습니다')}
+        onBulkAdd={(rows, opts) => onBulkAdd(rows, opts)}
+        onClose={() => setMode('idle')}
+      />
+    );
   } else if (mode === 'text') {
     body = (
       <TextPanel
@@ -105,6 +115,9 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
           </button>
           <button type="button" className="ai-entry-btn" onClick={startText}>
             <span className="ai-entry-icon">💬</span>말로 입력
+          </button>
+          <button type="button" className="ai-entry-btn" onClick={() => setMode('sms')}>
+            <span className="ai-entry-icon">💳</span>카드 문자
           </button>
           <button type="button" className="rs-gear" onClick={() => needSetup(null)} title="AI 설정">⚙</button>
         </div>
