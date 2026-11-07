@@ -33,7 +33,29 @@ function isIncomplete(v) {
 }
 
 function isPlainNumber(v) {
-  return /^-?[\d,]+(\.\d+)?$/.test(String(v).trim());
+  return /^-?[\d,]+(\.\d+)?(\s*원)?$/.test(String(v).trim());
+}
+
+// 스크롤 컨테이너의 원래 하단 여백 — 여러 입력란이 같은 컨테이너를 쓰므로
+// 처음 늘린 입력란이 원래 값을 기록하고, 마지막으로 놓는 입력란이 복원한다.
+// (A→B로 포커스가 옮겨가면 A의 정리가 B의 설정보다 늦게 실행되기 때문)
+const paddingHolds = new WeakMap(); // element → { count, original }
+
+function holdPadding(el) {
+  const hold = paddingHolds.get(el);
+  if (hold) hold.count += 1;
+  else paddingHolds.set(el, { count: 1, original: el.style.paddingBottom });
+  return paddingHolds.get(el).original;
+}
+
+function releasePadding(el) {
+  const hold = paddingHolds.get(el);
+  if (!hold) return;
+  hold.count -= 1;
+  if (hold.count <= 0) {
+    el.style.paddingBottom = hold.original;
+    paddingHolds.delete(el);
+  }
 }
 
 // 키보드가 올라왔을 때 입력란을 끌어올릴 스크롤 컨테이너
@@ -99,13 +121,13 @@ export default function AmountInput({
     const vv = window.visualViewport;
     if (!vv) return undefined;
     const scrollable = findScrollParent(containerRef.current);
-    const prevPadding = scrollable ? scrollable.style.paddingBottom : '';
+    const originalPadding = scrollable ? holdPadding(scrollable) : '';
 
     const update = () => {
       const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
       setToolbarBottom(kb);
       if (scrollable) {
-        scrollable.style.paddingBottom = kb > 0 ? `${kb + TOOLBAR_HEIGHT + 16}px` : prevPadding;
+        scrollable.style.paddingBottom = kb > 0 ? `${kb + TOOLBAR_HEIGHT + 16}px` : originalPadding;
       }
       requestAnimationFrame(scrollIntoVisibleArea);
     };
@@ -116,7 +138,7 @@ export default function AmountInput({
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       setToolbarBottom(0);
-      if (scrollable) scrollable.style.paddingBottom = prevPadding;
+      if (scrollable) releasePadding(scrollable);
     };
   }, [focused]);
 

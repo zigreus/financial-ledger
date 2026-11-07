@@ -1,0 +1,274 @@
+/**
+ * 변경 기록 (B-001, B-003, B-005)
+ *
+ * 마지막으로 OneDrive에 저장한 뒤 DB에 실행한 쓰기 문장(db.run / 쓰기용 db.exec)을 순서대로 기록한다.
+ *  - 다른 기기가 먼저 저장해 충돌(412)이 나면, 최신 DB에 이 기록을 다시 실행해 양쪽 변경을 합친다.
+ *  - 기록은 작아서 브라우저 저장소에 보관할 수 있다 — 재인증 리다이렉트·탭 종료 뒤에도 변경을 되살린다.
+ *
+ * 새로 추가한 행의 id는 최신 DB에서 달라질 수 있다(그 사이 다른 기기가 행을 추가한 경우).
+ * 그래서 다시 실행할 때 "이 기록 안에서 추가한 행"을 가리키는 id 파라미터를 새 id로 바꿔 끼운다.
+ * 어떤 파라미터가 어떤 테이블의 id인지는 컬럼 이름으로 판단한다 (FK_COLUMNS).
+ * ⚠️ 다른 테이블의 id를 담는 컬럼을 새로 만들면 FK_COLUMNS에 꼭 추가한다.
+ */
+
+/** 참조 컬럼 → 참조하는 테이블 */
+export const FK_COLUMNS = {
+  event_id: 'calendar_events',
+  target_event_id: 'calendar_events',
+  account_id: 'accounts',
+  recurring_item_id: 'account_recurring_items',
+  recurring_id: 'recurring_transactions',
+  recurring_source_id: 'recurring_transactions',
+  transaction_id: 'transactions',
+  // 여행 현금 흐름의 연결 (B-038)
+  account_tx_id: 'account_transactions',
+  linked_flow_id: 'event_cash_flows',
+  linked_tx_id: 'transactions',
+};
+
+const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|PRAGMA\s+\w+\s*=)/i;
+const TX_RE = /^\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i;
+
+const isWrite = (sql) => WRITE_RE.test(String(sql || ''));
+
+/**
+ * db에 변경 기록을 붙인다. db.run / db.exec를 감싸 쓰기 문장을 기록한다.
+ * onWrite: 쓰기가 기록될 때마다 호출 (화면 갱신·자동 저장 예약용)
+ * initialEntries: 이미 있는 기록(충돌 병합 뒤 넘겨받는 기록 등)
+ */
+export function attachChangeLog(db, { onWrite, initialEntries = [] } = {}) {
+  const proto = Object.getPrototypeOf(db);
+  const rawRun = proto.run;
+  const rawExec = proto.exec;
+
+  const state = {
+    entries: [...initialEntries],
+    marks: [],        // 열린 트랜잭션/SAVEPOINT: { name, index }
+    forwardTo: null,  // 교체된 옛 DB면, 늦게 들어온 쓰기를 새 DB로 넘긴다
+    onWrite,
+    depth: 0,
+  };
+
+  const lastInsertId = () => rawExec.call(db, 'SELECT last_insert_rowid()')[0].values[0][0];
+
+  const trackTx = (sql) => {
+    const s = String(sql).trim();
+    if (/^(BEGIN)\b/i.test(s)) { state.marks.push({ name: null, index: state.entries.length }); return; }
+    const sp = /^SAVEPOINT\s+(\w+)/i.exec(s);
+    if (sp) { state.marks.push({ name: sp[1], index: state.entries.length }); return; }
+    const rel = /^RELEASE\s+(?:SAVEPOINT\s+)?(\w+)/i.exec(s);
+    if (rel) {
+      const i = state.marks.map(m => m.name).lastIndexOf(rel[1]);
+      if (i >= 0) state.marks.length = i;
+      return;
+    }
+    const rbTo = /^ROLLBACK\s+(?:TRANSACTION\s+)?TO\s+(?:SAVEPOINT\s+)?(\w+)/i.exec(s);
+    if (rbTo) {
+      const mark = [...state.marks].reverse().find(m => m.name === rbTo[1]);
+      if (mark) state.entries.length = mark.index;
+      return;
+    }
+    if (/^ROLLBACK\b/i.test(s)) {
+      if (state.marks.length) state.entries.length = state.marks[0].index;
+      state.marks = [];
+      return;
+    }
+    if (/^(COMMIT|END)\b/i.test(s)) state.marks = [];
+  };
+
+  const record = (method, sql, params) => {
+    if (TX_RE.test(sql)) { trackTx(sql); return; }
+    if (!isWrite(sql)) return;
+    const entry = { method, sql, params: params === undefined ? undefined : JSON.parse(JSON.stringify(params)) };
+    const ins = /^\s*(?:INSERT|REPLACE)\b[\s\S]*?\bINTO\s+(\w+)/i.exec(sql);
+    if (ins && db.getRowsModified() > 0) {
+      entry.insertTable = ins[1];
+      entry.insertId = lastInsertId();
+    }
+    state.entries.push(entry);
+    if (state.onWrite) state.onWrite();
+  };
+
+  db.run = function run(sql, params) {
+    if (state.forwardTo) { state.forwardTo.run(sql, params); return db; }
+    state.depth += 1;
+    try {
+      rawRun.call(db, sql, params);
+    } finally {
+      state.depth -= 1;
+    }
+    if (state.depth === 0) record('run', sql, params);
+    return db;
+  };
+
+  db.exec = function exec(sql, params) {
+    if (state.forwardTo && (isWrite(sql) || TX_RE.test(sql))) return state.forwardTo.exec(sql, params);
+    state.depth += 1;
+    let res;
+    try {
+      res = rawExec.call(db, sql, params);
+    } finally {
+      state.depth -= 1;
+    }
+    if (state.depth === 0) record('exec', sql, params);
+    return res;
+  };
+
+  db.__changeLog = state;
+  return state;
+}
+
+export function getChangeLog(db) {
+  return db?.__changeLog || null;
+}
+
+/** 기록되지 않는 쓰기 (동기화 표식 등 내부용) */
+export function rawRun(db, sql, params) {
+  Object.getPrototypeOf(db).run.call(db, sql, params);
+}
+
+// ── 다시 실행할 때 id 바꿔 끼우기 ─────────────────────────────────
+
+function splitTopLevel(s) {
+  const out = [];
+  let depth = 0;
+  let quote = null;
+  let cur = '';
+  for (const ch of s) {
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue; }
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** SQL의 ? 자리마다 어느 컬럼에 대응하는지 구한다. 모르면 null. */
+export function paramColumns(sql) {
+  const ins = /^\s*(?:INSERT|REPLACE)\b[\s\S]*?\bINTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\(([\s\S]*)\)\s*;?\s*$/i.exec(sql);
+  if (ins) {
+    const columns = ins[2].split(',').map(c => c.trim());
+    const cols = [];
+    splitTopLevel(ins[3]).forEach((v, i) => {
+      const count = (v.match(/\?/g) || []).length;
+      for (let k = 0; k < count; k++) cols.push(v.trim() === '?' ? columns[i] : null);
+    });
+    return { table: ins[1], cols };
+  }
+  const tableMatch = /^\s*UPDATE\s+(?:OR\s+\w+\s+)?(\w+)/i.exec(sql) || /^\s*DELETE\s+FROM\s+(\w+)/i.exec(sql);
+  const cols = [];
+  const re = /\?/g;
+  let m;
+  while ((m = re.exec(sql))) {
+    const before = sql.slice(0, m.index);
+    const cm = /(\w+)\s*(?:=|==|!=|<>|<=|>=|<|>)\s*$/.exec(before) || /(\w+)\s+IN\s*\([^()]*$/i.exec(before);
+    cols.push(cm ? cm[1] : null);
+  }
+  return { table: tableMatch ? tableMatch[1] : null, cols };
+}
+
+function remapParams(entry, remap) {
+  const { params } = entry;
+  if (!Array.isArray(params) || remap.size === 0) return params;
+  const { table, cols } = paramColumns(entry.sql);
+  return params.map((v, i) => {
+    const col = cols[i];
+    if (!col) return v;
+    const target = col === 'id' ? table : FK_COLUMNS[col];
+    const ids = target && remap.get(target);
+    return ids && ids.has(v) ? ids.get(v) : v;
+  });
+}
+
+/**
+ * 기록을 다른 DB(보통 OneDrive에서 새로 받은 최신 DB)에 다시 실행한다.
+ * 같은 값을 양쪽에서 추가해 UNIQUE 제약에 걸리는 문장은 건너뛴다(이미 반영된 것으로 본다).
+ * 반환: { entries: 대상 DB 기준으로 id를 고친 기록, skipped }
+ */
+export function replayChanges(targetDb, entries) {
+  const remap = new Map();
+  const rewritten = [];
+  let skipped = 0;
+  const raw = Object.getPrototypeOf(targetDb);
+
+  raw.run.call(targetDb, 'SAVEPOINT replay_changes');
+  try {
+    entries.forEach(entry => {
+      const params = remapParams(entry, remap);
+      try {
+        if (entry.method === 'exec') raw.exec.call(targetDb, entry.sql, params);
+        else raw.run.call(targetDb, entry.sql, params);
+      } catch (e) {
+        if (/UNIQUE constraint failed/i.test(String(e.message || e))) { skipped += 1; return; }
+        throw e;
+      }
+      const next = { ...entry, params };
+      if (entry.insertTable && entry.insertId != null && targetDb.getRowsModified() > 0) {
+        const newId = raw.exec.call(targetDb, 'SELECT last_insert_rowid()')[0].values[0][0];
+        if (newId !== entry.insertId) {
+          if (!remap.has(entry.insertTable)) remap.set(entry.insertTable, new Map());
+          remap.get(entry.insertTable).set(entry.insertId, newId);
+        }
+        next.insertId = newId;
+      }
+      rewritten.push(next);
+    });
+    raw.run.call(targetDb, 'RELEASE replay_changes');
+  } catch (e) {
+    raw.run.call(targetDb, 'ROLLBACK TO replay_changes');
+    raw.run.call(targetDb, 'RELEASE replay_changes');
+    throw e;
+  }
+  return { entries: rewritten, skipped };
+}
+
+// ── 동기화 표식 ──────────────────────────────────────────────────
+// 저장 요청마다 고유 id를 DB 안(settings)에 적어 둔다. 응답을 못 받은 저장이
+// 실제로는 반영됐는지(OneDrive 파일에 그 id가 있는지) 나중에 확인해, 같은 변경을 두 번 넣지 않는다.
+
+const SYNC_KEY = 'sync_write_id';
+
+export function stampWriteId(db) {
+  const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  rawRun(db, 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [SYNC_KEY, id]);
+  return id;
+}
+
+export function readWriteId(db) {
+  const res = Object.getPrototypeOf(db).exec.call(db, 'SELECT value FROM settings WHERE key = ?', [SYNC_KEY]);
+  return res[0]?.values[0]?.[0] || '';
+}
+
+// ── 브라우저 보관 ────────────────────────────────────────────────
+
+const PENDING_PREFIX = 'ledger_pending_changes:';
+
+export function savePending(accountKey, pending) {
+  if (!accountKey) return;
+  try {
+    if (!pending || !pending.entries?.length) window.localStorage.removeItem(PENDING_PREFIX + accountKey);
+    else window.localStorage.setItem(PENDING_PREFIX + accountKey, JSON.stringify(pending));
+  } catch (e) { /* 저장 공간 부족·비공개 모드 — 메모리의 기록으로만 진행 */ }
+}
+
+export function loadPending(accountKey) {
+  if (!accountKey) return null;
+  try {
+    const raw = window.localStorage.getItem(PENDING_PREFIX + accountKey);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && Array.isArray(parsed.entries) && parsed.entries.length ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function clearPending(accountKey) {
+  savePending(accountKey, null);
+}

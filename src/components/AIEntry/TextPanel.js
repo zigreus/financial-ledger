@@ -30,15 +30,20 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   const analyze = async () => {
     const ai = activeAI();
     if (!ai) { onSetup(); return; }
+    if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setError('');
     setPhase('analyzing');
     try {
       const list = await parseTextEntry({ db, ai, text, signal: controller.signal });
+      if (controller.signal.aborted) return;
       setItems(list.map(s => ({ s, checked: isSuggestionComplete(s) })));
       setPhase('review');
     } catch (e) {
+      // 취소한 요청은 어떤 오류로 끝나든 화면을 바꾸지 않는다 — cancelAnalysis가 이미 입력 화면으로 돌렸고,
+      // 그 사이 다시 시작한 분석의 화면을 덮어쓰면 안 된다
+      if (controller.signal.aborted) return;
       if (e.name === 'AbortError') { setPhase('compose'); return; }
       setError(e.message || '분석에 실패했습니다');
       setPhase('error');

@@ -1,70 +1,37 @@
-# Getting Started with Create React App
+# 지금 가계부
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+가족이 함께 쓰는 모바일 우선 가계부 웹앱입니다. 서버 없이 브라우저에서 동작합니다.
 
-## Available Scripts
+- **저장소:** 가계부 DB(SQLite) 파일 하나를 각자의 Microsoft 계정 OneDrive(`Apps/financial-ledger/ledger.db`)에 둡니다.
+- **동작 방식:** 브라우저에서 sql.js로 이 파일을 열어 씁니다.
+- **동시 사용:** 여러 기기에서 동시에 써도, 저장할 때 서로의 변경을 합칩니다.
 
-In the project directory, you can run:
+## 주요 기능
 
-### `npm start`
+- 거래 입력: 사칙연산 금액 입력, 분할 결제, 연속 입력, 즐겨찾기
+- AI 입력: 영수증 사진, 말로 입력, 카드 내역 대조
+- 요약: 월·연·기간·일정별 요약, 월 목표
+- 캘린더와 일정: 여행 환율, 현금 지갑 관리
+- 계좌: 잔액 예측, 고정 입출금 자동등록(공휴일 보정)
+- 가져오기: 엑셀·JSON 거래 내역, 계좌 CSV
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 시작하기
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```bash
+npm install
+npm start          # http://localhost:3000
+npm test -- --watchAll=false
+npm run build
+```
 
-### `npm test`
+Azure 앱 등록과 OneDrive 설정은 [SETUP.md](SETUP.md)를 참고하세요.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 문서
 
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+| 파일 | 내용 |
+|---|---|
+| [AGENTS.md](AGENTS.md) | 코드 작성 규칙. AI 도구와 사람 모두 작업 전에 읽습니다 |
+| [docs/BUGS.md](docs/BUGS.md) | 버그·개선 목록과 수정 기록 (B-xxx / I-xxx) |
+| [SETUP.md](SETUP.md) | Azure 앱 등록, 배포 설정 |
+| [IMPORT_GUIDE.md](IMPORT_GUIDE.md) | 엑셀·JSON 가져오기 형식 |
+| docs/*-design.md | 기능별 설계 문서 |

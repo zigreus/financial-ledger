@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getPaymentMethods, getBudgetCategories, getSubCategories, getDiscountRules, evaluateDiscountRule, getCalendarEvents, getCalendarEventTypes, getFavorites, addFavorite, updateFavorite, deleteFavorite, recordFavoriteUse, getAutoPaymentMethod, getTripDefaultCategory, getEventWallets, getSplitGroupTransactions } from '../../services/dbManager';
 import { evaluateFormula, formatAmount, today, parseRate, parseForeignAmount, toKrw } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
@@ -67,7 +67,14 @@ function fmtWallet(value, currency) {
   return (Math.round(value * 100) / 100).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
-function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCancel }) {
+/** 외화 금액은 소수 둘째 자리까지 — 0.1+0.2 같은 부동소수 찌꺼기가 저장되지 않게 */
+const round2 = (n) => Math.round(n * 100) / 100;
+
+const parseFa = (raw) => {
+  try { return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+};
+
+function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, onBulkAdd, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -83,10 +90,17 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
   const [splitAmount, setSplitAmount] = useState('');
   const [splitMethod, setSplitMethod] = useState('');
   const [splitSibling, setSplitSibling] = useState(null);
+  // 나눠 낸 금액을 어느 통화로 입력했는지 — 통화가 바뀌면 그 숫자를 다른 통화로 해석하지 않는다
+  const [splitAmountCur, setSplitAmountCur] = useState('KRW');
+  // 수정 중인 분할 거래의 저장된 외화 환율 { currency, rate } — 일정 환율이 바뀌어도 원래 몫을 유지
+  const [splitBasis, setSplitBasis] = useState(null);
   const [continuous, setContinuous] = useStoredToggle('tx_form_continuous');
   const [addedCount, setAddedCount] = useState(0);
   const skipAutoDiscountRef = useRef(false);
-  const skipSubResetRef = useRef(false);
+  // 수정 화면을 처음 채울 때의 카테고리 — 이 카테고리로 바뀔 때는 세부카테고리를 지우지 않는다
+  const skipSubResetRef = useRef(null);
+  // 사용자가 할인/수익 칸을 직접 고쳤는지 — 자동 계산값만 결제수단 변경 시 비운다
+  const discountTouchedRef = useRef(false);
   const formRef = useRef(null);
 
   // 저장 후 백그라운드 새로고침으로 db 객체가 바뀌어도 입력 중인 폼은 건드리지 않는다.
@@ -109,15 +123,13 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
     setCalendarEvents(events);
     setFavorites(getFavorites(db));
     setTripCategory(getTripDefaultCategory(db));
-  }, [db]);
+  }, [db, dataVersion]);
 
   useEffect(() => {
+    discountTouchedRef.current = false;
     if (editingTx) {
       skipAutoDiscountRef.current = true;
-      skipSubResetRef.current = true;
-      const parseFa = (raw) => {
-        try { return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
-      };
+      skipSubResetRef.current = editingTx.budget_category || null;
       let foreign_amounts = parseFa(editingTx.foreign_amounts);
       let amount = editingTx.amount != null ? String(editingTx.amount) : '';
 
@@ -126,24 +138,40 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
         ? getSplitGroupTransactions(dbRef.current, editingTx.split_group_id) : [];
       const sibling = group.find(t => t.id !== editingTx.id) || null;
 
+      let basis = null;
       if (sibling) {
         const totals = { ...foreign_amounts };
         Object.entries(parseFa(sibling.foreign_amounts)).forEach(([cur, val]) => {
-          totals[cur] = (totals[cur] || 0) + Number(val);
+          totals[cur] = round2((Number(totals[cur]) || 0) + Number(val));
         });
         foreign_amounts = totals;
         amount = String((editingTx.amount || 0) + (sibling.amount || 0));
 
-        const ownFa = parseFa(editingTx.foreign_amounts);
-        const ownCur = Object.keys(ownFa)[0];
+        // 분할 통화·환율은 저장된 값에서 정한다 — 보이는 일정 목록이나 현재 일정 환율에서 다시 구하면
+        // 일정을 숨기거나 지웠을 때 ¥3000이 3,000원으로 읽히고, 환율이 바뀌면 원화 몫이 달라진다 (B-033, B-060)
+        const ownEntry = Object.entries(parseFa(editingTx.foreign_amounts)).find(([, v]) => Number(v) > 0);
+        const totalCurs = Object.keys(totals).filter(cur => Number(totals[cur]) > 0);
+        let ownSplit = '';
+        let ownSplitCur = 'KRW';
+        if (ownEntry && totalCurs.length === 1 && totalCurs[0] === ownEntry[0]) {
+          ownSplit = String(ownEntry[1]);
+          ownSplitCur = ownEntry[0];
+          if (editingTx.amount > 0) basis = { currency: ownEntry[0], rate: editingTx.amount / Number(ownEntry[1]) };
+        } else if (totalCurs.length === 0) {
+          ownSplit = editingTx.amount != null ? String(editingTx.amount) : '';
+        }
+        // 그 밖(저장된 외화가 엇갈림)은 나눠 낸 금액을 다시 입력받는다
         setSplit(true);
-        setSplitAmount(String(ownCur ? ownFa[ownCur] : editingTx.amount));
+        setSplitAmount(ownSplit);
+        setSplitAmountCur(ownSplitCur);
         setSplitMethod(sibling.payment_method || '');
       } else {
         setSplit(false);
         setSplitAmount('');
+        setSplitAmountCur('KRW');
         setSplitMethod('');
       }
+      setSplitBasis(basis);
       setSplitSibling(sibling);
 
       setForm({
@@ -158,44 +186,38 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
         foreign_amounts,
       });
     } else {
+      skipSubResetRef.current = null;
       setSplit(false);
       setSplitAmount('');
+      setSplitAmountCur('KRW');
       setSplitMethod('');
+      setSplitBasis(null);
       setSplitSibling(null);
       setForm({ ...EMPTY_FORM, date: defaultDate || today() });
     }
     setAddedCount(0);
   }, [editingTx, defaultDate]);
 
+  // 세부카테고리 목록 — 앱 어디서든 DB가 바뀌면(dataVersion) 다시 읽는다
   useEffect(() => {
-    const subs = getSubCategories(db, form.budget_category);
-    setSubCategories(subs);
-    if (skipSubResetRef.current) {
-      skipSubResetRef.current = false;
+    setSubCategories(getSubCategories(db, form.budget_category));
+  }, [db, dataVersion, form.budget_category]);
+
+  // 카테고리가 바뀌면 그 카테고리에 없는 세부카테고리를 비운다 (즐겨찾기·AI 입력 등).
+  // 수정 화면을 처음 채울 때는 건너뛴다 — 숨긴 세부카테고리도 그대로 남아야 한다 (B-043).
+  // 마운트 직후 빈 카테고리로 한 번 도는 실행이 건너뛰기를 소모하지 않도록 카테고리 값으로 비교하고,
+  // 대기 중인 상태가 다른 카테고리면(이 실행이 이미 낡았으면) 손대지 않는다.
+  useEffect(() => {
+    const category = form.budget_category;
+    if (skipSubResetRef.current && skipSubResetRef.current === category) {
+      skipSubResetRef.current = null;
       return;
     }
-    setForm(prev => ({
-      ...prev,
-      sub_category: subs.includes(prev.sub_category) ? prev.sub_category : '',
-    }));
-  }, [db, form.budget_category]);
-
-  // 결제수단별 자동 할인 계산 (DB 규칙 기반)
-  useEffect(() => {
-    if (skipAutoDiscountRef.current) return;
-    const pm = form.payment_method;
-    if (!pm || pm === '현금') return;
-
-    const amount = evaluateFormula(form.amount);
-    if (amount === null || isNaN(amount) || amount <= 0) {
-      setForm(prev => ({ ...prev, discount_amount: '' }));
-      return;
-    }
-
-    const rules = getDiscountRules(dbRef.current, pm);
-    const d = evaluateDiscountRule(rules, form.budget_category, form.sub_category, amount, form.detail);
-    setForm(prev => ({ ...prev, discount_amount: d > 0 ? String(d) : '' }));
-  }, [form.payment_method, form.amount, form.budget_category, form.sub_category, form.detail]);
+    const subs = getSubCategories(dbRef.current, category);
+    setForm(prev => (prev.budget_category !== category || !prev.sub_category || subs.includes(prev.sub_category)
+      ? prev
+      : { ...prev, sub_category: '' }));
+  }, [form.budget_category]);
 
   const set = (key, value) => {
     if (key === 'payment_method') {
@@ -220,13 +242,16 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
         ? tripCategory
         : prev.budget_category,
     }));
+    setSplitBasis(null);
   };
 
-  // 현지 금액 입력 → 여행에 설정된 환율로 원화 금액 자동 계산
+  // 현지 금액 입력 → 여행에 설정된 환율로 원화 금액 자동 계산.
+  // 환율이 없는 통화 칸은 원화 금액을 건드리지 않는다 — 먼저 입력한 원화가 지워지지 않게 (B-035)
   const handleForeignAmountChange = (currency, value, countries) => {
+    const rated = countries.some(c => c.currency === currency && parseRate(c.exchange_rate) > 0);
     setForm(prev => {
       const foreign_amounts = { ...prev.foreign_amounts, [currency]: value };
-      const krw = krwFromForeign(foreign_amounts, countries);
+      const krw = rated ? krwFromForeign(foreign_amounts, countries) : null;
       return {
         ...prev,
         foreign_amounts,
@@ -236,20 +261,26 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
     skipAutoDiscountRef.current = false;
   };
 
+  // 일정에 없는 통화로 저장된 현지 금액 — 환율을 모르므로 원화는 다시 계산하지 않고 값만 고친다 (B-060)
+  const handleStoredForeignChange = (currency, value) => {
+    setForm(prev => ({ ...prev, foreign_amounts: { ...prev.foreign_amounts, [currency]: value } }));
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    const amount = evaluateFormula(form.amount);
-    if (amount === null || isNaN(amount)) return;
+    // 버튼이 비활성이어도 다른 경로로 제출될 수 있으니 같은 검사를 한 번 더 한다
+    if (!canSubmit) return;
 
-    const discountAmount = form.discount_amount ? evaluateFormula(form.discount_amount) : 0;
+    const discountAmount = discountParsed || 0;
 
+    // 폼에 있는 현지 금액은 일정 연결 여부와 상관없이 저장한다.
+    // 일정을 바꾸거나 풀면 handleEventChange가 비우므로, 여기 남은 값은 사용자가 보고 있는 칸의 값이다.
+    // (일정이 지워져 event_id가 없는 거래도 외화 금액을 잃지 않게 — B-060)
     const foreign_amounts = {};
-    if (form.event_id) {
-      Object.entries(form.foreign_amounts).forEach(([currency, val]) => {
-        const num = parseForeignAmount(val);
-        if (num !== null && num > 0) foreign_amounts[currency] = num;
-      });
-    }
+    Object.entries(form.foreign_amounts).forEach(([currency, val]) => {
+      const num = parseForeignAmount(val);
+      if (num !== null && num > 0) foreign_amounts[currency] = round2(num);
+    });
 
     const base = {
       date: form.date,
@@ -262,27 +293,25 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
     // 분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 2건으로 기록한다.
     // 수정 중이면 기존 건을 첫 번째 몫으로 갱신하고, 나머지 몫은
     // 짝이 있으면 갱신 / 없으면 새로 만든다 (id 유무로 구분).
-    if (split && splitValid) {
+    // 할인 메모(discount_note)는 폼에서 고치지 않으므로 저장된 값을 그대로 넘긴다 (B-031)
+    if (split) {
       const groupId = editingTx?.split_group_id
         || `sg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const primaryForeign = {};
       const secondForeign = {};
       if (splitCurrency !== 'KRW') {
-        primaryForeign[splitCurrency] = splitPrimary;
+        primaryForeign[splitCurrency] = round2(splitPrimary);
         secondForeign[splitCurrency] = secondaryForeign;
       }
 
-      // 나머지 결제수단의 할인은 그 금액 기준으로 다시 계산
-      const secondRules = getDiscountRules(db, splitMethod);
-      const secondDiscount = splitMethod === '현금' ? 0 : evaluateDiscountRule(
-        secondRules, form.budget_category, form.sub_category, secondaryKrw, form.detail);
-
       submit([
         { ...base, id: editingTx?.id, payment_method: form.payment_method, amount: primaryKrw,
-          discount_amount: discountAmount || 0, foreign_amounts: primaryForeign, split_group_id: groupId },
+          discount_amount: discountAmount, discount_note: editingTx?.discount_note || '',
+          foreign_amounts: primaryForeign, split_group_id: groupId },
         { ...base, id: splitSibling?.id, payment_method: splitMethod, amount: secondaryKrw,
-          discount_amount: secondDiscount || 0, foreign_amounts: secondForeign, split_group_id: groupId },
+          discount_amount: secondDiscount, discount_note: splitSibling?.discount_note || '',
+          foreign_amounts: secondForeign, split_group_id: groupId },
       ]);
       return;
     }
@@ -292,8 +321,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
       ...base,
       id: editingTx?.id,
       payment_method: form.payment_method,
-      amount,
-      discount_amount: discountAmount || 0,
+      amount: amountParsed,
+      discount_amount: discountAmount,
+      discount_note: editingTx?.discount_note || '',
       foreign_amounts,
       split_group_id: '',
     });
@@ -309,6 +339,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
   // 다음 거래 입력용 초기화 — 날짜·결제수단·카테고리·일정은 유지한다
   const resetForNext = () => {
     skipAutoDiscountRef.current = false;
+    discountTouchedRef.current = false;
     setForm(prev => ({
       ...EMPTY_FORM,
       date: prev.date,
@@ -318,7 +349,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
     }));
     setSplit(false);
     setSplitAmount('');
+    setSplitAmountCur('KRW');
     setSplitMethod('');
+    setSplitBasis(null);
     setSplitSibling(null);
     setAddedCount(c => c + 1);
     const scroller = formRef.current?.closest('.modal-content');
@@ -327,28 +360,46 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
 
 
   const amountParsed = evaluateFormula(form.amount);
+  // 할인·수익 — 빈칸은 null(=0). 잘못된 수식·음수는 조용히 0으로 바꾸지 않고 막는다 (B-036)
+  const discountParsed = evaluateFormula(form.discount_amount);
+  const discountInvalid = discountParsed !== null && (isNaN(discountParsed) || discountParsed < 0);
 
   // ── 여행 현금 지갑 / 분할 결제 ────────────────────────────────
   const selectedEvent = calendarEvents.find(e => String(e.id) === form.event_id);
+  const selectedEventId = selectedEvent?.id;
   const isTripEvent = !!eventTypeMap[selectedEvent?.event_type]?.is_trip_type;
-  const wallets = isTripEvent && selectedEvent
-    ? getEventWallets(db, selectedEvent.id).filter(w => Math.abs(w.balance) >= 0.005)
-    : [];
+  // 지갑 계산은 SQL 여러 번이라 키 입력마다 돌리지 않는다 — 일정이나 DB가 바뀔 때만 (B-046)
+  const wallets = useMemo(
+    () => (isTripEvent && selectedEventId
+      ? getEventWallets(db, selectedEventId).filter(w => Math.abs(w.balance) >= 0.005)
+      : []),
+    [db, dataVersion, isTripEvent, selectedEventId] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  // 현지 금액이 한 통화에만 들어있으면 그 통화로, 아니면 원화로 나눈다
-  const activeForeign = (selectedEvent?.countries || []).filter(c =>
-    (parseForeignAmount(form.foreign_amounts[c.currency]) || 0) > 0);
-  const splitCurrency = activeForeign.length === 1 ? activeForeign[0].currency : 'KRW';
-  const splitRate = activeForeign.length === 1 ? parseRate(activeForeign[0].exchange_rate) : 0;
+  // 현지 금액이 입력된 통화 — 저장될 값(foreign_amounts) 기준으로 센다.
+  // 보이는 일정 목록에서 구하면 일정을 숨기거나 지웠을 때 외화가 사라진 것처럼 보인다 (B-033, B-060)
+  const activeCurrencies = Object.keys(form.foreign_amounts)
+    .filter(cur => (parseForeignAmount(form.foreign_amounts[cur]) || 0) > 0);
+  // 연결된 여행 일정의 통화 칸에 없는, 저장된 현지 금액 — 따로 칸을 보여 줘 값을 확인·수정할 수 있게 한다
+  const eventCurrencies = isTripEvent ? (selectedEvent?.countries || []).map(c => c.currency) : [];
+  const storedOnlyCurrencies = Object.keys(form.foreign_amounts).filter(cur => !eventCurrencies.includes(cur));
+  // 한 통화에만 들어있으면 그 통화로 나누고, 없으면 원화로 나눈다.
+  // 두 통화 이상이면 몫을 정할 수 없으므로 분할을 막는다 — 외화가 버려지지 않게 (B-034)
+  const multiCurrency = activeCurrencies.length > 1;
+  const splitCurrency = activeCurrencies.length === 1 ? activeCurrencies[0] : 'KRW';
   const splitTotalForeign = splitCurrency !== 'KRW'
     ? parseForeignAmount(form.foreign_amounts[splitCurrency]) : null;
 
-  // 일정에 환율이 없으면 이번 거래가 함축하는 환율(총 원화 ÷ 총 현지금액)로 나눈다
+  // 환율: 수정 중인 분할 거래는 저장된 환율 → 일정 환율 → 이번 거래가 함축하는 환율(총 원화 ÷ 총 현지금액)
+  const basisRate = splitBasis && splitBasis.currency === splitCurrency ? splitBasis.rate : 0;
+  const eventRate = parseRate((selectedEvent?.countries || []).find(c => c.currency === splitCurrency)?.exchange_rate);
   const impliedRate = splitTotalForeign > 0 && amountParsed > 0
     ? amountParsed / splitTotalForeign : 0;
-  const effectiveSplitRate = splitRate || impliedRate;
+  const effectiveSplitRate = basisRate || eventRate || impliedRate;
 
-  const splitPrimary = parseForeignAmount(splitAmount);
+  // 나눠 낸 금액은 입력할 때의 통화로만 해석한다 — 통화가 바뀌었으면 다시 입력받는다
+  const splitCurrencyChanged = split && splitAmount.trim() !== '' && splitAmountCur !== splitCurrency;
+  const splitPrimary = splitCurrencyChanged ? null : parseForeignAmount(splitAmount);
   const primaryKrw = splitPrimary === null ? null
     : splitCurrency === 'KRW' ? Math.round(splitPrimary) : Math.round(splitPrimary * effectiveSplitRate);
   const secondaryKrw = primaryKrw === null || amountParsed === null || isNaN(amountParsed)
@@ -356,21 +407,66 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
   const secondaryForeign = splitTotalForeign !== null && splitPrimary !== null
     ? Number((splitTotalForeign - splitPrimary).toFixed(2)) : null;
 
-  const splitValid = !split || (
-    splitPrimary !== null && splitPrimary > 0 &&
+  const splitAmountsOk = splitPrimary !== null && splitPrimary > 0 &&
     primaryKrw > 0 && secondaryKrw > 0 &&
-    (secondaryForeign === null || secondaryForeign > 0) &&
-    !!splitMethod
-  );
+    (secondaryForeign === null || secondaryForeign > 0);
+  const splitValid = !split || (!multiCurrency && splitAmountsOk && !!splitMethod);
+  const splitProblem = !split ? null
+    : multiCurrency ? '현지 금액이 두 통화 이상이면 분할할 수 없습니다'
+    : splitCurrencyChanged ? `분할 통화가 ${splitCurrency}(으)로 바뀌었습니다 — 나눠 낸 금액을 다시 입력하세요`
+    : splitPrimary === null ? '나눠 낸 금액을 입력하세요'
+    : !splitAmountsOk ? '분할 금액이 총액보다 작아야 합니다'
+    : null;
 
+  // 나머지 몫의 할인 — 그 결제수단·그 금액 기준으로 계산한다.
+  // 수정 중인 짝의 결제수단·금액·분류가 그대로면 저장된 할인을 유지한다 (직접 고친 값 보존)
+  const ruleSecondDiscount = useMemo(() => {
+    if (!split || !splitMethod || splitMethod === '현금' || !(secondaryKrw > 0)) return 0;
+    return evaluateDiscountRule(getDiscountRules(dbRef.current, splitMethod),
+      form.budget_category, form.sub_category, secondaryKrw, form.detail) || 0;
+  }, [split, splitMethod, secondaryKrw, form.budget_category, form.sub_category, form.detail]);
+  const siblingUnchanged = !!splitSibling && splitMethod === splitSibling.payment_method
+    && secondaryKrw === splitSibling.amount
+    && form.budget_category === (editingTx?.budget_category || '')
+    && form.sub_category === (editingTx?.sub_category || '')
+    && form.detail === (editingTx?.detail || '');
+  const secondDiscount = siblingUnchanged ? (splitSibling.discount_amount || 0) : ruleSecondDiscount;
+
+  // 결제수단별 자동 할인 계산 (DB 규칙 기반).
+  // 분할 결제면 첫 번째 결제수단이 실제로 낸 몫(primaryKrw)에만 할인을 계산한다 (B-030)
+  useEffect(() => {
+    if (skipAutoDiscountRef.current) return;
+    const pm = form.payment_method;
+    if (!pm || pm === '현금') {
+      // 카드 기준으로 자동 계산해 둔 할인은 현금 '수익'이 아니다 — 직접 입력한 값이 아니면 비운다 (B-032)
+      if (!discountTouchedRef.current) {
+        setForm(prev => (prev.discount_amount ? { ...prev, discount_amount: '' } : prev));
+      }
+      return;
+    }
+
+    discountTouchedRef.current = false;
+    const base = split ? primaryKrw : evaluateFormula(form.amount);
+    if (base === null || isNaN(base) || base <= 0) {
+      setForm(prev => ({ ...prev, discount_amount: '' }));
+      return;
+    }
+
+    const rules = getDiscountRules(dbRef.current, pm);
+    const d = evaluateDiscountRule(rules, form.budget_category, form.sub_category, base, form.detail);
+    setForm(prev => ({ ...prev, discount_amount: d > 0 ? String(d) : '' }));
+  }, [form.payment_method, form.amount, form.budget_category, form.sub_category, form.detail, split, primaryKrw]);
+
+  const discountLabel = form.payment_method === '현금' ? '수익금액' : '할인금액';
   const missingReasons = [
     !form.payment_method && '결제수단을 선택하세요',
     !form.date && '날짜를 입력하세요',
     !form.budget_category && '카테고리를 선택하세요',
     !form.sub_category && '세부카테고리를 선택하세요',
     (amountParsed === null || isNaN(amountParsed)) && '금액을 올바르게 입력하세요',
+    discountInvalid && `${discountLabel}을 올바르게 입력하세요`,
+    splitProblem,
     split && !splitMethod && '나머지 결제수단을 선택하세요',
-    split && !splitValid && !!splitMethod && '분할 금액이 총액보다 작아야 합니다',
   ].filter(Boolean);
   const canSubmit = missingReasons.length === 0;
 
@@ -400,7 +496,6 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
   useEffect(() => {
     if (!form.sub_category || form.payment_method) return;
     const suggested = getAutoPaymentMethod(db, form.sub_category);
-    console.log('자동 결제수단:', form.sub_category, '→', suggested);
     if (suggested) {
       skipAutoDiscountRef.current = false;
       set('payment_method', suggested);
@@ -459,9 +554,12 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
   // AI(영수증·말로 입력) 결과로 폼을 채운다 — 저장은 사용자가 확인한 뒤 직접 한다
   const applyReceipt = (s) => {
     skipAutoDiscountRef.current = false;
+    discountTouchedRef.current = false;
     setSplit(false);
     setSplitAmount('');
+    setSplitAmountCur('KRW');
     setSplitMethod('');
+    setSplitBasis(null);
     setForm(prev => {
       const next = {
         ...prev,
@@ -581,6 +679,10 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
               {paymentMethods.map(m => (
                 <option key={m} value={m}>{m}</option>
               ))}
+              {/* 숨긴 결제수단으로 기록된 거래를 수정할 때도 현재 값이 보이도록 */}
+              {form.payment_method && !paymentMethods.includes(form.payment_method) && (
+                <option value={form.payment_method}>{form.payment_method} (숨김)</option>
+              )}
             </select>
           </div>
 
@@ -597,6 +699,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                 {budgetCategories.map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
+                {form.budget_category && !budgetCategories.includes(form.budget_category) && (
+                  <option value={form.budget_category}>{form.budget_category} (숨김)</option>
+                )}
               </select>
             </div>
 
@@ -612,6 +717,10 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                 {subCategories.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
+                {/* 숨긴 세부카테고리를 가진 거래를 수정할 때 값이 그대로 보이게 (B-043) */}
+                {form.sub_category && !subCategories.includes(form.sub_category) && (
+                  <option value={form.sub_category}>{form.sub_category} (숨김)</option>
+                )}
               </select>
             </div>
           </div>
@@ -662,7 +771,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                 <div className="wallet-badge-list">
                   {wallets.map(w => {
                     const used = w.currency === 'KRW'
-                      ? (form.payment_method === '현금' && activeForeign.length === 0 ? (amountParsed || 0) : 0)
+                      ? (form.payment_method === '현금' && activeCurrencies.length === 0 ? (amountParsed || 0) : 0)
                       : (form.payment_method === '현금'
                           ? (parseForeignAmount(form.foreign_amounts[w.currency]) || 0) : 0);
                     const after = w.balance - used;
@@ -682,9 +791,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
 
           {/* 현지 금액 (여행 유형 일정 선택 시) */}
           {form.event_id && (() => {
-            const selectedEvent = calendarEvents.find(e => String(e.id) === form.event_id);
-            const selectedType = eventTypeMap[selectedEvent?.event_type];
-            if (!selectedType?.is_trip_type || !selectedEvent?.countries?.length) return null;
+            if (!isTripEvent || !selectedEvent?.countries?.length) return null;
             const countries = selectedEvent.countries;
             const hasAnyRate = countries.some(c => parseRate(c.exchange_rate) > 0);
             return (
@@ -724,6 +831,31 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
             );
           })()}
 
+          {/* 저장된 현지 금액 — 일정이 지워졌거나 숨겨졌거나, 일정에 그 통화가 없을 때 (B-060) */}
+          {storedOnlyCurrencies.length > 0 && (
+            <>
+              <div className="form-section-title">
+                저장된 현지 금액 <span className="optional">(선택)</span>
+              </div>
+              <div className="fx-note">
+                {!form.event_id ? '연결된 일정이 없어' : !selectedEvent ? '연결된 일정이 숨겨져 있어' : '연결된 일정에 이 통화가 없어'}
+                {' '}원화 금액은 자동으로 다시 계산하지 않습니다. 칸을 비우고 저장하면 이 현지 금액은 지워집니다.
+              </div>
+              {storedOnlyCurrencies.map(cur => (
+                <div key={cur} className="form-group">
+                  <label>{cur}</label>
+                  <AmountInput
+                    decimal
+                    unit={cur}
+                    value={form.foreign_amounts[cur] ?? ''}
+                    onChange={v => handleStoredForeignChange(cur, v)}
+                    placeholder={`${cur} 금액`}
+                  />
+                </div>
+              ))}
+            </>
+          )}
+
           {/* 금액 */}
           <FormulaInput
             label="금액"
@@ -738,7 +870,12 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
               <input
                 type="checkbox"
                 checked={split}
-                onChange={e => { setSplit(e.target.checked); setSplitAmount(''); }}
+                onChange={e => {
+                  // 분할을 켜고 끄면 첫 번째 결제수단이 내는 금액이 바뀌므로 할인을 다시 계산한다
+                  skipAutoDiscountRef.current = false;
+                  setSplit(e.target.checked);
+                  setSplitAmount('');
+                }}
               />
               <span>분할 결제 — 한 번의 구매를 두 결제수단으로 나눠 냄</span>
             </label>
@@ -766,7 +903,7 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                     decimal={splitCurrency !== 'KRW'}
                     unit={splitCurrency === 'KRW' ? '원' : splitCurrency}
                     value={splitAmount}
-                    onChange={setSplitAmount}
+                    onChange={v => { setSplitAmount(v); setSplitAmountCur(splitCurrency); }}
                     placeholder={splitCurrency === 'KRW' ? '예: 30000' : `예: 10000 (${splitCurrency})`}
                   />
                   {primaryKrw > 0 && splitCurrency !== 'KRW' && (
@@ -781,6 +918,9 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                     {paymentMethods.filter(m => m !== form.payment_method).map(m => (
                       <option key={m} value={m}>{m}</option>
                     ))}
+                    {splitMethod && !paymentMethods.includes(splitMethod) && (
+                      <option value={splitMethod}>{splitMethod} (숨김)</option>
+                    )}
                   </select>
                 </div>
 
@@ -790,12 +930,14 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
                       <span>{form.payment_method}</span>
                       <b>{formatAmount(primaryKrw)}원
                         {splitCurrency !== 'KRW' && ` (${fmtWallet(splitPrimary, splitCurrency)} ${splitCurrency})`}
+                        {discountParsed > 0 && ` · 할인 ${formatAmount(discountParsed)}원`}
                       </b>
                     </div>
                     <div>
                       <span>{splitMethod}</span>
                       <b>{formatAmount(secondaryKrw)}원
                         {secondaryForeign !== null && ` (${fmtWallet(secondaryForeign, splitCurrency)} ${splitCurrency})`}
+                        {secondDiscount > 0 && ` · 할인 ${formatAmount(secondDiscount)}원`}
                       </b>
                     </div>
                   </div>
@@ -811,9 +953,11 @@ function TransactionForm({ db, editingTx, defaultDate, onSave, onBulkAdd, onCanc
           </div>
           <div className="form-row">
             <FormulaInput
-              label={form.payment_method === '현금' ? '수익금액' : '할인금액'}
+              label={split && form.payment_method !== '현금'
+                ? `${discountLabel} (${form.payment_method || '첫 번째 결제수단'} 몫)`
+                : discountLabel}
               value={form.discount_amount}
-              onChange={v => set('discount_amount', v)}
+              onChange={v => { discountTouchedRef.current = true; set('discount_amount', v); }}
               placeholder="0"
             />
           </div>

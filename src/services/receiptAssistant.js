@@ -87,7 +87,20 @@ export function buildDataContext(db, today = todayStr()) {
 
 export const normalizeName = s => String(s || '').toLowerCase().replace(/[^0-9a-z가-힣ぁ-んァ-ン一-龥]/g, '');
 
-/** 가맹점명으로 예전에 적어 둔 세부내역을 찾는다 (많이 쓴 것, 더 구체적인 것 우선) */
+// 가맹점명과 세부내역이 얼마나 구체적으로 맞는지 — 정확히 같으면 가장 높고,
+// 한쪽이 다른 쪽을 포함하면 겹치는 글자 수(= 짧은 쪽 길이)가 길수록 높다. 맞지 않으면 0.
+function nameMatchLength(key, detail) {
+  if (key === detail) return Infinity;
+  if (key.includes(detail) || detail.includes(key)) return Math.min(key.length, detail.length);
+  return 0;
+}
+
+/**
+ * 가맹점명으로 예전에 적어 둔 세부내역을 찾는다.
+ * 더 구체적으로 맞는 것(정확히 같음 > 겹치는 글자가 긴 것)이 먼저이고, 횟수는 같은 수준끼리만 비교한다.
+ * 예) "이마트 성수점" → 자주 쓴 "마트"(2자)보다 "이마트"(3자)
+ * 반환: 패턴 행 + score (없으면 null)
+ */
 export function matchHistory(db, ...names) {
   const keys = names.map(normalizeName).filter(k => k.length >= 2);
   if (!keys.length) return null;
@@ -95,8 +108,10 @@ export function matchHistory(db, ...names) {
   getDetailPatterns(db).forEach(p => {
     const d = normalizeName(p.detail);
     if (d.length < 2) return;
-    if (!keys.some(k => k.includes(d) || d.includes(k))) return;
-    const score = p.cnt * 100 + d.length;
+    const match = Math.max(...keys.map(k => nameMatchLength(k, d)));
+    if (!match) return;
+    // 구체성(정확 일치 1순위, 겹친 길이 2순위)을 먼저, 같은 수준이면 많이 쓴 순
+    const score = (match === Infinity ? 1e9 : match * 1e5) + Math.min(p.cnt, 99999);
     if (!best || score > best.score) best = { ...p, score };
   });
   return best;

@@ -9,15 +9,16 @@
 
 ```
 브라우저 (React + sql.js)
-  ↕ MSAL 인증 (Microsoft 로그인 팝업)
+  ↕ MSAL 인증 (Microsoft 로그인 — 리다이렉트 방식)
 Microsoft Graph API
   ↕
 OneDrive: Apps/financial-ledger/ledger.db
 ```
 
 - DB는 sql.js로 브라우저 메모리에서 실행
-- 저장 시 `ledger.db` 파일을 OneDrive에 PUT
-- 로드 시 OneDrive에서 `ledger.db` 파일을 GET
+- 변경하면 자동 저장: `ledger.db`를 eTag 조건부(If-Match)로 PUT
+- 다른 기기가 먼저 저장했으면(412) 최신 파일을 받아 내 변경을 다시 적용해 합친 뒤 저장
+- 로드 시 OneDrive에서 `ledger.db` 파일을 GET (자세한 내용: `src/hooks/useLedgerSync.js`)
 
 ---
 

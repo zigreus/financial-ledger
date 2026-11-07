@@ -9,6 +9,7 @@ import {
   getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
+import { categoryColor } from '../common/categoryColor';
 import './SummaryView.css';
 
 // 날짜 포맷 헬퍼
@@ -29,17 +30,18 @@ const _filterState = {
   eventSortType: 'date_desc',
 };
 
-const CATEGORY_COLORS = {
-  '식비': '#FF6B6B',
-  '쇼핑': '#4ECDC4',
-  '차량교통비': '#45B7D1',
-  '의류/미용': '#F7DC6F',
-  '의료/건강': '#82E0AA',
-  '교육': '#BB8FCE',
-  '여행/문화': '#F0A500',
-  '반려동물': '#A3C4F3',
-  '기타': '#AAB7B8',
-};
+// 막대 길이(%) — 환불로 0 이하가 된 값은 빈 막대로 (음수 너비는 CSS가 무시해 막대가 가득 차 보인다)
+function barPercent(value, maxValue) {
+  if (!(maxValue > 0) || !(value > 0)) return 0;
+  return Math.min(100, (value / maxValue) * 100);
+}
+
+// 막대 최대값 — 양수 값 중 가장 큰 것 (없으면 1)
+function barMax(values) {
+  return Math.max(1, ...values.filter(v => v > 0));
+}
+
+const netOf = r => (r.total || 0) - (r.discount || 0);
 
 function BarChart({ data, maxValue, color, formatLabel, currentMonth }) {
   return (
@@ -53,7 +55,7 @@ function BarChart({ data, maxValue, color, formatLabel, currentMonth }) {
               <div
                 className="bar-fill"
                 style={{
-                  width: maxValue ? `${(item.value / maxValue) * 100}%` : '0%',
+                  width: `${barPercent(item.value, maxValue)}%`,
                   backgroundColor: isCurrent ? '#FF8C42' : (color || '#4ECDC4'),
                 }}
               />
@@ -90,7 +92,9 @@ function aggregateForeign(rows) {
   return all;
 }
 
-function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChange }) {
+// dataVersion: DB에 쓰기가 있을 때마다 App이 올리는 숫자. sql.js는 같은 db 객체를 제자리에서 바꾸므로
+// db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
+function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange, onDrilldownChange }) {
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
   const [filterType, setFilterType] = useState(() => _filterState.filterType);
@@ -120,22 +124,23 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   useEffect(() => { _filterState.eventTypeFilter = eventTypeFilter; }, [eventTypeFilter]);
   useEffect(() => { _filterState.eventSortType = eventSortType; }, [eventSortType]);
 
-  const months = useMemo(() => getAvailableMonths(db), [db]);
-  const years = useMemo(() => getAvailableYears(db), [db]);
-  const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(db, monthlyLimit), [db, monthlyLimit]);
+  /* eslint-disable react-hooks/exhaustive-deps -- dataVersion은 db 내용이 바뀌었다는 신호라 본문에서 쓰지 않아도 의존성에 둔다 */
+  const months = useMemo(() => getAvailableMonths(db), [db, dataVersion]);
+  const years = useMemo(() => getAvailableYears(db), [db, dataVersion]);
+  const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(db, monthlyLimit), [db, dataVersion, monthlyLimit]);
   const isMobile = useIsMobile();
   const showGoal = useMemo(
     () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
-    [db, isMobile]
+    [db, dataVersion, isMobile]
   );
-  const calendarEvents = useMemo(() => getCalendarEvents(db), [db]);
+  const calendarEvents = useMemo(() => getCalendarEvents(db), [db, dataVersion]);
 
   const categorySummary = useMemo(() => {
     if (filterType === 'month') return getMonthlySummary(db, selectedMonth);
     if (filterType === 'year') return selectedYear ? getYearlySummary(db, selectedYear) : [];
     if (filterType === 'range') return dateFrom && dateTo ? getRangeSummary(db, dateFrom, dateTo) : [];
     return [];
-  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+  }, [db, dataVersion, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const subCategorySummary = useMemo(() => {
     if (!drilldownCategory) return [];
@@ -143,23 +148,28 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
     if (filterType === 'year') return selectedYear ? getYearlySubCategorySummary(db, selectedYear, drilldownCategory) : [];
     if (filterType === 'range') return dateFrom && dateTo ? getRangeSubCategorySummary(db, dateFrom, dateTo, drilldownCategory) : [];
     return [];
-  }, [db, drilldownCategory, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
+  }, [db, dataVersion, drilldownCategory, filterType, selectedMonth, selectedYear, dateFrom, dateTo]);
 
   const paymentSummary = useMemo(() => {
     if (filterType === 'month') return getPaymentMethodSummary(db, selectedMonth);
     if (filterType === 'year') return selectedYear ? getYearlyPaymentMethodSummary(db, selectedYear) : [];
     if (filterType === 'range') return dateFrom && dateTo ? getRangePaymentMethodSummary(db, dateFrom, dateTo) : [];
-    if (filterType === 'event') return getEventPaymentMethodSummary(db, selectedEventId ? Number(selectedEventId) : null);
+    // 특정 일정을 고르지 않았으면 유형 필터를 적용해 상단 총액(eventSummary)과 같은 범위로 집계한다
+    if (filterType === 'event') {
+      return selectedEventId
+        ? getEventPaymentMethodSummary(db, Number(selectedEventId))
+        : getEventPaymentMethodSummary(db, null, eventTypeFilter || null);
+    }
     return [];
-  }, [db, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId]);
+  }, [db, dataVersion, filterType, selectedMonth, selectedYear, dateFrom, dateTo, selectedEventId, eventTypeFilter]);
 
-  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db]);
+  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db, dataVersion]);
   const eventTypeMap = useMemo(
     () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
     [eventTypes]
   );
 
-  const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, eventTypeFilter]);
+  const eventSummary = useMemo(() => getEventSummary(db, eventTypeFilter || null), [db, dataVersion, eventTypeFilter]);
   const sortedEventSummary = useMemo(() => {
     const arr = [...eventSummary];
     if (eventSortType === 'date_desc') return arr.sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
@@ -209,7 +219,19 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
   };
   const eventDetailSummary = useMemo(
     () => selectedEventId ? getEventDetailSummary(db, Number(selectedEventId)) : [],
-    [db, selectedEventId]
+    [db, dataVersion, selectedEventId]
+  );
+  /* eslint-enable react-hooks/exhaustive-deps */
+
+  // 월·연 선택 목록 — 거래가 있는 달만 있으면, 이번 달에 아직 거래가 없을 때 선택값이 목록에 없어 빈칸으로 보인다.
+  // 이번 달(올해)과 지금 고른 값은 항상 목록에 넣는다.
+  const monthOptions = useMemo(
+    () => [...new Set([...months, currentMonth, selectedMonth].filter(Boolean))].sort().reverse(),
+    [months, currentMonth, selectedMonth]
+  );
+  const yearOptions = useMemo(
+    () => [...new Set([...years, currentYear, selectedYear].filter(Boolean))].sort().reverse(),
+    [years, currentYear, selectedYear]
   );
 
   const totalSpend = useMemo(() => categorySummary.reduce((s, r) => s + r.total, 0), [categorySummary]);
@@ -297,12 +319,12 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             {filterType === 'month' && (
               <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
                 <option value="">전체 기간</option>
-                {months.map(m => <option key={m} value={m}>{m}</option>)}
+                {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
             {filterType === 'year' && (
               <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
-                {years.map(y => <option key={y} value={y}>{y}년</option>)}
+                {yearOptions.map(y => <option key={y} value={y}>{y}년</option>)}
               </select>
             )}
             {filterType === 'range' && (
@@ -391,8 +413,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             <p className="empty-state">데이터가 없습니다.</p>
           ) : monthlySubTab === 'chart' ? (
             <BarChart
-              data={monthlyTotals.map(r => ({ label: r.month, value: r.total - (r.discount || 0) }))}
-              maxValue={Math.max(...monthlyTotals.map(r => r.total - (r.discount || 0)))}
+              data={monthlyTotals.map(r => ({ label: r.month, value: netOf(r) }))}
+              maxValue={barMax(monthlyTotals.map(netOf))}
               color="#45B7D1"
               formatLabel={v => `${formatAmount(v)}원`}
               currentMonth={currentMonth}
@@ -554,9 +576,9 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
               ) : (
                 <>
                   <BarChart
-                    data={sortedSubCategorySummary.map(r => ({ label: r.sub_category || '(미분류)', value: r.total }))}
-                    maxValue={Math.max(...sortedSubCategorySummary.map(r => r.total), 1)}
-                    color={CATEGORY_COLORS[drilldownCategory] || '#AAB7B8'}
+                    data={sortedSubCategorySummary.map(r => ({ label: r.sub_category || '(미분류)', value: netOf(r) }))}
+                    maxValue={barMax(sortedSubCategorySummary.map(netOf))}
+                    color={categoryColor(drilldownCategory)}
                     formatLabel={v => `${formatAmount(v)}원`}
                   />
                   <table className="summary-table">
@@ -607,8 +629,8 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
             ) : (
               <>
                 <BarChart
-                  data={sortedCategorySummary.map(r => ({ label: r.budget_category, value: r.total }))}
-                  maxValue={Math.max(...sortedCategorySummary.map(r => r.total), 1)}
+                  data={sortedCategorySummary.map(r => ({ label: r.budget_category, value: netOf(r) }))}
+                  maxValue={barMax(sortedCategorySummary.map(netOf))}
                   color={null}
                   formatLabel={v => `${formatAmount(v)}원`}
                 />
@@ -629,7 +651,7 @@ function SummaryView({ db, tab, drilldownCategory, onTabChange, onDrilldownChang
                         onClick={() => onDrilldownChange(r.budget_category)}
                       >
                         <td>
-                          <span className="cat-dot" style={{ backgroundColor: CATEGORY_COLORS[r.budget_category] || '#AAB7B8' }} />
+                          <span className="cat-dot" style={{ backgroundColor: categoryColor(r.budget_category) }} />
                           {r.budget_category}
                           <span className="drilldown-arrow">›</span>
                         </td>

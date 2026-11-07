@@ -21,21 +21,25 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
   const dbRef = useRef(db);
   dbRef.current = db;
 
-  const run = async (img) => {
+  // 취소(닫기·연속 입력으로 다음 거래·다른 사진)는 언제 하든 같은 컨트롤러를 abort한다.
+  // 이미지 준비 단계부터 컨트롤러를 만들어 두어야 그 사이의 취소도 API 호출 전에 막힌다.
+  const run = async (img, controller = new AbortController()) => {
     const ai = activeAI();
     if (!ai) { onSetup(); return; }
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
+    if (abortRef.current && abortRef.current !== controller) abortRef.current.abort();
     abortRef.current = controller;
+    if (controller.signal.aborted) return;
     setError('');
     setSuggestion(null);
     setPhase('analyzing');
     try {
       const s = await analyzeReceipt({ db: dbRef.current, ai, image: img, signal: controller.signal });
+      if (controller.signal.aborted) return;
       setSuggestion(s);
       setPhase('review');
     } catch (e) {
-      if (e.name === 'AbortError') return;
+      // 취소된 요청은 어떤 오류로 끝나든 화면을 바꾸지 않는다 (취소한 쪽이 이미 화면을 정했다)
+      if (controller.signal.aborted || e.name === 'AbortError') return;
       setError(e.message || '분석에 실패했습니다');
       setPhase('error');
     } finally {
@@ -45,21 +49,30 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
 
   useEffect(() => {
     if (!file) return undefined;
-    let cancelled = false;
+    const controller = new AbortController();
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = controller;
+    // 새 사진 — 이전 사진·결과를 지운다 (준비에 실패했을 때 '다시 시도'가 이전 사진을 보내지 않도록)
+    setImage(null);
+    setSuggestion(null);
+    setError('');
+    setPhase('analyzing');
     (async () => {
       try {
-        setPhase('analyzing');
         const img = await prepareImage(file);
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setImage(img);
-        await run(img);
+        await run(img, controller);
       } catch (e) {
-        if (!cancelled) { setError(e.message); setPhase('error'); }
+        if (!controller.signal.aborted) { setError(e.message); setPhase('error'); }
       }
     })();
-    return () => { cancelled = true; if (abortRef.current) abortRef.current.abort(); };
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
+
+  // 패널이 닫히면 진행 중인 요청을 모두 취소한다 ('다시 시도'로 시작한 요청 포함)
+  useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
   const ai = activeAI();
   const providerLabel = ai ? PROVIDERS[ai.provider].label.split(' ')[0] : '';

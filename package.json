@@ -8,11 +8,14 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-scripts": "5.0.1",
-    "sql.js": "^1.12.0"
+    "sql.js": "1.12.0"
   },
   "scripts": {
+    "prestart": "node scripts/copy-sql-wasm.js",
     "start": "react-app-rewired start",
+    "prebuild": "node scripts/copy-sql-wasm.js",
     "build": "react-app-rewired build",
+    "pretest": "node scripts/copy-sql-wasm.js",
     "test": "react-app-rewired test",
     "eject": "react-scripts eject"
   },

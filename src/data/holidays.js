@@ -5,7 +5,8 @@
  * 대체공휴일은 확정된 경우에만 포함.
  *
  * 출처: 우주항공청 월력요항, 행정안전부 공고
- * 마지막 업데이트: 2026-05
+ * 마지막 업데이트: 2026-11 (2027년 추가)
+ * 매년 하반기에 다음 해 데이터를 추가해야 한다 — 없으면 계좌 자동등록의 휴일 보정이 주말만 반영된다.
  */
 
 const HOLIDAYS_BY_YEAR = {
@@ -53,9 +54,70 @@ const HOLIDAYS_BY_YEAR = {
     { date: '2026-12-25', name: '성탄절' },
   ],
 
-  // 2027년 공휴일은 확정 후 추가
-  // 2027: [],
+  // 2027년: 월력요항 기준. 대체공휴일 규칙(설·추석은 일요일, 국경일·어린이날·부처님오신날·성탄절은 토·일과 겹치면)을 적용했다.
+  // 임시공휴일이 새로 지정되면 여기에 추가한다.
+  2027: [
+    // ── 1월 ──
+    { date: '2027-01-01', name: '신정' },
+
+    // ── 2월 ──
+    { date: '2027-02-06', name: '설날 연휴' },
+    { date: '2027-02-07', name: '설날' },
+    { date: '2027-02-08', name: '설날 연휴' },
+    { date: '2027-02-09', name: '대체공휴일(설날)' }, // 2/7 일요일
+
+    // ── 3월 ──
+    { date: '2027-03-01', name: '삼일절' },
+
+    // ── 5월 ──
+    { date: '2027-05-01', name: '근로자의 날' }, // 토요일
+    { date: '2027-05-05', name: '어린이날' },
+    { date: '2027-05-13', name: '부처님오신날' },
+
+    // ── 6월 ──
+    { date: '2027-06-06', name: '현충일' }, // 일요일, 대체공휴일 미적용
+
+    // ── 8월 ──
+    { date: '2027-08-15', name: '광복절' },
+    { date: '2027-08-16', name: '대체공휴일(광복절)' }, // 8/15 일요일
+
+    // ── 9월 ──
+    { date: '2027-09-14', name: '추석 연휴' },
+    { date: '2027-09-15', name: '추석' },
+    { date: '2027-09-16', name: '추석 연휴' },
+
+    // ── 10월 ──
+    { date: '2027-10-03', name: '개천절' },
+    { date: '2027-10-04', name: '대체공휴일(개천절)' }, // 10/3 일요일
+    { date: '2027-10-09', name: '한글날' },
+    { date: '2027-10-11', name: '대체공휴일(한글날)' }, // 10/9 토요일
+
+    // ── 12월 ──
+    { date: '2027-12-25', name: '성탄절' },
+    { date: '2027-12-27', name: '대체공휴일(성탄절)' }, // 12/25 토요일
+  ],
+
+  // 2028년 공휴일은 확정 후 추가 — 없으면 앱이 "공휴일 데이터 없음"을 알린다 (hasHolidayData)
 };
+
+// 'YYYY-MM-DD'를 로컬 날짜로 해석한다.
+// new Date('YYYY-MM-DD')는 UTC 자정으로 해석되어 음수 시간대에서 하루 전 날짜가 된다 (B-011).
+function parseLocalDate(dateStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** 해당 연도의 공휴일 데이터가 있는지 — 없으면 휴일 보정이 주말만 반영된다 */
+export function hasHolidayData(year) {
+  return Array.isArray(HOLIDAYS_BY_YEAR[Number(year)]);
+}
 
 /**
  * 특정 날짜가 공휴일인지 확인
@@ -63,8 +125,7 @@ const HOLIDAYS_BY_YEAR = {
  * @returns {boolean}
  */
 export function isHoliday(dateStr) {
-  const year = parseInt(dateStr.slice(0, 4), 10);
-  const list = HOLIDAYS_BY_YEAR[year];
+  const list = HOLIDAYS_BY_YEAR[Number(String(dateStr).slice(0, 4))];
   if (!list) return false;
   return list.some((h) => h.date === dateStr);
 }
@@ -75,7 +136,7 @@ export function isHoliday(dateStr) {
  * @returns {boolean}
  */
 export function isWeekend(dateStr) {
-  const day = new Date(dateStr).getDay();
+  const day = parseLocalDate(dateStr).getDay();
   return day === 0 || day === 6;
 }
 
@@ -85,58 +146,20 @@ export function isWeekend(dateStr) {
  * @returns {string} - 실제 업무일 'YYYY-MM-DD'
  */
 export function getNextBusinessDay(dateStr) {
-  let d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
   while (isWeekend(toDateStr(d)) || isHoliday(toDateStr(d))) {
     d.setDate(d.getDate() + 1);
   }
   return toDateStr(d);
 }
 
+/** 공휴일 또는 주말이면 이전 업무일을 반환 */
 export function getPrevBusinessDay(dateStr) {
-  let d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
   while (isWeekend(toDateStr(d)) || isHoliday(toDateStr(d))) {
     d.setDate(d.getDate() - 1);
   }
   return toDateStr(d);
-}
-
-/**
- * 매월 N일의 실제 결제일 계산 (공휴일/주말이면 다음 업무일)
- * @param {number} year
- * @param {number} month - 1-indexed
- * @param {number} dayOfMonth
- * @param {string} holidayRule - 'next_business' | 'prev_business' | 'none'
- * @returns {string} - 'YYYY-MM-DD'
- */
-export function getActualPaymentDate(year, month, dayOfMonth, holidayRule = 'none') {
-  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(dayOfMonth).padStart(2, '0')}`;
-  if (holidayRule === 'next_business') return getNextBusinessDay(dateStr);
-  if (holidayRule === 'prev_business') return getPrevBusinessDay(dateStr);
-  return dateStr;
-}
-
-/**
- * 특정 연도의 공휴일 목록 반환
- * @param {number} year
- * @returns {Array<{date: string, name: string}>}
- */
-export function getHolidaysByYear(year) {
-  return HOLIDAYS_BY_YEAR[year] || [];
-}
-
-/**
- * 지원되는 연도 목록 반환
- * @returns {number[]}
- */
-export function getSupportedYears() {
-  return Object.keys(HOLIDAYS_BY_YEAR).map(Number).sort();
-}
-
-function toDateStr(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 export default HOLIDAYS_BY_YEAR;

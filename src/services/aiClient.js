@@ -42,6 +42,13 @@ export function saveAIConfig(config) {
   try { window.localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch (e) { /* 저장 불가 환경 */ }
 }
 
+/** 이 기기에 저장된 모든 공급자의 API 키를 지운다 (로그아웃 등). 공급자·모델 선택은 남긴다. */
+export function clearAIKeys() {
+  const config = getAIConfig();
+  const keys = Object.fromEntries(Object.keys(config.keys).map(p => [p, '']));
+  saveAIConfig({ ...config, keys });
+}
+
 /** 지금 선택된 공급자로 바로 호출할 수 있는 상태인지 */
 export function activeAI(config = getAIConfig()) {
   const apiKey = (config.keys[config.provider] || '').trim();
@@ -62,16 +69,31 @@ export class AIError extends Error {
   }
 }
 
+/** 사용자가 취소한 요청 — 호출부는 e.name === 'AbortError'로 구분한다 */
+function abortError() {
+  const e = new Error('요청을 취소했습니다');
+  e.name = 'AbortError';
+  return e;
+}
+
 async function request(url, init) {
+  const aborted = () => !!init?.signal?.aborted;
   let res;
   try {
     res = await fetch(url, init);
   } catch (e) {
-    if (e.name === 'AbortError') throw e;
+    if (e.name === 'AbortError' || aborted()) throw abortError();
     throw new AIError('네트워크 오류 — 인터넷 연결을 확인하세요', 'network');
   }
   let body = null;
-  try { body = await res.json(); } catch (e) { body = null; }
+  try {
+    body = await res.json();
+  } catch (e) {
+    // 응답 본문을 읽는 도중 취소되면 '해석 실패'가 아니라 취소로 돌려준다
+    if (e.name === 'AbortError' || aborted()) throw abortError();
+    body = null;
+  }
+  if (aborted()) throw abortError();
   if (!res.ok) {
     const detail = body?.error?.message || res.statusText || '';
     if (res.status === 401 || res.status === 403) throw new AIError(`API 키를 확인하세요 (${detail})`, 'auth');

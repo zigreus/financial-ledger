@@ -14,38 +14,20 @@ import {
   deleteTransaction,
   getCalendarEventTypes,
   getSetting,
+  getCalendarEventLinkCounts,
+  withTransaction,
 } from '../../services/dbManager';
 import { parseRate, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
 import TripCashModal from '../TripCash/TripCashModal';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
-
-// ── 카테고리 컬러 ──────────────────────────────────────────
-const DEFAULT_CATEGORY_COLORS = {
-  '식비': '#FF6B6B',
-  '쇼핑': '#4ECDC4',
-  '차량교통비': '#45B7D1',
-  '의류/미용': '#F7DC6F',
-  '의료/건강': '#82E0AA',
-  '교육': '#BB8FCE',
-  '여행/문화': '#F0A500',
-  '반려동물': '#A3C4F3',
-  '기타': '#AAB7B8',
-};
-function stringToHue(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  return Math.abs(hash) % 360;
-}
-function categoryColor(cat) {
-  if (!cat) return '#AAB7B8';
-  if (DEFAULT_CATEGORY_COLORS[cat]) return DEFAULT_CATEGORY_COLORS[cat];
-  return `hsl(${stringToHue(cat)}, 55%, 52%)`;
-}
+import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
 
 // ── 상수 ───────────────────────────────────────────────────
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+const SWIPE_MIN_DX = 50;   // 이만큼 가로로 밀어야 달을 넘긴다
+const SWIPE_MAX_SLOPE = 0.6; // 세로 이동이 가로의 이 비율을 넘으면 스크롤로 본다
 
 function todayStr() {
   const d = new Date();
@@ -69,6 +51,19 @@ function resolveEventColor(ev, eventTypeMap) {
   return eventTypeMap[ev.event_type]?.color ?? '#9CA3AF';
 }
 
+// 일정이 걸친 기간 [시작, 끝]. 종료일이 없으면 하루짜리,
+// 예전에 시작·종료가 뒤바뀌어 저장된 일정도 달력에 보이도록 앞·뒤를 맞춘다.
+function eventSpan(ev) {
+  const from = ev.date_from || '';
+  const to = ev.date_to || from;
+  return to < from ? [to, from] : [from, to];
+}
+
+function eventCoversDate(ev, dateStr) {
+  const [from, to] = eventSpan(ev);
+  return !!from && dateStr >= from && dateStr <= to;
+}
+
 // ── 주 행 레이아웃 계산 ────────────────────────────────────
 function buildWeekRows(year, mon, days, firstDow) {
   const cells = [];
@@ -85,8 +80,7 @@ function buildWeekRows(year, mon, days, firstDow) {
 function assignEventBars(weekDates, events) {
   const bars = [];
   events.forEach(ev => {
-    const eFrom = ev.date_from || '';
-    const eTo   = ev.date_to   || ev.date_from || '';
+    const [eFrom, eTo] = eventSpan(ev);
     if (!eFrom) return;
     let startCol = -1, endCol = -1;
     weekDates.forEach((date, col) => {
@@ -170,6 +164,12 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
 
   async function handleSave() {
     if (!form.title.trim()) { setError('제목을 입력하세요'); return; }
+    // 종료일이 시작일보다 빠르거나 시작일 없이 종료일만 있으면 달력 어디에도 나타나지 않는다
+    if (form.date_to && !form.date_from) { setError('종료일이 있으면 시작일도 입력하세요'); return; }
+    if (form.date_from && form.date_to && form.date_to < form.date_from) {
+      setError('종료일이 시작일보다 빠릅니다');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -182,24 +182,27 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
         note: form.note,
         is_hidden: editingEvent?.is_hidden || 0,
       };
-      if (editingEvent) {
-        updateCalendarEvent(db, editingEvent.id, payload);
-        // sync countries
-        const oldCountries = editingEvent.countries || [];
-        const keepIds = new Set(form.countries.filter(c => c.id).map(c => c.id));
-        oldCountries.forEach(oc => { if (!keepIds.has(oc.id)) deleteEventCountry(db, oc.id); });
-        form.countries.forEach(c => {
-          if (!c.country.trim()) return;
-          const rate = parseRate(c.exchange_rate);
-          if (c.id) updateEventCountry(db, c.id, c.country, c.currency, rate);
-          else addEventCountry(db, editingEvent.id, c.country, c.currency, rate);
-        });
-      } else {
-        const newId = addCalendarEvent(db, payload);
-        form.countries.forEach(c => {
-          if (c.country.trim()) addEventCountry(db, newId, c.country, c.currency, parseRate(c.exchange_rate));
-        });
-      }
+      // 일정과 국가·환율을 한 단위로 저장 — 중간에 실패하면 전부 되돌린다
+      withTransaction(db, () => {
+        if (editingEvent) {
+          updateCalendarEvent(db, editingEvent.id, payload);
+          // sync countries
+          const oldCountries = editingEvent.countries || [];
+          const keepIds = new Set(form.countries.filter(c => c.id).map(c => c.id));
+          oldCountries.forEach(oc => { if (!keepIds.has(oc.id)) deleteEventCountry(db, oc.id); });
+          form.countries.forEach(c => {
+            if (!c.country.trim()) return;
+            const rate = parseRate(c.exchange_rate);
+            if (c.id) updateEventCountry(db, c.id, c.country, c.currency, rate);
+            else addEventCountry(db, editingEvent.id, c.country, c.currency, rate);
+          });
+        } else {
+          const newId = addCalendarEvent(db, payload);
+          form.countries.forEach(c => {
+            if (c.country.trim()) addEventCountry(db, newId, c.country, c.currency, parseRate(c.exchange_rate));
+          });
+        }
+      });
       onSave();
     } catch (e) {
       setError(e.message);
@@ -210,8 +213,21 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
 
   async function handleDelete() {
     if (!editingEvent) return;
-    if (!window.confirm(`"${editingEvent.title}" 일정을 삭제할까요?`)) return;
-    deleteCalendarEvent(db, editingEvent.id);
+    // 지우면 함께 바뀌는 범위를 확인 문구에 그대로 보여준다 (deleteCalendarEvent 동작과 일치)
+    const { txCount, flowCount, accountFlowCount } = getCalendarEventLinkCounts(db, editingEvent.id);
+    const lines = [`"${editingEvent.title}" 일정을 삭제할까요?`];
+    if (txCount > 0) lines.push(`· 연결된 거래 ${txCount}건은 지워지지 않고, 일정 연결만 해제됩니다.`);
+    if (flowCount > 0) {
+      lines.push(`· 이 일정의 환전·정산 기록 ${flowCount}건이 함께 삭제됩니다.`);
+      if (accountFlowCount > 0) lines.push(`  (그중 계좌 입출금으로 기록된 ${accountFlowCount}건은 계좌 내역에 그대로 남습니다.)`);
+    }
+    if (!window.confirm(lines.join('\n'))) return;
+    try {
+      deleteCalendarEvent(db, editingEvent.id);
+    } catch (e) {
+      setError(e.message);
+      return;
+    }
     onDelete();
   }
 
@@ -250,7 +266,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
             </div>
             <div className="cv-form-field" style={{ flex: 1 }}>
               <label className="cv-form-label">종료일</label>
-              <input type="date" className="cv-form-input" value={form.date_to} onChange={e => setField('date_to', e.target.value)} />
+              <input type="date" className="cv-form-input" value={form.date_to} min={form.date_from || undefined} onChange={e => setField('date_to', e.target.value)} />
             </div>
           </div>
 
@@ -360,7 +376,7 @@ function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCanc
 }
 
 // ── 메인 컴포넌트 ──────────────────────────────────────────
-export default function CalendarView({ db, goTodayKey, onChanged, showEventForm, onOpenEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
+export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChanged, showEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
   const today = todayStr();
   const [currentMonth, setCurrentMonth] = useState(() => today.slice(0, 7));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -389,18 +405,21 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   const monthStart = currentMonth + '-01';
   const monthEnd   = `${currentMonth}-${String(days).padStart(2,'0')}`;
 
-  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db]);
+  // dataVersion: DB에 쓰기가 있을 때마다 App이 올리는 숫자. sql.js는 같은 db 객체를 제자리에서 바꾸므로
+  // db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
+  /* eslint-disable react-hooks/exhaustive-deps -- dataVersion은 db 내용이 바뀌었다는 신호라 본문에서 쓰지 않아도 의존성에 둔다 */
+  const eventTypes = useMemo(() => getCalendarEventTypes(db), [db, dataVersion]);
   const eventTypeMap = useMemo(
     () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
     [eventTypes]
   );
 
-  const events = useMemo(() => db ? getCalendarEventsInRange(db, monthStart, monthEnd) : [], [db, monthStart, monthEnd]);
-  const undatedEvents = useMemo(() => db ? getUndatedCalendarEvents(db) : [], [db]);
-  const dailyTotals   = useMemo(() => db ? getDailyTotals(db, currentMonth) : {}, [db, currentMonth]);
+  const events = useMemo(() => db ? getCalendarEventsInRange(db, monthStart, monthEnd) : [], [db, dataVersion, monthStart, monthEnd]);
+  const undatedEvents = useMemo(() => db ? getUndatedCalendarEvents(db) : [], [db, dataVersion]);
+  const dailyTotals   = useMemo(() => db ? getDailyTotals(db, currentMonth) : {}, [db, dataVersion, currentMonth]);
 
   const weekRows = useMemo(() => buildWeekRows(year, mon, days, firstDow), [year, mon, days, firstDow]);
-  const emptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
+  const emptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db, dataVersion]);
 
   // max total for heatmap intensity
   const maxTotal = useMemo(() => {
@@ -417,14 +436,12 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   const bottomSheetTx = useMemo(() => {
     if (!selectedDate || !db) return [];
     return getTransactions(db, { dateFrom: selectedDate, dateTo: selectedDate });
-  }, [db, selectedDate]);
+  }, [db, dataVersion, selectedDate]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const bottomSheetEvents = useMemo(() => {
     if (!selectedDate) return [];
-    return events.filter(ev => {
-      const f = ev.date_from || '', t = ev.date_to || ev.date_from || '';
-      return selectedDate >= f && selectedDate <= (t || f);
-    });
+    return events.filter(ev => eventCoversDate(ev, selectedDate));
   }, [selectedDate, events]);
 
   function prevMonth() {
@@ -443,10 +460,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
 
   function handleDateClick(dateStr) {
     const hasTx = !!dailyTotals[dateStr];
-    const hasEv = events.some(ev => {
-      const f = ev.date_from || '', t = ev.date_to || ev.date_from || '';
-      return dateStr >= f && dateStr <= (t || f);
-    });
+    const hasEv = events.some(ev => eventCoversDate(ev, dateStr));
     if (!hasTx && !hasEv) {
       if (emptyDateAction === 'transaction') {
         if (onAddTransaction) onAddTransaction(dateStr);
@@ -518,18 +532,28 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
     }
   }, [showEventForm, internalEventForm]);
 
-  const touchStartX = useRef(null);
+  // 달력 넘기기 스와이프 — 달력 격자(.cv-grid)에서만 받는다.
+  // 바텀시트·일정 폼·현금 관리 같은 모달은 cv-wrap 안에 그려지므로, cv-wrap에서 받으면
+  // 모달 안의 가로 드래그까지 뒤의 달을 바꿔 버린다. 세로로 더 많이 움직였으면 스크롤로 본다.
+  const touchStart = useRef(null);
 
   function handleTouchStart(e) {
-    touchStartX.current = e.touches[0].clientX;
+    if (e.touches.length !== 1) { touchStart.current = null; return; }
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   }
   function handleTouchEnd(e) {
-    if (touchStartX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    touchStartX.current = null;
-    if (Math.abs(dx) < 50) return;
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_DX) return;
+    if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_SLOPE) return;
     if (dx < 0) nextMonth();
     else prevMonth();
+  }
+  function handleTouchCancel() {
+    touchStart.current = null;
   }
 
   const [pickerYear, setPickerYear] = useState(year);
@@ -553,7 +577,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
   }
 
   return (
-    <div className="cv-wrap" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+    <div className="cv-wrap">
       {/* ── 헤더 ── */}
       <div className="cv-header">
         <button className="cv-header-btn" onClick={prevMonth}>‹</button>
@@ -565,7 +589,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
 
       {/* ── 연·월 피커 ── */}
       {pickerOpen && (
-        <div className="cv-picker" onTouchStart={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()}>
+        <div className="cv-picker">
           <div className="cv-picker-year-row">
             <span className="cv-picker-year-label">연도</span>
             <button className="cv-picker-year-nav" onClick={() => setYearRangeBase(b => b - 9)}>‹</button>
@@ -593,7 +617,12 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       )}
 
       {/* ── 달력 그리드 ── */}
-      <div className="cv-grid">
+      <div
+        className="cv-grid"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
+      >
         <div className="cv-weekdays">
           {WEEKDAYS.map((wd, i) => (
             <div key={wd} className={`cv-wd${i===0?' cv-sun':i===6?' cv-sat':''}`}>{wd}</div>
@@ -763,7 +792,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       {selectedTx && (
         <ModalOverlay className="cv-tx-modal-overlay" panelClassName="cv-tx-modal" onDismiss={() => setSelectedTx(null)}>
             <div className="cv-tx-modal-header">
-              <div className="cv-tx-modal-cat-badge" style={{ background: categoryColor(selectedTx.budget_category) + '22', color: categoryColor(selectedTx.budget_category) }}>
+              <div className="cv-tx-modal-cat-badge" style={{ background: categoryColorAlpha(selectedTx.budget_category, 0.13), color: categoryColor(selectedTx.budget_category) }}>
                 <span className="cv-tx-modal-cat-dot" style={{ background: categoryColor(selectedTx.budget_category) }} />
                 {selectedTx.budget_category}
                 {selectedTx.sub_category && ` / ${selectedTx.sub_category}`}
@@ -822,6 +851,7 @@ export default function CalendarView({ db, goTodayKey, onChanged, showEventForm,
       {cashEvent && (
         <TripCashModal
           db={db}
+          dataVersion={dataVersion}
           event={cashEvent}
           onClose={() => setCashEvent(null)}
           onChanged={onChanged}

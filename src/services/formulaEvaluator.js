@@ -11,14 +11,19 @@ function normalize(expr) {
     .replace(/,/g, '')
     .replace(/×/g, '*')
     .replace(/÷/g, '/')
-    .trim();
+    .trim()
+    .replace(/\s*원$/, ''); // 끝에 붙은 단위 '원'은 허용 ("4,500원")
 }
+
+// 허용 문자: 숫자, + - * /, 괄호, 소수점, 공백 — 그 밖의 문자는 지우지 않고 오류로 본다
+const ALLOWED = /^[0-9+\-*/().\s]+$/;
 
 /**
  * 사칙연산 수식을 계산해 소수 그대로 돌려준다. 다른 평가 함수의 기반.
  * 빈 값은 null, 계산할 수 없는 값은 NaN.
+ * 허용되지 않는 문자가 섞이면 NaN ("3만", "1e5" 등 — 지우고 계산하면 엉뚱한 금액이 된다).
  * 단순 음수(-5000)는 항상 허용하고, 수식 결과가 음수인 경우는 allowNegative일 때만 허용한다.
- * 예) "10000+5000" → 15000, "1320/100" → 13.2, "1,000×3" → 3000
+ * 예) "10000+5000" → 15000, "1320/100" → 13.2, "1,000×3" → 3000, "4500원" → 4500
  */
 export function evaluateExpression(expr, { allowNegative = false } = {}) {
   if (expr === null || expr === undefined) return null;
@@ -28,13 +33,12 @@ export function evaluateExpression(expr, { allowNegative = false } = {}) {
   // 숫자만 있는 경우
   if (/^-?\d+(\.\d+)?$/.test(str)) return parseFloat(str);
 
-  // 허용 문자: 숫자, +, -, *, /, (, ), 소수점, 공백
-  const sanitized = str.replace(/[^0-9+\-*/().\s]/g, '').trim();
-  if (!sanitized) return NaN;
+  // 거듭제곱(**)은 사칙연산이 아니므로 받지 않는다
+  if (!ALLOWED.test(str) || str.includes('**')) return NaN;
 
   try {
     // eslint-disable-next-line no-new-func
-    const result = new Function('"use strict"; return (' + sanitized + ')')();
+    const result = new Function('"use strict"; return (' + str + ')')();
     if (typeof result === 'number' && isFinite(result) && (allowNegative || result >= 0)) {
       return result;
     }

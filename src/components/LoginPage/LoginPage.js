@@ -1,17 +1,22 @@
 import React, { useState } from 'react';
 import { useMsal } from '@azure/msal-react';
+import { InteractionStatus } from '@azure/msal-browser';
 import { loginRequest } from '../../auth/msalConfig';
 import { AZURE_CLIENT_ID } from '../../config';
 import './LoginPage.css';
 
 function LoginPage() {
-  const { instance } = useMsal();
+  const { instance, inProgress } = useMsal();
   const [error, setError] = useState('');
+  const busy = inProgress !== InteractionStatus.None;
 
+  // 모바일 홈 화면 앱에서는 팝업이 막힐 수 있어 리다이렉트로 로그인한다 (B-016).
+  // 토큰 재인증(oneDriveService)도 리다이렉트라 방식이 하나로 통일된다.
   const handleLogin = async () => {
+    if (busy) return;
     setError('');
     try {
-      await instance.loginPopup(loginRequest);
+      await instance.loginRedirect(loginRequest);
     } catch (e) {
       setError('로그인에 실패했습니다. 다시 시도해주세요.');
       console.error(e);
@@ -29,9 +34,9 @@ function LoginPage() {
 
         {isConfigured ? (
           <>
-            <button className="btn-login" onClick={handleLogin}>
+            <button className="btn-login" onClick={handleLogin} disabled={busy}>
               <span className="ms-icon">⊞</span>
-              Microsoft 계정으로 로그인
+              {busy ? '로그인 중…' : 'Microsoft 계정으로 로그인'}
             </button>
             {error && <p className="login-error">{error}</p>}
           </>

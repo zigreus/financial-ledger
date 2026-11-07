@@ -3,8 +3,8 @@ import {
   getAllPaymentMethods, getAllBudgetCategories, getAllSubCategories,
   setMasterItemHidden, moveItemToPosition,
   addPaymentMethod, addBudgetCategory, addSubCategory,
-  cleanupHiddenPaymentMethods,
-  getSubCategoryTxCount, deleteSubCategory, getBudgetCategoryTxCount, deleteBudgetCategory,
+  getPaymentMethodUsage, deletePaymentMethod,
+  getSubCategoryUsage, deleteSubCategory, getBudgetCategoryUsage, deleteBudgetCategory,
   renameBudgetCategory, renameSubCategory,
   getDiscountRules, addDiscountRule, deleteDiscountRule,
   getBudgetCategories, getSubCategories,
@@ -23,6 +23,27 @@ import './SettingsView.css';
 import AmountInput from '../common/AmountInput';
 import AISettingsForm from '../AIEntry/AISettingsForm';
 import { evaluateFormula, parseForeignAmount } from '../../services/formulaEvaluator';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
+
+/**
+ * 드롭 표시선 위치(dropIdx: 화면 목록 기준) → 옮기는 항목을 뺀 목록 기준 위치.
+ * sameGroup으로 표시/숨김 같은 그룹 안에서만 셀 수 있다.
+ */
+function dropTargetIndex(items, dragId, dropIdx, sameGroup = () => true) {
+  return items.slice(0, dropIdx).filter(i => i.id !== dragId && sameGroup(i)).length;
+}
+
+/** 사용처 건수 → "거래 3건, 정기지출 1건" */
+function usageText(usage) {
+  const labels = {
+    transactions: '거래', recurring: '정기지출', favorites: '즐겨찾기',
+    discountRules: '할인규칙', accountItems: '계좌 고정항목',
+  };
+  return Object.entries(labels)
+    .filter(([key]) => usage[key] > 0)
+    .map(([key, label]) => `${label} ${usage[key]}건`)
+    .join(', ');
+}
 
 const IconEyeOpen = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -85,7 +106,9 @@ const IconClose = () => (
   </svg>
 );
 
-function SettingsView({ db, onChanged, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
+function SettingsView({ db, dataVersion, onChanged, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
+  // DB 쓰기마다 바뀌는 참조 — 아래 목록·설정 값이 변경 직후 바로 다시 계산된다 (B-014)
+  const live = useDbSnapshot(db, dataVersion);
   const [addingName, setAddingName] = useState('');
   const [error, setError] = useState('');
 const [dragId, setDragId] = useState(null);
@@ -105,20 +128,20 @@ const [dragId, setDragId] = useState(null);
   // 예산 섹션
   const [editingDefaultGoal, setEditingDefaultGoal] = useState(false);
   const [defaultGoalInput, setDefaultGoalInput] = useState('');
-  const showGoalPc = useMemo(() => getSetting(db, 'show_goal_display_pc', '1') !== '0', [db]);
-  const showGoalMobile = useMemo(() => getSetting(db, 'show_goal_display_mobile', '1') !== '0', [db]);
-  const showCalBtnPc = useMemo(() => getSetting(db, 'show_calendar_btn_pc', '1') !== '0', [db]);
-  const showCalBtnMobile = useMemo(() => getSetting(db, 'show_calendar_btn_mobile', '1') !== '0', [db]);
-  const calAmountUnit = useMemo(() => getSetting(db, 'calendar_mini_amount_unit', '만'), [db]);
-  const calEmptyDateAction = useMemo(() => getSetting(db, 'calendar_empty_date_action', 'event'), [db]);
-  const [tripCategory, setTripCategory] = useState(() => getTripDefaultCategory(db));
+  const showGoalPc = useMemo(() => getSetting(live.db, 'show_goal_display_pc', '1') !== '0', [live]);
+  const showGoalMobile = useMemo(() => getSetting(live.db, 'show_goal_display_mobile', '1') !== '0', [live]);
+  const showCalBtnPc = useMemo(() => getSetting(live.db, 'show_calendar_btn_pc', '1') !== '0', [live]);
+  const showCalBtnMobile = useMemo(() => getSetting(live.db, 'show_calendar_btn_mobile', '1') !== '0', [live]);
+  const calAmountUnit = useMemo(() => getSetting(live.db, 'calendar_mini_amount_unit', '만'), [live]);
+  const calEmptyDateAction = useMemo(() => getSetting(live.db, 'calendar_empty_date_action', 'event'), [live]);
+  const tripCategory = useMemo(() => getTripDefaultCategory(live.db), [live]);
 
   // 지출계획 섹션
   const [financeSubTab, setFinanceSubTab] = useState('favorites');
 
   // 캘린더 섹션
   const [calendarSubTab, setCalendarSubTab] = useState('types');
-  const [eventTypes, setEventTypes] = useState(() => getCalendarEventTypes(db) || []);
+  const eventTypes = useMemo(() => getCalendarEventTypes(live.db) || [], [live]);
   const [editingTypeId, setEditingTypeId] = useState(null);
   const [editingTypeLabel, setEditingTypeLabel] = useState('');
   const [editingTypeColor, setEditingTypeColor] = useState('');
@@ -128,8 +151,6 @@ const [dragId, setDragId] = useState(null);
   const [typeError, setTypeError] = useState('');
   const [typeDragId, setTypeDragId] = useState(null);
   const [typeDragOver, setTypeDragOver] = useState(null);
-
-  const refreshEventTypes = () => setEventTypes(getCalendarEventTypes(db) || []);
 
   // 정기지출 섹션
   const emptyRecurringForm = {
@@ -143,19 +164,19 @@ const [dragId, setDragId] = useState(null);
   const [recurringForm, setRecurringForm] = useState(emptyRecurringForm);
   const skipAutoDiscountRef = React.useRef(false);
 
-  const paymentMethods = useMemo(() => getAllPaymentMethods(db), [db]);
-  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
-  const subCategories = useMemo(() => getAllSubCategories(db, drilldownCategory?.name || ''), [db, drilldownCategory]);
-  const discountRules = useMemo(() => drilldownPayment ? getDiscountRules(db, drilldownPayment.name) : [], [db, drilldownPayment]);
-  const ruleCategories = useMemo(() => getBudgetCategories(db), [db]);
-  const ruleSubCategories = useMemo(() => addingRuleCategory ? getSubCategories(db, addingRuleCategory) : [], [db, addingRuleCategory]);
+  const paymentMethods = useMemo(() => getAllPaymentMethods(live.db), [live]);
+  const budgetCategories = useMemo(() => getAllBudgetCategories(live.db), [live]);
+  const subCategories = useMemo(() => getAllSubCategories(live.db, drilldownCategory?.name || ''), [live, drilldownCategory]);
+  const discountRules = useMemo(() => drilldownPayment ? getDiscountRules(live.db, drilldownPayment.name) : [], [live, drilldownPayment]);
+  const ruleCategories = useMemo(() => getBudgetCategories(live.db), [live]);
+  const ruleSubCategories = useMemo(() => addingRuleCategory ? getSubCategories(live.db, addingRuleCategory) : [], [live, addingRuleCategory]);
 
-  const defaultGoal = useMemo(() => getSetting(db, 'default_monthly_goal', ''), [db]);
-  const recurringList = useMemo(() => getRecurringTransactions(db), [db]);
-  const registrationLog = useMemo(() => getRegistrationLog(db), [db]);
+  const defaultGoal = useMemo(() => getSetting(live.db, 'default_monthly_goal', ''), [live]);
+  const recurringList = useMemo(() => getRecurringTransactions(live.db), [live]);
+  const registrationLog = useMemo(() => getRegistrationLog(live.db), [live]);
   const recurringFormSubCategories = useMemo(
-    () => recurringForm.budget_category ? getSubCategories(db, recurringForm.budget_category) : [],
-    [db, recurringForm.budget_category]
+    () => recurringForm.budget_category ? getSubCategories(live.db, recurringForm.budget_category) : [],
+    [live, recurringForm.budget_category]
   );
 
   // 즐겨찾기
@@ -165,12 +186,12 @@ const [dragId, setDragId] = useState(null);
   const [showFavoriteForm, setShowFavoriteForm] = useState(false);
   const [editingFavoriteId, setEditingFavoriteId] = useState(null);
   const [favoriteForm, setFavoriteForm] = useState(emptyFavoriteForm);
-  const favoriteList = useMemo(() => getFavorites(db), [db]);
+  const favoriteList = useMemo(() => getFavorites(live.db), [live]);
   const favoriteFormSubCategories = useMemo(
-    () => favoriteForm.budget_category ? getSubCategories(db, favoriteForm.budget_category) : [],
-    [db, favoriteForm.budget_category]
+    () => favoriteForm.budget_category ? getSubCategories(live.db, favoriteForm.budget_category) : [],
+    [live, favoriteForm.budget_category]
   );
-  const detectedPatterns = useMemo(() => getDetectedPatterns(db), [db]);
+  const detectedPatterns = useMemo(() => getDetectedPatterns(live.db), [live]);
 
   // 정기지출 폼 - 자동 할인 계산 (결제수단/금액/카테고리/세부내역 변경 시)
   React.useEffect(() => {
@@ -203,10 +224,25 @@ const [dragId, setDragId] = useState(null);
     }
   }, [drilldownCategory]);
 
+  // 숨기기는 숨기기만 한다 — 삭제는 휴지통 버튼으로 따로 (B-021)
   const handleToggleHidden = (table, id, currentHidden) => {
     try {
       setMasterItemHidden(db, table, id, !currentHidden);
-      if (table === 'payment_methods' && !currentHidden) cleanupHiddenPaymentMethods(db);
+      onChanged();
+      setError('');
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDeletePaymentMethod = (item) => {
+    try {
+      const usage = getPaymentMethodUsage(db, item.name);
+      const used = usageText(usage);
+      if (used) {
+        setError(`"${item.name}"은(는) ${used}에서 사용 중이라 삭제할 수 없습니다. 목록에서 감추려면 숨기기(눈 아이콘)를 사용하세요.`);
+        return;
+      }
+      if (!window.confirm(`"${item.name}"을(를) 삭제하시겠습니까?`)) return;
+      deletePaymentMethod(db, item.id);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
@@ -216,14 +252,67 @@ const [dragId, setDragId] = useState(null);
     if (dragId === null || dropIdx === null) { setDragId(null); setDropIdx(null); return; }
     const dragItem = items.find(i => i.id === dragId);
     if (!dragItem) { setDragId(null); setDropIdx(null); return; }
-    const targetGroupIdx = items.slice(0, dropIdx).filter(i => i.is_hidden === dragItem.is_hidden && i.id !== dragId).length;
+    const targetGroupIdx = dropTargetIndex(items, dragId, dropIdx, i => i.is_hidden === dragItem.is_hidden);
     try {
-      moveItemToPosition(db, table, dragId, targetGroupIdx, drilldownCategory?.name);
+      moveItemToPosition(db, table, dragId, targetGroupIdx);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
     setDragId(null);
     setDropIdx(null);
+  };
+
+  // 즐겨찾기 드래그 정렬 (B-018)
+  const handleFavoriteDrop = () => {
+    if (dragId !== null && dropIdx !== null) {
+      const from = favoriteList.findIndex(f => f.id === dragId);
+      const target = dropTargetIndex(favoriteList, dragId, dropIdx);
+      if (from !== -1 && target !== from) {
+        try {
+          reorderFavorite(db, dragId, target);
+          onChanged();
+          setError('');
+        } catch (e) { setError(e.message); }
+      }
+    }
+    setDragId(null);
+    setDropIdx(null);
+  };
+
+  // 일정 유형 드래그 정렬 (B-026)
+  const handleTypeDrop = () => {
+    if (typeDragId !== null && typeDragOver !== null) {
+      const from = eventTypes.findIndex(t => t.id === typeDragId);
+      const target = dropTargetIndex(eventTypes, typeDragId, typeDragOver);
+      if (from !== -1 && target !== from) {
+        try {
+          moveCalendarEventType(db, typeDragId, target);
+          onChanged();
+          setTypeError('');
+        } catch (e) { setTypeError(e.message); }
+      }
+    }
+    setTypeDragId(null);
+    setTypeDragOver(null);
+  };
+
+  const handleSaveType = (t) => {
+    try {
+      updateCalendarEventType(db, t.id, { label: editingTypeLabel, color: editingTypeColor });
+      onChanged();
+      setEditingTypeId(null);
+      setTypeError('');
+    } catch (err) { setTypeError(err.message); }
+  };
+
+  const handleAddType = () => {
+    try {
+      addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor });
+      onChanged();
+      setNewTypeLabel('');
+      setNewTypeColor('#4ECDC4');
+      setTypeError('');
+    } catch (err) { setTypeError(err.message); }
   };
 
   const handleDeleteDiscountRule = (id) => {
@@ -313,19 +402,8 @@ const [dragId, setDragId] = useState(null);
 
   const handleClearDefaultGoal = () => {
     try {
-      // 해제 전에도 기존 월을 현재 기본값으로 스냅샷
-      const oldDefault = getSetting(db, 'default_monthly_goal', '');
-      if (oldDefault !== '') {
-        const oldVal = parseInt(oldDefault, 10);
-        const monthsRes = db.exec(
-          "SELECT DISTINCT strftime('%Y-%m', date) as month FROM transactions ORDER BY month"
-        );
-        const months = monthsRes.length ? monthsRes[0].values.map(r => r[0]) : [];
-        months.forEach(ym => {
-          db.run('INSERT OR IGNORE INTO monthly_goals (year_month, goal_amount) VALUES (?, ?)', [ym, oldVal]);
-        });
-      }
-      setSetting(db, 'default_monthly_goal', '');
+      // 해제 전에도 기존 월을 현재 기본값으로 스냅샷 (changeDefaultMonthlyGoal이 처리)
+      changeDefaultMonthlyGoal(db, null);
       onChanged();
       setEditingDefaultGoal(false);
       setError('');
@@ -465,26 +543,34 @@ const [dragId, setDragId] = useState(null);
     } catch (e) { setError(e.message); }
   };
 
+  // 확인창 문구 = 실제 동작 (B-020): 거래·정기지출·즐겨찾기의 세부카테고리는 비우고, 전용 할인규칙은 지운다
   const handleDeleteSubCategory = (name) => {
     try {
-      const count = getSubCategoryTxCount(db, drilldownCategory.name, name);
-      const msg = count > 0
-        ? `"${name}"을(를) 삭제하면 연결된 거래 ${count}건의 세부카테고리가 비워집니다.\n정말 삭제하시겠습니까?`
-        : `"${name}"을(를) 삭제하시겠습니까?`;
-      if (!window.confirm(msg)) return;
+      const { transactions, recurring, favorites, discountRules } = getSubCategoryUsage(db, drilldownCategory.name, name);
+      const lines = [`"${name}"을(를) 삭제하시겠습니까?`];
+      const cleared = usageText({ transactions, recurring, favorites });
+      if (cleared) {
+        lines.push(`· ${cleared}의 세부카테고리가 비워집니다.`);
+        // 다른 세부카테고리가 남아 있으면 비워진 거래는 거래내역 '이슈'로 잡힌다 (txValidator requireFields)
+        if (transactions > 0 && subCategories.length > 1) lines.push('  (비워진 거래는 거래내역의 이슈 필터에서 다시 분류할 수 있습니다)');
+      }
+      if (discountRules > 0) lines.push(`· 이 세부카테고리 전용 할인규칙 ${discountRules}건이 삭제됩니다.`);
+      if (!window.confirm(lines.join('\n'))) return;
       deleteSubCategory(db, drilldownCategory.name, name);
       onChanged();
       setError('');
     } catch (e) { setError(e.message); }
   };
 
+  // 사용 중인 대분류는 지우지 않는다 — 이름 변경이나 숨기기를 안내 (B-020)
   const handleDeleteBudgetCategory = (item) => {
     try {
-      const count = getBudgetCategoryTxCount(db, item.name);
-      const msg = count > 0
-        ? `"${item.name}"을(를) 삭제하면 연결된 거래 ${count}건의 카테고리가 비워집니다.\n정말 삭제하시겠습니까?`
-        : `"${item.name}"을(를) 삭제하시겠습니까?`;
-      if (!window.confirm(msg)) return;
+      const used = usageText(getBudgetCategoryUsage(db, item.name));
+      if (used) {
+        setError(`"${item.name}"은(는) ${used}에서 사용 중이라 삭제할 수 없습니다. 이름을 바꾸거나, 목록에서 감추려면 숨기기(눈 아이콘)를 사용하세요.`);
+        return;
+      }
+      if (!window.confirm(`"${item.name}"과(와) 그 세부카테고리를 삭제하시겠습니까?`)) return;
       deleteBudgetCategory(db, item.name);
       onChanged();
       setError('');
@@ -590,14 +676,26 @@ const [dragId, setDragId] = useState(null);
                   </div>
                 ) : (
                   <>
-                    {/* 결제수단만 숨기기 버튼 표시 */}
-                    {activeSection === 'payment' && (
+                    {/* 숨기기 (결제수단·카테고리·세부카테고리) — 입력 목록에서만 빠지고 기존 내역은 그대로 */}
+                    {(activeSection === 'payment' || activeSection === 'category') && (
                       <button
                         className={`btn-eye-toggle ${item.is_hidden ? 'btn-eye-toggle--hidden' : ''}`}
                         onClick={(e) => { e.stopPropagation(); handleToggleHidden(table, item.id, item.is_hidden); }}
                         title={item.is_hidden ? '표시' : '숨기기'}
                       >
                         {item.is_hidden ? <IconEyeOff /> : <IconEyeOpen />}
+                      </button>
+                    )}
+
+                    {/* 결제수단 삭제 — 어디에서도 쓰지 않을 때만 (B-021) */}
+                    {isPaymentList && (
+                      <button
+                        className="btn-icon btn-icon--danger"
+                        onClick={(e) => { e.stopPropagation(); handleDeletePaymentMethod(item); }}
+                        title="삭제"
+                        style={{ marginLeft: '4px' }}
+                      >
+                        <IconTrash />
                       </button>
                     )}
 
@@ -721,7 +819,11 @@ const [dragId, setDragId] = useState(null);
             {!showFavoriteForm ? (
               <div>
                 {favoriteList.length > 0 ? (
-                  <div>
+                  <div
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); handleFavoriteDrop(); }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropIdx(null); }}
+                  >
                     {favoriteList.map((item, idx) => {
                       const isDragging = dragId === item.id;
                       const showIndicator = dropIdx === idx && dragId !== null && !isDragging;
@@ -731,19 +833,18 @@ const [dragId, setDragId] = useState(null);
                           <div
                             className={`settings-item ${isDragging ? 'settings-item-dragging' : ''}`}
                             draggable
-                            onDragStart={() => { setDragId(item.id); setDropIdx(null); }}
+                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragId(item.id); setDropIdx(null); }}
                             onDragOver={e => {
                               e.preventDefault();
                               const rect = e.currentTarget.getBoundingClientRect();
                               setDropIdx(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
                             }}
-                            onDrop={() => { if (dragId && dragId !== item.id) { reorderFavorite(db, dragId, dropIdx); onChanged(); } setDragId(null); setDropIdx(null); }}
                             onDragEnd={() => { setDragId(null); setDropIdx(null); }}
                           >
                             <span className="drag-handle">≡</span>
                             <div style={{ flex: 1, overflow: 'hidden' }}>
                               <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}/{item.sub_category}</div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}{item.sub_category ? `/${item.sub_category}` : ''}</div>
                               <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount == null ? '금액 직접 입력' : `${item.amount.toLocaleString()}원`} · {item.use_count}회 사용</div>
                             </div>
                             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
@@ -940,6 +1041,8 @@ const [dragId, setDragId] = useState(null);
                 <div
                   style={{ marginBottom: '16px' }}
                   onDragOver={e => { e.preventDefault(); if (e.currentTarget === e.target) setTypeDragOver(eventTypes.length); }}
+                  onDrop={e => { e.preventDefault(); handleTypeDrop(); }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTypeDragOver(null); }}
                 >
                   {eventTypes.map((t, idx) => {
                     const usageCount = deletingTypeId === t.id ? getCalendarEventTypeUsageCount(db, t.value) : 0;
@@ -976,18 +1079,12 @@ const [dragId, setDragId] = useState(null);
                               value={editingTypeLabel}
                               onChange={e => setEditingTypeLabel(e.target.value)}
                               onKeyDown={e => {
-                                if (e.key === 'Enter') {
-                                  try { updateCalendarEventType(db, t.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); }
-                                  catch(err) { setTypeError(err.message); }
-                                }
+                                if (e.key === 'Enter') handleSaveType(t);
                                 if (e.key === 'Escape') setEditingTypeId(null);
                               }}
                               autoFocus
                             />
-                            <button className="btn-icon btn-icon--success" onClick={() => {
-                              try { updateCalendarEventType(db, t.id, { label: editingTypeLabel, color: editingTypeColor }); refreshEventTypes(); onChanged(); setEditingTypeId(null); setTypeError(''); }
-                              catch(err) { setTypeError(err.message); }
-                            }} title="저장"><IconCheck /></button>
+                            <button className="btn-icon btn-icon--success" onClick={() => handleSaveType(t)} title="저장"><IconCheck /></button>
                             <button className="btn-icon" onClick={() => setEditingTypeId(null)} title="취소"><IconClose /></button>
                           </div>
                         ) : deletingTypeId === t.id ? (
@@ -1001,7 +1098,7 @@ const [dragId, setDragId] = useState(null);
                             </span>
                             {usageCount === 0 && (
                               <button className="btn-icon btn-icon--danger" onClick={() => {
-                                try { deleteCalendarEventType(db, t.id); refreshEventTypes(); onChanged(); setDeletingTypeId(null); setTypeError(''); }
+                                try { deleteCalendarEventType(db, t.id); onChanged(); setDeletingTypeId(null); setTypeError(''); }
                                 catch(err) { setTypeError(err.message); setDeletingTypeId(null); }
                               }} title="삭제 확인"><IconTrash /></button>
                             )}
@@ -1016,14 +1113,11 @@ const [dragId, setDragId] = useState(null);
                             <div
                               className={`settings-item${typeDragId === t.id ? ' settings-item-dragging' : ''}`}
                               draggable
-                              onDragStart={() => setTypeDragId(t.id)}
-                              onDragOver={e => { e.preventDefault(); setTypeDragOver(idx); }}
-                              onDrop={() => {
-                                if (typeDragId !== null && typeDragOver !== null) {
-                                  const fromIdx = eventTypes.findIndex(x => x.id === typeDragId);
-                                  if (fromIdx !== -1) { moveCalendarEventType(db, typeDragId, typeDragOver); refreshEventTypes(); onChanged(); }
-                                }
-                                setTypeDragId(null); setTypeDragOver(null);
+                              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setTypeDragId(t.id); setTypeDragOver(null); }}
+                              onDragOver={e => {
+                                e.preventDefault();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setTypeDragOver(e.clientY < rect.top + rect.height / 2 ? idx : idx + 1);
                               }}
                               onDragEnd={() => { setTypeDragId(null); setTypeDragOver(null); }}
                             >
@@ -1034,7 +1128,7 @@ const [dragId, setDragId] = useState(null);
                                 <button
                                   className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
                                   style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
-                                  onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); refreshEventTypes(); onChanged(); }}
+                                  onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); onChanged(); }}
                                   title="국가/통화 입력 활성화"
                                 >
                                   <span className="goal-display-toggle-knob" />
@@ -1085,18 +1179,10 @@ const [dragId, setDragId] = useState(null);
                       value={newTypeLabel}
                       onChange={e => setNewTypeLabel(e.target.value)}
                       placeholder="새 유형 이름"
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
-                          catch(err) { setTypeError(err.message); }
-                        }
-                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddType(); }}
                     />
                   </div>
-                  <button className="btn-primary" style={{ width: '100%' }} onClick={() => {
-                    try { addCalendarEventType(db, { label: newTypeLabel, color: newTypeColor }); refreshEventTypes(); onChanged(); setNewTypeLabel(''); setNewTypeColor('#4ECDC4'); setTypeError(''); }
-                    catch(err) { setTypeError(err.message); }
-                  }}>+ 추가</button>
+                  <button className="btn-primary" style={{ width: '100%' }} onClick={handleAddType}>+ 추가</button>
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
                   슬라이더 ON = 해당 유형 일정 선택 시 국가/통화 입력 활성화
@@ -1111,12 +1197,11 @@ const [dragId, setDragId] = useState(null);
                     value={tripCategory}
                     onChange={e => {
                       setSetting(db, 'trip_default_category', e.target.value);
-                      setTripCategory(e.target.value);
                       onChanged();
                     }}
                   >
                     <option value="">사용 안 함</option>
-                    {getBudgetCategories(db).map(c => (
+                    {ruleCategories.map(c => (
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>

@@ -31,12 +31,26 @@ export function buildValidationContext(db) {
 /**
  * 거래 하나에서 이슈 목록을 반환한다.
  *
+ * requireFields가 참이면 비어 있는 분류도 이슈로 본다 (거래 목록용).
+ *  - 카테고리가 비었거나
+ *  - 세부카테고리가 있는 카테고리인데 세부카테고리가 비었을 때 (missing: true)
+ * 가져오기(ImportModal)는 "DB에 없는 이름"만 자동 추가하므로 기본값(false)으로 쓴다.
+ *
  * @param {{ budget_category?: string, sub_category?: string }} tx
  * @param {{ categories: Set<string>, subCatMap: Map<string, Set<string>> }} context
- * @returns {Array<{ field: 'budget_category'|'sub_category', message: string }>}
+ * @param {{ requireFields?: boolean }} [opts]
+ * @returns {Array<{ field: 'budget_category'|'sub_category', message: string, missing?: boolean }>}
  */
-export function detectIssues(tx, { categories, subCatMap }) {
+export function detectIssues(tx, { categories, subCatMap }, { requireFields = false } = {}) {
   const issues = [];
+
+  if (requireFields) {
+    if (!tx.budget_category) {
+      issues.push({ field: 'budget_category', message: '카테고리 없음', missing: true });
+    } else if (!tx.sub_category && subCatMap.get(tx.budget_category)?.size > 0) {
+      issues.push({ field: 'sub_category', message: '세부카테고리 없음', missing: true });
+    }
+  }
 
   if (tx.budget_category && !categories.has(tx.budget_category)) {
     issues.push({
@@ -59,10 +73,10 @@ export function detectIssues(tx, { categories, subCatMap }) {
 }
 
 /**
- * 이슈 여부만 반환 (boolean).
+ * 이슈 여부만 반환 (boolean). 거래 목록용 — 비어 있는 분류도 이슈로 본다.
  */
 export function hasIssue(tx, context) {
-  return detectIssues(tx, context).length > 0;
+  return detectIssues(tx, context, { requireFields: true }).length > 0;
 }
 
 /**

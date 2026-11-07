@@ -9,7 +9,13 @@ import {
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import { evaluateFormula } from '../../services/formulaEvaluator';
+import { parseCSV } from '../../services/csv';
+import {
+  normalizeDateStr, parseImportAmount, markDuplicates,
+  accountTxDuplicateKey, countExistingAccountTransactions,
+} from '../../services/importHelpers';
 import './AccountManagement.css';
 
 // ── 날짜 포맷 헬퍼 ──────────────────────────────────────────────
@@ -29,27 +35,35 @@ function fmtAmount(n) {
   return Number(n).toLocaleString();
 }
 
-// current_balance를 최초 시작 금액으로 삼아 각 거래 후 잔액과 현재 잔액을 계산
+/**
+ * 각 거래 후 잔액과 현재 잔액 (B-022)
+ * current_balance = 잔액 기준일(balance_date)이 시작될 때의 잔액이다.
+ *  - 기준일부터(당일 포함) 오늘까지의 거래만 더해 현재 잔액을 낸다 (dbManager.getAccountsActualBalances와 같은 규칙)
+ *  - 기준일 이전 거래는 이미 기준 잔액에 들어 있으므로 더하지 않고, 기준 잔액에서 거꾸로 되돌려 그때의 잔액만 보여 준다
+ *  - 기준일이 비어 있으면(예전 계좌) 모든 거래를 더한다
+ */
 function computeRunningBalances(account, descTransactions) {
   const ascTxs = [...descTransactions].reverse();
   const startBalance = account.current_balance || 0;
+  const baseDate = account.balance_date || '';
+  const effect = (tx) => (tx.type === 'income' ? tx.amount : -tx.amount);
+  const before = ascTxs.filter(tx => tx.date < baseDate);
+  const after = ascTxs.filter(tx => tx.date >= baseDate);
 
-  // 오래된 거래부터 순서대로 적용 → 거래 후 잔액 맵
   const balanceAfterMap = {};
-  let running = startBalance;
-  for (const tx of ascTxs) {
-    if (tx.type === 'income') running += tx.amount;
-    else running -= tx.amount;
-    balanceAfterMap[tx.id] = running;
+  let back = startBalance;
+  for (let i = before.length - 1; i >= 0; i--) {
+    balanceAfterMap[before[i].id] = back;
+    back -= effect(before[i]);
   }
 
-  // 오늘까지 적용한 실제 현재 잔액
   const today = todayStr();
+  let running = startBalance;
   let currentBalance = startBalance;
-  for (const tx of ascTxs) {
-    if (tx.date > today) break;
-    if (tx.type === 'income') currentBalance += tx.amount;
-    else currentBalance -= tx.amount;
+  for (const tx of after) {
+    running += effect(tx);
+    balanceAfterMap[tx.id] = running;
+    if (tx.date <= today) currentBalance = running;
   }
 
   return { balanceAfterMap, currentBalance };
@@ -62,9 +76,11 @@ function todayStr() {
 
 // ── 메인 컴포넌트 ────────────────────────────────────────────────
 
-export default function AccountManagement({ db, drilldown, detailTab, showForm, onDrilldownChange, onDetailTabChange, onCloseForm, onChanged }) {
-  const accounts = useMemo(() => db ? getAllAccounts(db) : [], [db]);
-  const defaultAccount = useMemo(() => db ? getDefaultAccount(db) : null, [db]);
+export default function AccountManagement({ db, dataVersion, drilldown, detailTab, showForm, onDrilldownChange, onDetailTabChange, onCloseForm, onChanged }) {
+  // DB 쓰기마다 바뀌는 참조 — 변경 직후 목록·잔액이 바로 다시 계산된다 (B-014)
+  const live = useDbSnapshot(db, dataVersion);
+  const accounts = useMemo(() => live.db ? getAllAccounts(live.db) : [], [live]);
+  const defaultAccount = useMemo(() => live.db ? getDefaultAccount(live.db) : null, [live]);
 
   // 첫 진입 시 기본 계좌가 있으면 바로 드릴다운
   const [autoNavigated, setAutoNavigated] = useState(false);
@@ -79,6 +95,7 @@ export default function AccountManagement({ db, drilldown, detailTab, showForm, 
     return (
       <AccountDetail
         db={db}
+        dataVersion={dataVersion}
         accountId={drilldown.id}
         activeTab={detailTab}
         showNavForm={showForm}
@@ -93,6 +110,7 @@ export default function AccountManagement({ db, drilldown, detailTab, showForm, 
   return (
     <AccountList
       db={db}
+      dataVersion={dataVersion}
       accounts={accounts}
       defaultAccountId={defaultAccount?.id}
       showNavForm={showForm}
@@ -105,20 +123,21 @@ export default function AccountManagement({ db, drilldown, detailTab, showForm, 
 
 // ── 계좌 목록 화면 ───────────────────────────────────────────────
 
-function AccountList({ db, accounts, defaultAccountId, showNavForm, onNavFormClose, onSelect, onChanged }) {
+function AccountList({ db, dataVersion, accounts, defaultAccountId, showNavForm, onNavFormClose, onSelect, onChanged }) {
   const [showForm, setShowForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+  const live = useDbSnapshot(db, dataVersion);
 
-  // 거래 내역을 반영한 실제 현재 잔액
+  // 거래 내역을 반영한 실제 현재 잔액 (기준 잔액 + 잔액 기준일~오늘 거래)
   const actualBalances = useMemo(() => {
-    if (!db) return {};
-    const txSums = getAccountsActualBalances(db);
+    if (!live.db) return {};
+    const txSums = getAccountsActualBalances(live.db);
     const result = {};
     accounts.forEach(acc => {
       result[acc.id] = (acc.current_balance || 0) + (txSums[acc.id] || 0);
     });
     return result;
-  }, [db, accounts]);
+  }, [live, accounts]);
 
   // 네비 ➕ 버튼으로 열기
   React.useEffect(() => {
@@ -209,11 +228,12 @@ function AccountList({ db, accounts, defaultAccountId, showNavForm, onNavFormClo
 
 // ── 계좌 상세 화면 ───────────────────────────────────────────────
 
-function AccountDetail({ db, accountId, activeTab, showNavForm, onNavFormClose, onTabChange, onBack, onChanged }) {
-  const account = useMemo(() => db ? getAccount(db, accountId) : null, [db, accountId]);
+function AccountDetail({ db, dataVersion, accountId, activeTab, showNavForm, onNavFormClose, onTabChange, onBack, onChanged }) {
+  const live = useDbSnapshot(db, dataVersion);
+  const account = useMemo(() => live.db ? getAccount(live.db, accountId) : null, [live, accountId]);
   const transactions = useMemo(
-    () => db ? getAccountTransactions(db, accountId) : [],
-    [db, accountId]
+    () => live.db ? getAccountTransactions(live.db, accountId) : [],
+    [live, accountId]
   );
   const { balanceAfterMap, currentBalance } = useMemo(
     () => account ? computeRunningBalances(account, transactions) : { balanceAfterMap: {}, currentBalance: 0 },
@@ -283,7 +303,7 @@ function AccountDetail({ db, accountId, activeTab, showNavForm, onNavFormClose, 
         />
       )}
       {tab === 'settings' && (
-        <AccountSettingsTab db={db} account={account} onChanged={onChanged} onBack={onBack} />
+        <AccountSettingsTab db={db} dataVersion={dataVersion} account={account} onChanged={onChanged} onBack={onBack} />
       )}
 
       {/* 거래 추가/수정 폼 — 탭에 무관하게 AccountDetail 레벨에서 렌더링 */}
@@ -502,15 +522,16 @@ function TransactionsTab({ db, transactions, balanceAfterMap, onOpenAdd, onOpenE
 
 // ── 설정 탭 ──────────────────────────────────────────────────────
 
-function AccountSettingsTab({ db, account, onChanged, onBack }) {
+function AccountSettingsTab({ db, dataVersion, account, onChanged, onBack }) {
   const [editingAccount, setEditingAccount] = useState(false);
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const live = useDbSnapshot(db, dataVersion);
   const recurringItems = useMemo(
-    () => db ? getRecurringItems(db, account.id) : [],
-    [db, account.id]
+    () => live.db ? getRecurringItems(live.db, account.id) : [],
+    [live, account.id]
   );
-  const paymentMethods = useMemo(() => db ? getPaymentMethods(db) : [], [db]);
+  const paymentMethods = useMemo(() => live.db ? getPaymentMethods(live.db) : [], [live]);
 
   const handleDeleteItem = async (id) => {
     if (!window.confirm('이 항목을 삭제하시겠습니까?')) return;
@@ -550,6 +571,7 @@ function AccountSettingsTab({ db, account, onChanged, onBack }) {
         <dl className="acct-info-list">
           <dt>은행</dt><dd>{account.bank || '-'}</dd>
           <dt>계좌번호</dt><dd>{account.account_number || '-'}</dd>
+          <dt>기준 잔액</dt><dd>{fmtAmount(account.current_balance || 0)}원{account.balance_date ? ` (${account.balance_date} 시작 기준)` : ''}</dd>
           <dt>위험 임계값</dt><dd>{account.danger_threshold ? `${fmtAmount(account.danger_threshold)}원` : '-'}</dd>
           <dt>메모</dt><dd>{account.note || '-'}</dd>
         </dl>
@@ -663,7 +685,7 @@ function AccountForm({ account, onSave, onCancel }) {
             <input value={accountNumber} onChange={e => setAccountNumber(e.target.value)} placeholder="선택 사항" />
           </label>
           <label>
-            최초 잔액 (원)
+            기준 잔액 (원)
             <AmountInput
               allowNegative
               value={balance}
@@ -674,6 +696,10 @@ function AccountForm({ account, onSave, onCancel }) {
           <label>
             잔액 기준일
             <input type="date" value={balanceDate} onChange={e => setBalanceDate(e.target.value)} />
+            <small style={{ fontSize: '11px', fontWeight: 400, lineHeight: 1.5 }}>
+              기준일이 시작될 때(그날 거래 전)의 잔액을 입력하세요.
+              기준일부터의 내역만 잔액에 더하고, 그 전 내역은 기록으로만 남습니다.
+            </small>
           </label>
           <label>
             위험 임계값 (원)
@@ -932,43 +958,57 @@ function RecurringItemForm({ item, paymentMethods, onSave, onCancel }) {
   );
 }
 
-// ── CSV 파서 ─────────────────────────────────────────────────────
-function parseCSVLine(line) {
-  const fields = [];
-  let i = 0;
-  while (i < line.length) {
-    if (line[i] === '"') {
-      i++;
-      let field = '';
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
-        else if (line[i] === '"') { i++; break; }
-        else field += line[i++];
-      }
-      fields.push(field);
-      if (line[i] === ',') i++;
-    } else {
-      const end = line.indexOf(',', i);
-      if (end === -1) { fields.push(line.slice(i)); break; }
-      fields.push(line.slice(i, end));
-      i = end + 1;
-    }
-  }
-  if (line.endsWith(',')) fields.push('');
-  return fields;
-}
+// ── CSV 행 해석 ──────────────────────────────────────────────────
 
-function parseAccountCSV(text) {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return null;
-  const headers = parseCSVLine(lines[0]).map(h => h.trim());
-  const rows = lines.slice(1).map(line => {
-    const vals = parseCSVLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (vals[i] ?? '').trim(); });
-    return obj;
-  }).filter(r => Object.values(r).some(v => v !== ''));
-  return rows;
+const pick = (raw, keys) => {
+  for (const k of keys) {
+    if (raw[k] !== undefined && String(raw[k]).trim() !== '') return String(raw[k]).trim();
+  }
+  return '';
+};
+
+/**
+ * 계좌 CSV 한 행 → { date, type, description, amount } 또는 { errs }
+ *  - 금액: '금액'/'거래금액' 칸. 음수는 출금(지출)으로 본다. 은행 양식처럼 '출금액'/'입금액' 칸이 따로 있어도 읽는다.
+ *  - 구분: '입금'·'수입'이 들어가면 수입, '출금'·'지출'이면 지출, 비었으면 지출
+ *  - 날짜: 2026-05-25 / 2026.05.25 / 2026/5/25 (시각이 붙어도 됨), 실제로 없는 날짜는 오류
+ */
+function parseAccountRow(raw, rowNumber) {
+  const errs = [];
+  const dateRaw = pick(raw, ['날짜', '거래일', '일자', '거래일시']);
+  const typeRaw = pick(raw, ['구분', '입출금구분', '타입']);
+  const desc = pick(raw, ['내용', '적요', '거래내역', '메모']);
+  const amtRaw = pick(raw, ['금액', '거래금액']);
+  const outRaw = pick(raw, ['출금액', '출금', '찾으신금액']);
+  const inRaw = pick(raw, ['입금액', '입금', '맡기신금액']);
+
+  const date = normalizeDateStr(dateRaw);
+  if (!dateRaw) errs.push('날짜 없음');
+  else if (!date) errs.push(`날짜 오류: "${dateRaw}" (YYYY-MM-DD, 실제 있는 날짜)`);
+  if (!desc) errs.push('내용 없음');
+
+  let type = 'expense';
+  if (/입금|수입/.test(typeRaw)) type = 'income';
+  else if (typeRaw && !/출금|지출/.test(typeRaw)) errs.push(`구분 오류: "${typeRaw}" (수입/지출)`);
+
+  let amount = null;
+  if (amtRaw) {
+    const n = parseImportAmount(amtRaw);
+    if (Number.isNaN(n) || n === 0) errs.push(`금액 오류: "${amtRaw}"`);
+    else if (n < 0) { amount = -n; type = 'expense'; } // 음수 금액 = 출금
+    else amount = n;
+  } else {
+    const out = parseImportAmount(outRaw);
+    const inn = parseImportAmount(inRaw);
+    if (Number.isNaN(out) || Number.isNaN(inn)) errs.push(`금액 오류: "${outRaw || inRaw}"`);
+    else if (out) { amount = Math.abs(out); type = 'expense'; }
+    else if (inn) { amount = Math.abs(inn); type = 'income'; }
+    else errs.push('금액 없음');
+  }
+
+  return errs.length > 0
+    ? { rowNumber, errs }
+    : { rowNumber, date, type, description: desc, amount };
 }
 
 const ACCT_CSV_TEMPLATE =
@@ -996,25 +1036,10 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
   const [importing, setImporting] = useState(false);
   const [fileError, setFileError] = useState('');
   const [importedCount, setImportedCount] = useState(0);
+  const [includeDuplicates, setIncludeDuplicates] = useState(false);
 
-  const parseRow = (raw, idx) => {
-    const dateRaw = (raw['날짜'] || raw['거래일'] || raw['일자'] || raw['거래일시'] || '').trim();
-    const typeRaw = (raw['구분'] || raw['입출금구분'] || raw['타입'] || '').trim();
-    const desc = (raw['내용'] || raw['적요'] || raw['거래내역'] || raw['메모'] || '').trim();
-    const amtRaw = (raw['금액'] || raw['거래금액'] || '').replace(/,/g, '').trim();
-
-    const errs = [];
-    if (!dateRaw) errs.push('날짜 없음');
-    else if (!/^\d{4}-\d{2}-\d{2}/.test(dateRaw)) errs.push(`날짜 형식 오류: "${dateRaw}"`);
-    const amount = parseInt(amtRaw, 10);
-    if (!amtRaw || isNaN(amount) || amount <= 0) errs.push(`금액 오류: "${amtRaw}"`);
-    if (!desc) errs.push('내용 없음');
-
-    const type = (typeRaw === '수입' || typeRaw === '입금') ? 'income' : 'expense';
-    return errs.length > 0
-      ? { rowNum: idx + 1, errs }
-      : { rowNum: idx + 1, date: dateRaw.slice(0, 10), type, description: desc, amount };
-  };
+  const duplicateCount = rows.filter(r => r.isDuplicate).length;
+  const rowsToImport = includeDuplicates ? rows : rows.filter(r => !r.isDuplicate);
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
@@ -1023,20 +1048,23 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const rawRows = parseAccountCSV(evt.target?.result);
-        if (!rawRows || rawRows.length === 0) {
+        const rawRows = parseCSV(evt.target?.result);
+        if (rawRows.length === 0) {
           setFileError('데이터가 없거나 형식이 올바르지 않습니다.');
           return;
         }
         const validRows = [];
         const errorRows = [];
-        rawRows.forEach((raw, idx) => {
-          const result = parseRow(raw, idx);
+        rawRows.forEach(({ rowNumber, fields }) => {
+          const result = parseAccountRow(fields, rowNumber);
           if (result.errs) errorRows.push(result);
           else validRows.push(result);
         });
-        setRows(validRows);
+        // 이미 이 계좌에 있는 내역과 같은 행 표시 (같은 파일을 두 번 올려도 두 배가 되지 않게)
+        const existing = countExistingAccountTransactions(db, accountId, validRows);
+        setRows(markDuplicates(validRows, accountTxDuplicateKey, existing));
         setImportErrors(errorRows);
+        setIncludeDuplicates(false);
         if (validRows.length === 0) {
           setFileError('가져올 수 있는 행이 없습니다. 양식을 확인해주세요.');
           return;
@@ -1050,11 +1078,11 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
   };
 
   const handleImport = async () => {
-    if (importing) return;
+    if (importing || rowsToImport.length === 0) return;
     setImporting(true);
     try {
-      bulkInsertAccountTransactions(db, accountId, rows);
-      setImportedCount(rows.length);
+      bulkInsertAccountTransactions(db, accountId, rowsToImport);
+      setImportedCount(rowsToImport.length);
       setStep('done');
     } catch (err) {
       setFileError(`불러오기 오류: ${err.message}`);
@@ -1062,11 +1090,14 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
     }
   };
 
+  // 완료 화면은 ✕로 닫아도 '확인'과 똑같이 처리한다 (B-024)
+  const handleClose = step === 'done' ? onImport : onClose;
+
   return (
     <ModalOverlay className="acct-modal-overlay" panelClassName="acct-modal acct-modal--tall">
         <div className="acct-modal-header">
           <h3>거래 내역 불러오기</h3>
-          <button className="acct-modal-close" onClick={onClose}>✕</button>
+          <button className="acct-modal-close" onClick={handleClose}>✕</button>
         </div>
 
         {step === 'upload' && (
@@ -1084,10 +1115,10 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
             <table className="acct-import-table">
               <thead><tr><th>컬럼</th><th></th><th>설명</th></tr></thead>
               <tbody>
-                <tr><td>날짜</td><td><span className="acct-badge-req">필수</span></td><td>YYYY-MM-DD</td></tr>
-                <tr><td>구분</td><td><span className="acct-badge-opt">선택</span></td><td>수입 / 지출 (기본: 지출)</td></tr>
+                <tr><td>날짜</td><td><span className="acct-badge-req">필수</span></td><td>YYYY-MM-DD (2026.05.25도 가능)</td></tr>
+                <tr><td>구분</td><td><span className="acct-badge-opt">선택</span></td><td>수입(입금) / 지출(출금) (기본: 지출)</td></tr>
                 <tr><td>내용</td><td><span className="acct-badge-req">필수</span></td><td>거래 내용</td></tr>
-                <tr><td>금액</td><td><span className="acct-badge-req">필수</span></td><td>양수 숫자</td></tr>
+                <tr><td>금액</td><td><span className="acct-badge-req">필수</span></td><td>숫자 (음수는 출금으로 처리, 출금액·입금액 칸으로 나눠도 됨)</td></tr>
               </tbody>
             </table>
             <input type="file" accept=".csv" onChange={handleFileChange} className="acct-import-file-input" />
@@ -1098,29 +1129,43 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
         {step === 'preview' && (
           <div className="acct-form">
             <p className="acct-import-info">
-              <strong>{rows.length}건</strong> 불러오기 예정
-              {importErrors.length > 0 && <span className="acct-import-skip"> ({importErrors.length}건 건너뜀)</span>}
+              <strong>{rowsToImport.length}건</strong> 불러오기 예정
+              {importErrors.length > 0 && <span className="acct-import-skip"> ({importErrors.length}건 오류로 건너뜀)</span>}
             </p>
             {importErrors.length > 0 && (
               <div className="acct-import-errors">
                 <p className="acct-import-errors-title">{importErrors.length}건 건너뜀 — 필드 오류</p>
                 {importErrors.map(e => (
-                  <div key={e.rowNum} className="acct-import-error-row">
-                    <span>{e.rowNum}행</span><span>{e.errs.join(' / ')}</span>
+                  <div key={e.rowNumber} className="acct-import-error-row">
+                    <span>{e.rowNumber}행</span><span>{e.errs.join(' / ')}</span>
                   </div>
                 ))}
               </div>
             )}
+            {duplicateCount > 0 && (
+              <label className="acct-form-checkbox">
+                <input type="checkbox" checked={includeDuplicates} onChange={e => setIncludeDuplicates(e.target.checked)} />
+                <span>
+                  이미 있는 내역과 같은 {duplicateCount}건도 불러오기
+                  <small style={{ display: 'block', fontSize: '11px', fontWeight: 400 }}>
+                    날짜·구분·금액·내용이 같은 내역이 이 계좌에 이미 있습니다. 보통은 체크하지 않습니다.
+                  </small>
+                </span>
+              </label>
+            )}
             <div className="acct-import-preview-wrap">
               <table className="acct-import-preview-table">
-                <thead><tr><th>#</th><th>날짜</th><th>구분</th><th>내용</th><th>금액</th></tr></thead>
+                <thead><tr><th>행</th><th>날짜</th><th>구분</th><th>내용</th><th>금액</th></tr></thead>
                 <tbody>
-                  {rows.map((row, i) => (
-                    <tr key={i}>
-                      <td>{i + 1}</td>
+                  {rows.map(row => (
+                    <tr key={row.rowNumber} style={row.isDuplicate && !includeDuplicates ? { opacity: 0.45 } : undefined}>
+                      <td>{row.rowNumber}</td>
                       <td>{fmt(row.date)}</td>
                       <td><span className={`acct-type-badge ${row.type}`}>{row.type === 'income' ? '수입' : '지출'}</span></td>
-                      <td className="acct-preview-desc">{row.description}</td>
+                      <td className="acct-preview-desc">
+                        {row.description}
+                        {row.isDuplicate && <span className="acct-import-skip"> (이미 있음)</span>}
+                      </td>
                       <td className={`acct-tx-amount ${row.type}`}>
                         {row.type === 'income' ? '+' : '-'}{fmtAmount(row.amount)}
                       </td>
@@ -1132,8 +1177,8 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
             {fileError && <p className="acct-import-error">{fileError}</p>}
             <div className="acct-form-actions">
               <button className="acct-btn-cancel" onClick={() => setStep('upload')}>다시 선택</button>
-              <button className="acct-btn-save" onClick={handleImport} disabled={importing}>
-                {importing ? '가져오는 중…' : `${rows.length}건 불러오기`}
+              <button className="acct-btn-save" onClick={handleImport} disabled={importing || rowsToImport.length === 0}>
+                {importing ? '가져오는 중…' : rowsToImport.length === 0 ? '새 내역 없음' : `${rowsToImport.length}건 불러오기`}
               </button>
             </div>
           </div>

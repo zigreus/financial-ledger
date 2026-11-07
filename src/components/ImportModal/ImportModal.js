@@ -3,49 +3,17 @@ import {
   bulkInsertTransactions,
   ensureCategoriesExist,
   ensureSubCategoriesExist,
-  ensureTripsExist,
+  getAllPaymentMethods,
+  withTransaction,
 } from '../../services/dbManager';
 import { buildValidationContext, detectIssues } from '../../services/txValidator';
+import { parseCSV } from '../../services/csv';
+import {
+  normalizeDateStr, parseImportAmount, markDuplicates, txDuplicateKey, countExistingTransactions,
+  loadTripEvents, findTripEvent, createTripEvent,
+} from '../../services/importHelpers';
 import './ImportModal.css';
 import ModalOverlay from '../common/ModalOverlay';
-
-// ── CSV 파서 ─────────────────────────────────────────────────────────
-function parseCSVLine(line) {
-  const fields = [];
-  let i = 0;
-  while (i < line.length) {
-    if (line[i] === '"') {
-      i++;
-      let field = '';
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
-        else if (line[i] === '"') { i++; break; }
-        else field += line[i++];
-      }
-      fields.push(field);
-      if (line[i] === ',') i++;
-    } else {
-      const end = line.indexOf(',', i);
-      if (end === -1) { fields.push(line.slice(i)); break; }
-      fields.push(line.slice(i, end));
-      i = end + 1;
-    }
-  }
-  if (line.endsWith(',')) fields.push('');
-  return fields;
-}
-
-function parseCSV(text) {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map(h => h.trim());
-  return lines.slice(1).map(line => {
-    const values = parseCSVLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (values[i] ?? '').trim(); });
-    return obj;
-  }).filter(row => Object.values(row).some(v => v !== ''));
-}
 
 // ── 템플릿 ────────────────────────────────────────────────────────────
 // JSON: _no 필드로 행 번호를 명시 → 오류 발생 시 해당 행을 즉시 찾을 수 있음
@@ -119,7 +87,7 @@ const CSV_TEMPLATE =
   '5,카카오페이,2026-02-05,여행,숙박,도쿄 호텔,220000,0,,일본 도쿄,2026-02-03 ~ 2026-02-07\r\n';
 
 function downloadFile(content, filename, mime) {
-  const blob = new Blob(['\uFEFF' + content], { type: mime + ';charset=utf-8;' });
+  const blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -128,131 +96,182 @@ function downloadFile(content, filename, mime) {
   URL.revokeObjectURL(url);
 }
 
-// ── 유효성 검사 ──────────────────────────────────────────────────────
-// 필수 필드 형식 오류 (복구 불가 → 해당 행 건너뜀)
-// 오류 메시지에 실제 입력값을 포함해 원인을 즉시 파악할 수 있게 한다.
-function checkRequiredFields(raw) {
-  const errors = [];
-  if (!raw.payment_method?.trim()) errors.push('결제수단 없음');
-  const dateStr = raw.date?.trim() || '';
-  if (!dateStr) {
-    errors.push('날짜 없음');
-  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    errors.push(`날짜 형식 오류: "${dateStr}" → YYYY-MM-DD 필요`);
-  }
-  if (!raw.budget_category?.trim()) errors.push('카테고리 없음');
-  const amtNum = Number(String(raw.amount ?? '').replace(/,/g, ''));
-  const discountNum = Number(String(raw.discount_amount ?? '0').replace(/,/g, '')) || 0;
-  // 할인금액이 있으면 금액 없음/0도 허용 (전액 할인/환급 등)
-  if (discountNum <= 0 && (raw.amount === undefined || raw.amount === '' || isNaN(amtNum) || amtNum <= 0)) {
-    errors.push(`금액 오류: "${raw.amount ?? ''}" → 양수 필요 (할인금액이 있으면 생략 가능)`);
-  }
-  return errors;
+// ── 행 읽기·검사 ─────────────────────────────────────────────────────
+const FIELDS = [
+  'payment_method', 'date', 'budget_category', 'sub_category', 'detail',
+  'amount', 'discount_amount', 'discount_note', 'trip_name', 'trip_schedule',
+];
+
+/** 칸 값 → 문자열. 글자·숫자만 받고, 그 밖의 타입(객체·배열·true 등)이면 null */
+function cellText(v) {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return null;
 }
 
-function normalizeRow(raw, rowNum) {
+/**
+ * 원본 행 하나를 검사·정리한다 (B-029).
+ * 항목이 객체가 아니거나 칸 타입이 이상하면 그 행만 건너뛴다 — 파일 전체를 거부하지 않는다.
+ * 반환: { row } 또는 { errors }
+ */
+function readRow(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { errors: ['항목 형식 오류: { ... } 객체여야 함'] };
+  }
+  const errors = [];
+  const v = {};
+  FIELDS.forEach(f => {
+    const t = cellText(raw[f]);
+    if (t === null) { errors.push(`${f} 형식 오류: 글자나 숫자여야 함`); v[f] = ''; }
+    else v[f] = t;
+  });
+
+  if (!v.payment_method) errors.push('결제수단 없음');
+  const date = normalizeDateStr(v.date);
+  if (!v.date) errors.push('날짜 없음');
+  else if (!date) errors.push(`날짜 오류: "${v.date}" → 실제 있는 날짜를 YYYY-MM-DD로`);
+  if (!v.budget_category) errors.push('카테고리 없음');
+
+  const amount = parseImportAmount(v.amount);
+  const discount = parseImportAmount(v.discount_amount);
+  if (Number.isNaN(discount) || discount < 0) {
+    errors.push(`할인금액 오류: "${v.discount_amount}" → 0 이상 숫자`);
+  }
+  const hasDiscount = discount > 0;
+  // 할인금액이 있으면 금액 없음/0도 허용 (전액 할인/환급 등)
+  const amountBad = amount === null
+    ? !hasDiscount
+    : Number.isNaN(amount) || amount < 0 || (amount === 0 && !hasDiscount);
+  if (amountBad) errors.push(`금액 오류: "${v.amount}" → 양수 필요 (할인금액이 있으면 생략 가능)`);
+
+  if (errors.length > 0) return { errors };
   return {
-    rowNum,
-    payment_method: raw.payment_method.trim(),
-    date: raw.date.trim(),
-    budget_category: raw.budget_category.trim(),
-    sub_category: raw.sub_category?.trim() || '',
-    detail: raw.detail?.trim() || '',
-    amount: Math.round(Number(String(raw.amount ?? '0').replace(/,/g, '')) || 0),
-    discount_amount: Math.round(Number(String(raw.discount_amount || '0').replace(/,/g, '')) || 0),
-    discount_note: raw.discount_note?.trim() || '',
-    trip_name: raw.trip_name?.trim() || '',
-    trip_schedule: raw.trip_schedule?.trim() || '',
+    row: {
+      payment_method: v.payment_method,
+      date,
+      budget_category: v.budget_category,
+      sub_category: v.sub_category,
+      detail: v.detail,
+      amount: amount ?? 0,
+      discount_amount: discount ?? 0,
+      discount_note: v.discount_note,
+      trip_name: v.trip_name,
+      trip_schedule: v.trip_schedule,
+    },
   };
 }
 
 /**
- * validateRows: txValidator.detectIssues를 활용해 거래내역 "이슈" 기준과 동일하게 검사한다.
- * - hardErrors: 필수 필드 누락/형식 오류 → 해당 행 건너뜀
- * - missingCategories/SubCategories/Trips: DB에 없는 항목 → 자동 추가 또는 취소 선택
+ * 가져올 행들 기준으로 DB에 없는 항목을 찾는다.
+ * 카테고리·세부카테고리 판단은 거래내역 '이슈'와 같은 기준(txValidator)을 쓴다.
  */
-function validateRows(rawRows, validationContext, tripMap) {
-  const validRows = [];
-  const hardErrors = [];
-  const missingCatSet = new Set();
-  const missingSubCatMap = new Map();
-  const missingTripMap = new Map();
+function findMissing(db, rows) {
+  const ctx = buildValidationContext(db);
+  const methods = new Set(getAllPaymentMethods(db).map(p => p.name));
+  const paymentMethods = new Set();
+  const categories = new Set();
+  const subCategories = new Map();
+  const trips = new Map();
 
-  rawRows.forEach((raw, idx) => {
-    const rowNum = idx + 1;
-    const fieldErrors = checkRequiredFields(raw);
-    if (fieldErrors.length > 0) {
-      hardErrors.push({ rowNum, fields: fieldErrors });
-      return;
-    }
-
-    const row = normalizeRow(raw, rowNum);
-
-    // txValidator.detectIssues와 동일한 기준으로 카테고리/서브카테고리 누락 감지
-    const issues = detectIssues(row, validationContext);
-    issues.forEach(issue => {
-      if (issue.field === 'budget_category') {
-        missingCatSet.add(row.budget_category);
-      }
+  rows.forEach(row => {
+    if (!methods.has(row.payment_method)) paymentMethods.add(row.payment_method);
+    detectIssues(row, ctx).forEach(issue => {
+      if (issue.field === 'budget_category') categories.add(row.budget_category);
       if (issue.field === 'sub_category') {
-        const key = `${row.budget_category}|${row.sub_category}`;
-        missingSubCatMap.set(key, { budget_category: row.budget_category, name: row.sub_category });
+        subCategories.set(`${row.budget_category}|${row.sub_category}`, { budget_category: row.budget_category, name: row.sub_category });
       }
     });
-
-    // 여행 누락 감지 (임포트 전용 — 거래내역 이슈와는 별도)
-    if (row.trip_name) {
-      const tripKey = `${row.trip_name}|${row.trip_schedule}`;
-      if (!tripMap.has(tripKey) && !missingTripMap.has(tripKey)) {
-        missingTripMap.set(tripKey, { name: row.trip_name, schedule: row.trip_schedule });
+    if (row.tripKey) {
+      if (!trips.has(row.tripKey)) {
+        trips.set(row.tripKey, { key: row.tripKey, name: row.trip_name, schedule: row.trip_schedule, dates: [] });
       }
+      trips.get(row.tripKey).dates.push(row.date);
     }
-
-    validRows.push(row);
   });
 
   return {
-    validRows,
-    hardErrors,
-    missingCategories: [...missingCatSet],
-    missingSubCategories: [...missingSubCatMap.values()],
-    missingTrips: [...missingTripMap.values()],
+    paymentMethods: [...paymentMethods],
+    categories: [...categories],
+    subCategories: [...subCategories.values()],
+    trips: [...trips.values()],
   };
+}
+
+const hasAnyMissing = (m) =>
+  m.paymentMethods.length > 0 || m.categories.length > 0 || m.subCategories.length > 0 || m.trips.length > 0;
+
+function missingSummary(m) {
+  return [
+    m.paymentMethods.length && `결제수단 ${m.paymentMethods.length}개`,
+    m.categories.length && `카테고리 ${m.categories.length}개`,
+    m.subCategories.length && `세부카테고리 ${m.subCategories.length}개`,
+    m.trips.length && `여행 일정 ${m.trips.length}개`,
+  ].filter(Boolean).join(' · ');
+}
+
+/**
+ * 파일의 항목들을 검사하고, 여행 일정 연결·중복 여부를 붙인다. DB에는 쓰지 않는다.
+ * entries: [{ label, raw }]
+ */
+function analyze(db, entries) {
+  const tripEvents = loadTripEvents(db);
+  const valid = [];
+  const hardErrors = [];
+
+  entries.forEach(({ label, raw }) => {
+    const { row, errors } = readRow(raw);
+    if (errors) { hardErrors.push({ label, fields: errors }); return; }
+
+    let eventId = null;
+    let eventTitle = '';
+    let tripKey = '';
+    if (row.trip_name) {
+      const ev = findTripEvent(tripEvents, row.trip_name, row.trip_schedule, row.date);
+      if (ev) { eventId = ev.id; eventTitle = ev.title; }
+      else tripKey = `${row.trip_name}|${row.trip_schedule}`;
+    }
+    valid.push({ ...row, label, event_id: eventId, eventTitle, tripKey });
+  });
+
+  // 이미 가계부에 있는 거래와 같은 행 표시 (같은 파일을 두 번 올려도 두 배가 되지 않게, B-025)
+  const rows = markDuplicates(valid, txDuplicateKey, countExistingTransactions(db, valid));
+  return { rows, hardErrors };
+}
+
+/** 파일 → [{ label, raw }]. label은 오류 표시에 쓰는 행 위치 */
+function readEntries(fileName, text) {
+  const name = fileName.toLowerCase();
+  if (name.endsWith('.json')) {
+    const data = JSON.parse(text.replace(/^﻿/, ''));
+    if (!Array.isArray(data)) throw new Error('JSON은 배열 형식이어야 합니다.');
+    return data.map((raw, idx) => {
+      const no = raw && typeof raw === 'object' ? cellText(raw._no) : '';
+      return { label: no ? `_no ${no}` : `${idx + 1}번째 항목`, raw };
+    });
+  }
+  if (name.endsWith('.csv')) {
+    // rowNumber: 스프레드시트에서 보이는 행 번호 (헤더가 1행)
+    return parseCSV(text).map(({ rowNumber, fields }) => ({ label: `${rowNumber}행`, raw: fields }));
+  }
+  throw new Error('JSON 또는 CSV 파일을 업로드해주세요.');
 }
 
 // ── 컴포넌트 ─────────────────────────────────────────────────────────
 function ImportModal({ db, onImport, onClose }) {
   const [step, setStep] = useState('upload');
-  const [validRows, setValidRows] = useState([]);
+  const [rows, setRows] = useState([]);
   const [hardErrors, setHardErrors] = useState([]);
-  const [missing, setMissing] = useState({ categories: [], subCategories: [], trips: [] });
-  const [finalRows, setFinalRows] = useState([]);
-  const [tripNameById, setTripNameById] = useState({});
+  const [includeDuplicates, setIncludeDuplicates] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const [importedCount, setImportedCount] = useState(0);
 
-  const loadTripMap = () => {
-    const tripRes = db.exec("SELECT id, name, COALESCE(schedule, '') FROM trips");
-    const tripMap = new Map();
-    const nameById = {};
-    (tripRes[0]?.values || []).forEach(([id, name, schedule]) => {
-      tripMap.set(`${name}|${schedule}`, id);
-      nameById[id] = name;
-    });
-    return { tripMap, nameById };
-  };
-
-  const resolveTripIds = (rows, tripMap, nameById) => {
-    return rows.map(({ trip_name, trip_schedule, rowNum: _rn, ...rest }) => {
-      let trip_id = null;
-      if (trip_name) {
-        trip_id = tripMap.get(`${trip_name}|${trip_schedule}`) ?? null;
-        if (trip_id) nameById[trip_id] = trip_name;
-      }
-      return { ...rest, trip_id };
-    });
-  };
+  const rowsToImport = includeDuplicates ? rows : rows.filter(r => !r.isDuplicate);
+  const duplicateCount = rows.filter(r => r.isDuplicate).length;
+  // 확정 전에는 DB에 쓰지 않는다 — 없는 항목은 '가져오기'를 누를 때 함께 추가한다 (B-029)
+  const missingAll = step === 'conflict' ? findMissing(db, rows) : null;
+  const missingToAdd = step === 'preview' ? findMissing(db, rowsToImport) : null;
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
@@ -265,59 +284,21 @@ function ImportModal({ db, onImport, onClose }) {
         const text = evt.target?.result;
         if (typeof text !== 'string') { setError('파일을 읽을 수 없습니다.'); return; }
 
-        let rawRows = [];
-        const name = file.name.toLowerCase();
-        if (name.endsWith('.json')) {
-          const data = JSON.parse(text.replace(/^\uFEFF/, ''));
-          if (!Array.isArray(data)) { setError('JSON은 배열 형식이어야 합니다.'); return; }
-          rawRows = data;
-        } else if (name.endsWith('.csv')) {
-          rawRows = parseCSV(text);
-        } else {
-          setError('JSON 또는 CSV 파일을 업로드해주세요.');
-          return;
-        }
+        const entries = readEntries(file.name, text);
+        if (entries.length === 0) { setError('데이터가 없습니다.'); return; }
 
-        if (rawRows.length === 0) { setError('데이터가 없습니다.'); return; }
-
-        // txValidator.buildValidationContext와 동일한 컨텍스트 사용
-        const validationContext = buildValidationContext(db);
-        const { tripMap, nameById } = loadTripMap();
-        const result = validateRows(rawRows, validationContext, tripMap);
-
-        setValidRows(result.validRows);
+        const result = analyze(db, entries);
+        setRows(result.rows);
         setHardErrors(result.hardErrors);
+        setIncludeDuplicates(false);
 
-        // 유효 행이 0개여도 충돌 단계로 이동해 어떤 행이 왜 실패했는지 표시한다
-        if (result.validRows.length === 0 && result.hardErrors.length > 0) {
-          setMissing({ categories: [], subCategories: [], trips: [] });
-          setStep('conflict');
-          return;
-        }
-
-        if (result.validRows.length === 0) {
+        if (result.rows.length === 0 && result.hardErrors.length === 0) {
           setError('데이터를 인식할 수 없습니다. 파일 형식(JSON/CSV)을 확인해주세요.');
           return;
         }
-
-        const hasMissing =
-          result.missingCategories.length > 0 ||
-          result.missingSubCategories.length > 0 ||
-          result.missingTrips.length > 0;
-
-        if (hasMissing || result.hardErrors.length > 0) {
-          setMissing({
-            categories: result.missingCategories,
-            subCategories: result.missingSubCategories,
-            trips: result.missingTrips,
-          });
-          setStep('conflict');
-        } else {
-          const resolved = resolveTripIds(result.validRows, tripMap, nameById);
-          setTripNameById({ ...nameById });
-          setFinalRows(resolved);
-          setStep('preview');
-        }
+        // 유효 행이 0개여도 충돌 단계로 이동해 어떤 행이 왜 실패했는지 표시한다
+        const needsReview = result.hardErrors.length > 0 || hasAnyMissing(findMissing(db, result.rows));
+        setStep(needsReview ? 'conflict' : 'preview');
       } catch (err) {
         setError(`파일 읽기 오류: ${err.message}`);
       }
@@ -325,40 +306,33 @@ function ImportModal({ db, onImport, onClose }) {
     reader.readAsText(file, 'UTF-8');
   };
 
-  const handleAutoAdd = () => {
-    try {
-      db.run('BEGIN');
-      if (missing.categories.length > 0) ensureCategoriesExist(db, missing.categories);
-      if (missing.subCategories.length > 0) ensureSubCategoriesExist(db, missing.subCategories);
-      if (missing.trips.length > 0) ensureTripsExist(db, missing.trips);
-      db.run('COMMIT');
-    } catch (err) {
-      db.run('ROLLBACK');
-      setError(`자동 추가 오류: ${err.message}`);
-      return;
-    }
-
-    const { tripMap, nameById } = loadTripMap();
-    const resolved = resolveTripIds(validRows, tripMap, nameById);
-    setTripNameById(nameById);
-    setFinalRows(resolved);
-    setStep('preview');
-  };
-
-  const handleSkipToPreview = () => {
-    const { tripMap, nameById } = loadTripMap();
-    const resolved = resolveTripIds(validRows, tripMap, nameById);
-    setTripNameById(nameById);
-    setFinalRows(resolved);
-    setStep('preview');
-  };
-
   const handleImport = async () => {
-    if (importing) return;
+    if (importing || rowsToImport.length === 0) return;
     setImporting(true);
     try {
-      bulkInsertTransactions(db, finalRows);
-      setImportedCount(finalRows.length);
+      // 없는 항목 추가 + 거래 추가를 한 단위로 — 중간에 실패하면 아무것도 남지 않는다
+      withTransaction(db, () => {
+        const need = findMissing(db, rowsToImport);
+        if (need.categories.length > 0) ensureCategoriesExist(db, need.categories);
+        if (need.subCategories.length > 0) ensureSubCategoriesExist(db, need.subCategories);
+        const newEventIds = new Map();
+        need.trips.forEach(t => {
+          newEventIds.set(t.key, createTripEvent(db, { name: t.name, schedule: t.schedule, dates: t.dates }));
+        });
+        // 결제수단은 bulkInsertTransactions가 없으면 추가한다
+        bulkInsertTransactions(db, rowsToImport.map(r => ({
+          payment_method: r.payment_method,
+          date: r.date,
+          budget_category: r.budget_category,
+          sub_category: r.sub_category,
+          detail: r.detail,
+          amount: r.amount,
+          discount_amount: r.discount_amount,
+          discount_note: r.discount_note,
+          event_id: r.event_id ?? (r.tripKey ? newEventIds.get(r.tripKey) : null) ?? null,
+        })));
+      });
+      setImportedCount(rowsToImport.length);
       onImport();
       setStep('done');
     } catch (err) {
@@ -370,19 +344,13 @@ function ImportModal({ db, onImport, onClose }) {
   const resetToUpload = () => {
     setStep('upload');
     setError('');
-    setValidRows([]);
+    setRows([]);
     setHardErrors([]);
-    setMissing({ categories: [], subCategories: [], trips: [] });
-    setFinalRows([]);
+    setIncludeDuplicates(false);
     setImporting(false);
   };
 
-  const hasMissing =
-    missing.categories.length > 0 ||
-    missing.subCategories.length > 0 ||
-    missing.trips.length > 0;
-
-  const hasTrip = finalRows.some(r => r.trip_id);
+  const hasTrip = rowsToImport.some(r => r.trip_name);
 
   return (
     <ModalOverlay className="modal-overlay" panelClassName="modal-content">
@@ -416,7 +384,7 @@ function ImportModal({ db, onImport, onClose }) {
                 </button>
               </div>
               <p className="import-template-note">
-                JSON 양식의 <code>_no</code> 필드는 행 번호 표시용이며 가져오기 시 무시됩니다.
+                JSON 양식의 <code>_no</code> 필드는 오류 표시용 번호이며 가져오기 시 저장되지 않습니다.
               </p>
             </div>
 
@@ -435,9 +403,9 @@ function ImportModal({ db, onImport, onClose }) {
                   <tr><td>detail</td><td><span className="badge badge-optional">선택</span></td><td>내역 메모</td></tr>
                   <tr><td>discount_amount</td><td><span className="badge badge-optional">선택</span></td><td>할인 금액</td></tr>
                   <tr><td>discount_note</td><td><span className="badge badge-optional">선택</span></td><td>할인 설명</td></tr>
-                  <tr><td>trip_name</td><td><span className="badge badge-travel">여행</span></td><td>여행 이름</td></tr>
-                  <tr><td>trip_schedule</td><td><span className="badge badge-travel">여행</span></td><td>여행 일정 (예: 2026-01-18 ~ 01-22)</td></tr>
-                  <tr><td>_no</td><td><span className="badge badge-info">참고</span></td><td>행 번호 (JSON 전용, 가져오기 시 무시)</td></tr>
+                  <tr><td>trip_name</td><td><span className="badge badge-travel">여행</span></td><td>여행 일정 이름 (캘린더 여행 일정과 연결, 없으면 새로 만듦)</td></tr>
+                  <tr><td>trip_schedule</td><td><span className="badge badge-travel">여행</span></td><td>여행 기간 (예: 2026-01-18 ~ 01-22)</td></tr>
+                  <tr><td>_no</td><td><span className="badge badge-info">참고</span></td><td>행 번호 (JSON 전용, 오류 표시용)</td></tr>
                 </tbody>
               </table>
             </div>
@@ -461,9 +429,9 @@ function ImportModal({ db, onImport, onClose }) {
                   {hardErrors.length}건 건너뜀 — 필수 필드 오류
                 </p>
                 <div className="conflict-list">
-                  {hardErrors.map(({ rowNum, fields }) => (
-                    <div key={rowNum} className="conflict-item">
-                      <span className="conflict-row">{rowNum}행</span>
+                  {hardErrors.map(({ label, fields }, i) => (
+                    <div key={`${label}|${i}`} className="conflict-item">
+                      <span className="conflict-row">{label}</span>
                       <span className="conflict-desc">{fields.join(' / ')}</span>
                     </div>
                   ))}
@@ -471,30 +439,36 @@ function ImportModal({ db, onImport, onClose }) {
               </div>
             )}
 
-            {hasMissing && (
+            {missingAll && hasAnyMissing(missingAll) && (
               <div className="conflict-section conflict-section--warn">
                 <p className="conflict-title">
-                  다음 항목이 없습니다. 자동으로 추가하시겠습니까?
+                  다음 항목이 없습니다. 가져올 때 함께 추가됩니다.
                 </p>
                 <p className="conflict-subtitle">
-                  추가 후 거래내역 목록의 <strong>이슈</strong> 필터로 확인할 수 있습니다.
+                  아직 아무것도 바뀌지 않았습니다. 미리보기에서 <strong>가져오기</strong>를 눌러야 추가되며, 취소하면 그대로입니다.
                 </p>
                 <div className="conflict-list">
-                  {missing.categories.map(name => (
-                    <div key={name} className="conflict-item">
+                  {missingAll.paymentMethods.map(name => (
+                    <div key={`pm|${name}`} className="conflict-item">
+                      <span className="badge badge-cat">결제수단</span>
+                      <span className="conflict-desc">{name}</span>
+                    </div>
+                  ))}
+                  {missingAll.categories.map(name => (
+                    <div key={`cat|${name}`} className="conflict-item">
                       <span className="badge badge-cat">카테고리</span>
                       <span className="conflict-desc">{name}</span>
                     </div>
                   ))}
-                  {missing.subCategories.map(({ budget_category, name }) => (
-                    <div key={`${budget_category}|${name}`} className="conflict-item">
+                  {missingAll.subCategories.map(({ budget_category, name }) => (
+                    <div key={`sub|${budget_category}|${name}`} className="conflict-item">
                       <span className="badge badge-subcat">세부카테고리</span>
                       <span className="conflict-desc">{budget_category} › {name}</span>
                     </div>
                   ))}
-                  {missing.trips.map(({ name, schedule }) => (
-                    <div key={`${name}|${schedule}`} className="conflict-item">
-                      <span className="badge badge-trip">여행</span>
+                  {missingAll.trips.map(({ key, name, schedule }) => (
+                    <div key={`trip|${key}`} className="conflict-item">
+                      <span className="badge badge-trip">여행 일정</span>
                       <span className="conflict-desc">
                         {name}{schedule ? ` (${schedule})` : ''}
                       </span>
@@ -504,9 +478,9 @@ function ImportModal({ db, onImport, onClose }) {
               </div>
             )}
 
-            {validRows.length > 0 ? (
+            {rows.length > 0 ? (
               <p className="import-info" style={{ marginTop: '4px' }}>
-                유효한 거래 <strong>{validRows.length}건</strong>
+                유효한 거래 <strong>{rows.length}건</strong>
                 {hardErrors.length > 0 && ` (${hardErrors.length}건 건너뜀)`}
               </p>
             ) : (
@@ -519,16 +493,10 @@ function ImportModal({ db, onImport, onClose }) {
 
             <div className="form-actions">
               <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>
-              {validRows.length > 0 && (
-                hasMissing ? (
-                  <button className="btn-primary" onClick={handleAutoAdd}>
-                    자동 추가 후 미리보기
-                  </button>
-                ) : (
-                  <button className="btn-primary" onClick={handleSkipToPreview}>
-                    미리보기
-                  </button>
-                )
+              {rows.length > 0 && (
+                <button className="btn-primary" onClick={() => setStep('preview')}>
+                  미리보기
+                </button>
               )}
             </div>
           </div>
@@ -538,17 +506,30 @@ function ImportModal({ db, onImport, onClose }) {
         {step === 'preview' && (
           <div className="tx-form">
             <p className="import-info">
-              <strong>{finalRows.length}건</strong> 가져오기 예정
+              <strong>{rowsToImport.length}건</strong> 가져오기 예정
               {hardErrors.length > 0 && (
-                <span className="import-skip-note"> ({hardErrors.length}건 건너뜀)</span>
+                <span className="import-skip-note"> ({hardErrors.length}건 오류로 건너뜀)</span>
+              )}
+              {missingToAdd && hasAnyMissing(missingToAdd) && (
+                <><br />함께 추가: {missingSummary(missingToAdd)}</>
               )}
             </p>
+
+            {duplicateCount > 0 && (
+              <label className="import-info" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeDuplicates} onChange={e => setIncludeDuplicates(e.target.checked)} />
+                <span>
+                  이미 있는 거래와 같은 {duplicateCount}건도 가져오기
+                  <span className="import-skip-note"> — 날짜·결제수단·금액·세부내역이 같은 거래가 이미 있습니다. 보통은 체크하지 않습니다.</span>
+                </span>
+              </label>
+            )}
 
             <div className="import-preview-wrap">
               <table className="import-preview-table">
                 <thead>
                   <tr>
-                    <th>#</th>
+                    <th>행</th>
                     <th>날짜</th>
                     <th>결제수단</th>
                     <th>카테고리</th>
@@ -560,27 +541,33 @@ function ImportModal({ db, onImport, onClose }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {finalRows.map((row, idx) => (
-                    <tr key={idx}>
-                      <td className="preview-row-num">{idx + 1}</td>
-                      <td>{row.date}</td>
-                      <td>{row.payment_method}</td>
-                      <td>{row.budget_category}</td>
-                      <td>{row.sub_category || <span className="preview-empty">-</span>}</td>
-                      <td className="preview-detail">{row.detail || <span className="preview-empty">-</span>}</td>
-                      <td className="preview-amount">{row.amount.toLocaleString()}원</td>
-                      <td>{row.discount_amount
-                        ? <span className="preview-discount">-{row.discount_amount.toLocaleString()}원</span>
-                        : <span className="preview-empty">-</span>}
-                      </td>
-                      {hasTrip && (
-                        <td>{row.trip_id
-                          ? <span className="preview-trip">{tripNameById[row.trip_id] || '✓'}</span>
+                  {rows.map((row, i) => {
+                    const skipped = row.isDuplicate && !includeDuplicates;
+                    return (
+                      <tr key={`${row.label}|${i}`} style={skipped ? { opacity: 0.45 } : undefined}>
+                        <td className="preview-row-num">{row.label}</td>
+                        <td>{row.date}</td>
+                        <td>{row.payment_method}</td>
+                        <td>{row.budget_category}</td>
+                        <td>{row.sub_category || <span className="preview-empty">-</span>}</td>
+                        <td className="preview-detail">
+                          {row.detail || <span className="preview-empty">-</span>}
+                          {row.isDuplicate && <span className="import-skip-note"> (이미 있음)</span>}
+                        </td>
+                        <td className="preview-amount">{row.amount.toLocaleString()}원</td>
+                        <td>{row.discount_amount
+                          ? <span className="preview-discount">-{row.discount_amount.toLocaleString()}원</span>
                           : <span className="preview-empty">-</span>}
                         </td>
-                      )}
-                    </tr>
-                  ))}
+                        {hasTrip && (
+                          <td>{row.trip_name
+                            ? <span className="preview-trip">{row.event_id ? row.eventTitle : `${row.trip_name} (새 일정)`}</span>
+                            : <span className="preview-empty">-</span>}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -589,8 +576,8 @@ function ImportModal({ db, onImport, onClose }) {
 
             <div className="form-actions">
               <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>
-              <button className="btn-primary" onClick={handleImport} disabled={importing}>
-                {importing ? '가져오는 중...' : `${finalRows.length}건 가져오기`}
+              <button className="btn-primary" onClick={handleImport} disabled={importing || rowsToImport.length === 0}>
+                {importing ? '가져오는 중...' : rowsToImport.length === 0 ? '새 거래 없음' : `${rowsToImport.length}건 가져오기`}
               </button>
             </div>
           </div>

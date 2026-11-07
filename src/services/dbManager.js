@@ -1,5 +1,5 @@
 import initSqlJs from 'sql.js';
-import HOLIDAYS_BY_YEAR, { getNextBusinessDay, getPrevBusinessDay } from '../data/holidays';
+import { getNextBusinessDay, getPrevBusinessDay } from '../data/holidays';
 
 let SQL = null;
 
@@ -49,23 +49,6 @@ CREATE TABLE IF NOT EXISTS sub_categories (
   sort_order INTEGER DEFAULT 0,
   is_hidden INTEGER DEFAULT 0,
   UNIQUE(budget_category, name)
-);
-
-CREATE TABLE IF NOT EXISTS trips (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  schedule TEXT DEFAULT '',
-  sort_order INTEGER DEFAULT 0,
-  is_hidden INTEGER DEFAULT 0,
-  UNIQUE(name, schedule)
-);
-
-CREATE TABLE IF NOT EXISTS trip_countries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  trip_id INTEGER NOT NULL,
-  country TEXT NOT NULL,
-  currency TEXT NOT NULL,
-  sort_order INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS payment_method_discount_rules (
@@ -221,6 +204,13 @@ CREATE TABLE IF NOT EXISTS account_transactions (
   created_at        TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 계좌 자동등록에서 사용자가 지운 달 (다시 만들지 않는다)
+CREATE TABLE IF NOT EXISTS account_recurring_skips (
+  recurring_item_id INTEGER NOT NULL,
+  recurring_month   TEXT    NOT NULL,
+  PRIMARY KEY (recurring_item_id, recurring_month)
+);
+
 CREATE TABLE IF NOT EXISTS event_cash_flows (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id   INTEGER NOT NULL,
@@ -234,78 +224,174 @@ CREATE TABLE IF NOT EXISTS event_cash_flows (
   created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
-CREATE TABLE IF NOT EXISTS holidays (
-  date TEXT PRIMARY KEY,
-  name TEXT NOT NULL
-);
 `;
 
 
+// sql.js WASM은 빌드 때 public/에 복사해 둔 같은 버전 파일을 쓴다 (scripts/copy-sql-wasm.js).
+// 외부 CDN에 의존하지 않으므로 CDN 장애·버전 불일치로 앱이 못 열리는 일이 없다.
 export async function initSQL() {
   if (!SQL) {
     SQL = await initSqlJs({
-      locateFile: file => `https://unpkg.com/sql.js@1.12.0/dist/${file}`,
+      locateFile: file => `${process.env.PUBLIC_URL || ''}/${file}`,
     });
   }
   return SQL;
 }
 
+// ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
+// 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
+// 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
+export const SCHEMA_VERSION = 2;
+
+const COLUMN_MIGRATIONS = [
+  // [테이블, 컬럼, 정의]
+  ['transactions', 'is_recurring', 'INTEGER DEFAULT 0'],
+  ['transactions', 'recurring_source_id', 'INTEGER DEFAULT NULL'],
+  ['transactions', 'recurring_frequency', 'TEXT DEFAULT NULL'],
+  ['transactions', 'event_id', 'INTEGER DEFAULT NULL'],
+  ['transactions', 'split_group_id', "TEXT DEFAULT ''"],
+  ['transactions', 'is_cash_adjustment', 'INTEGER DEFAULT 0'],
+  ['recurring_transactions', 'discount_amount', 'INTEGER DEFAULT 0'],
+  ['recurring_transactions', 'discount_note', "TEXT DEFAULT ''"],
+  ['event_countries', 'exchange_rate', 'REAL DEFAULT 0'],
+  // 계좌 자동등록: 어느 달 몫인지 (휴일 보정으로 실제 날짜가 다른 달이 될 수 있다)
+  ['account_transactions', 'recurring_month', "TEXT DEFAULT ''"],
+  // 여행 현금 흐름과 함께 만든 기록 — 흐름을 지울 때 같이 정리한다 (B-038)
+  ['event_cash_flows', 'account_tx_id', 'INTEGER DEFAULT NULL'],   // 계좌 출금/입금 기록
+  ['event_cash_flows', 'linked_flow_id', 'INTEGER DEFAULT NULL'],  // 이월 나감 ↔ 이월 들어옴
+  ['event_cash_flows', 'linked_tx_id', 'INTEGER DEFAULT NULL'],    // 재환전의 환차손익 거래
+];
+
+function tableExists(db, table) {
+  const res = db.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]);
+  return !!res[0]?.values.length;
+}
+
+function columnsOf(db, table) {
+  const res = db.exec(`PRAGMA table_info(${table})`);
+  return new Set((res[0]?.values || []).map(r => r[1]));
+}
+
+/** 컬럼이 없을 때만 추가한다. 추가했으면 true. */
+function ensureColumn(db, table, column, ddl) {
+  if (!tableExists(db, table) || columnsOf(db, table).has(column)) return false;
+  db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  return true;
+}
+
+/** 쓰기 문장을 실행하고 바뀐 행 수를 돌려준다. */
+function runCount(db, sql, params) {
+  db.run(sql, params);
+  return db.getRowsModified();
+}
+
+/**
+ * 여러 문장을 하나의 단위로 실행한다 — 중간에 실패하면 전부 되돌린다.
+ * SAVEPOINT를 써서 중첩 호출도 안전하다.
+ */
+let savepointSeq = 0;
+export function withTransaction(db, fn) {
+  const name = `sp_${++savepointSeq}`;
+  db.run(`SAVEPOINT ${name}`);
+  try {
+    const result = fn();
+    db.run(`RELEASE ${name}`);
+    return result;
+  } catch (e) {
+    db.run(`ROLLBACK TO ${name}`);
+    db.run(`RELEASE ${name}`);
+    throw e;
+  }
+}
+
+/** 예전 trips/trip_countries 테이블을 calendar_events로 옮긴다 (아주 오래된 DB에만 해당). */
+function migrateLegacyTrips(db) {
+  if (!tableExists(db, 'trips')) return false;
+  ensureColumn(db, 'trips', 'schedule', "TEXT DEFAULT ''");
+  const hasCountries = tableExists(db, 'trip_countries');
+
+  withTransaction(db, () => {
+    const trips = db.exec('SELECT id, name, schedule, sort_order FROM trips ORDER BY sort_order, id');
+    (trips[0]?.values || []).forEach(([tripId, name, schedule, sortOrder]) => {
+      const already = db.exec(
+        'SELECT id FROM calendar_events WHERE note LIKE ? AND event_type = ?',
+        [`%[trip_id:${tripId}]%`, 'trip']
+      );
+      if (already[0]?.values.length) return;
+
+      const noteVal = schedule ? `${schedule} [trip_id:${tripId}]` : `[trip_id:${tripId}]`;
+      db.run(
+        `INSERT INTO calendar_events (title, date_from, date_to, event_type, color, note, sort_order)
+         VALUES (?, '', '', 'trip', '#F0A500', ?, ?)`,
+        [name, noteVal, sortOrder]
+      );
+      const newEventId = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+
+      if (hasCountries) {
+        const countries = db.exec(
+          'SELECT country, currency, sort_order FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
+          [tripId]
+        );
+        (countries[0]?.values || []).forEach(([country, currency, cSort]) => {
+          db.run(
+            'INSERT INTO event_countries (event_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
+            [newEventId, country, currency, cSort]
+          );
+        });
+      }
+
+      db.run('UPDATE transactions SET event_id = ? WHERE trip_id = ? AND event_id IS NULL', [newEventId, tripId]);
+    });
+    db.run('DROP TABLE IF EXISTS trip_countries');
+    db.run('DROP TABLE trips');
+  });
+  return true;
+}
+
+/**
+ * DB를 열고 스키마를 최신으로 맞춘다.
+ * 반환: { db, didMigrate, migrationErrors, newerSchema }
+ *  - didMigrate: 실제로 스키마·데이터를 바꿨을 때만 true (true면 호출부가 OneDrive에 저장)
+ *  - migrationErrors: 실패한 마이그레이션 메시지 목록 (조용히 삼키지 않는다)
+ *  - newerSchema: 이 앱보다 새 버전 앱이 만든 DB면 true (화면에서 새로고침을 안내)
+ */
 export function createDatabase(SQL, existingData = null) {
   const db = existingData ? new SQL.Database(existingData) : new SQL.Database();
-  db.run(SCHEMA);
+  const migrationErrors = [];
+  let didMigrate = !existingData; // 새 DB는 처음 한 번 저장해야 한다
 
-  // 완료된 마이그레이션 코드는 dbMigrations.legacy.js 에 보존됨
-  let didMigrate = false;
-
-  // transactions 테이블에 정기지출 컬럼 추가 (기존 DB 호환)
-  try { db.run('ALTER TABLE transactions ADD COLUMN is_recurring INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
-  try { db.run('ALTER TABLE transactions ADD COLUMN recurring_source_id INTEGER DEFAULT NULL'); didMigrate = true; } catch (e) {}
-  // recurring_transactions 테이블에 할인 컬럼 추가 (기존 DB 호환)
-  try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_amount INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
-  try { db.run('ALTER TABLE recurring_transactions ADD COLUMN discount_note TEXT DEFAULT \'\''); didMigrate = true; } catch (e) {}
-  // transactions 테이블에 정기지출 주기 컬럼 추가 (기존 DB 호환)
-  try { db.run('ALTER TABLE transactions ADD COLUMN recurring_frequency TEXT DEFAULT NULL'); didMigrate = true; } catch (e) {}
-  // recurring_transactions.is_active 컬럼 제거 (기존 DB 호환)
-  try { db.run('ALTER TABLE recurring_transactions DROP COLUMN is_active'); didMigrate = true; } catch (e) {}
-  // trips 테이블에 여행일정 컬럼 추가 (기존 DB 호환)
-  try { db.run("ALTER TABLE trips ADD COLUMN schedule TEXT DEFAULT ''"); didMigrate = true; } catch (e) {}
-  // trips UNIQUE 제약 변경: name 단독 → (name, schedule) 복합 (기존 DB 호환)
-  try {
-    const schemaRes = db.exec("SELECT sql FROM sqlite_master WHERE type='table' AND name='trips'");
-    const schemaSql = schemaRes[0]?.values[0]?.[0] || '';
-    if (!schemaSql.includes('UNIQUE(name, schedule)') && !schemaSql.includes('UNIQUE (name, schedule)')) {
-      db.run(`CREATE TABLE trips_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        schedule TEXT DEFAULT '',
-        sort_order INTEGER DEFAULT 0,
-        is_hidden INTEGER DEFAULT 0,
-        UNIQUE(name, schedule)
-      )`);
-      db.run(`INSERT INTO trips_new SELECT id, name, COALESCE(schedule, ''), sort_order, is_hidden FROM trips`);
-      db.run(`DROP TABLE trips`);
-      db.run(`ALTER TABLE trips_new RENAME TO trips`);
-      didMigrate = true;
+  const step = (label, fn) => {
+    try {
+      if (fn()) didMigrate = true;
+    } catch (e) {
+      migrationErrors.push(`${label}: ${e.message}`);
+      // eslint-disable-next-line no-console
+      console.error(`[DB 마이그레이션 실패] ${label}`, e);
     }
-  } catch (e) {}
+  };
 
-  // transactions에 event_id 컬럼 추가
-  try { db.run('ALTER TABLE transactions ADD COLUMN event_id INTEGER DEFAULT NULL'); didMigrate = true; } catch (e) {}
+  const storedVersion = db.exec('PRAGMA user_version')[0]?.values[0][0] || 0;
 
-  // event_countries에 환율 컬럼 추가 (기존 DB 호환)
-  try { db.run('ALTER TABLE event_countries ADD COLUMN exchange_rate REAL DEFAULT 0'); didMigrate = true; } catch (e) {}
+  step('기본 스키마', () => { db.run(SCHEMA); return false; });
 
-  // 분할 결제(현금+카드) 묶음 식별자 (기존 DB 호환)
-  try { db.run("ALTER TABLE transactions ADD COLUMN split_group_id TEXT DEFAULT ''"); didMigrate = true; } catch (e) {}
-  // 현금 거래지만 여행 지갑 잔액에는 영향이 없는 장부 조정(환차손익 등)
-  try { db.run('ALTER TABLE transactions ADD COLUMN is_cash_adjustment INTEGER DEFAULT 0'); didMigrate = true; } catch (e) {}
+  COLUMN_MIGRATIONS.forEach(([table, column, ddl]) => {
+    step(`${table}.${column} 추가`, () => ensureColumn(db, table, column, ddl));
+  });
+
+  // recurring_transactions.is_active 컬럼 제거 (기존 DB 호환)
+  step('recurring_transactions.is_active 제거', () => {
+    if (!columnsOf(db, 'recurring_transactions').has('is_active')) return false;
+    db.run('ALTER TABLE recurring_transactions DROP COLUMN is_active');
+    return true;
+  });
 
   // 즐겨찾기 금액을 선택 항목으로 — amount의 NOT NULL 제거 (기존 DB 호환)
-  try {
+  step('favorite_transactions.amount NULL 허용', () => {
     const favSql = db.exec(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='favorite_transactions'"
-    )[0]?.values[0][0] || '';
-    if (/amount\s+INTEGER\s+NOT\s+NULL/i.test(favSql)) {
+    )[0]?.values[0]?.[0] || '';
+    if (!/amount\s+INTEGER\s+NOT\s+NULL/i.test(favSql)) return false;
+    withTransaction(db, () => {
       db.run(`CREATE TABLE favorite_transactions_new (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         name            TEXT NOT NULL,
@@ -325,99 +411,47 @@ export function createDatabase(SQL, existingData = null) {
               FROM favorite_transactions`);
       db.run('DROP TABLE favorite_transactions');
       db.run('ALTER TABLE favorite_transactions_new RENAME TO favorite_transactions');
-      didMigrate = true;
-    }
-  } catch (e) {}
+    });
+    return true;
+  });
 
-  // ── trips → calendar_events 마이그레이션 ──────────────────────────
-  // trips 테이블이 존재하면 마이그레이션 실행 후 DROP
-  try {
-    const tripsExist = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='trips'");
-    if (tripsExist.length && tripsExist[0].values.length > 0) {
-      const trips = db.exec('SELECT id, name, schedule, sort_order FROM trips ORDER BY sort_order, id');
-      if (trips.length) {
-        trips[0].values.forEach(([tripId, name, schedule, sortOrder]) => {
-          // calendar_events에 여행 이벤트 삽입 (중복 방지: migrated_from_trip_id로 체크)
-          const alreadyMigrated = db.exec(
-            'SELECT id FROM calendar_events WHERE note LIKE ? AND event_type = ?',
-            [`%[trip_id:${tripId}]%`, 'trip']
-          );
-          if (alreadyMigrated.length && alreadyMigrated[0].values.length > 0) return;
+  step('trips → calendar_events 이전', () => migrateLegacyTrips(db));
 
-          const noteVal = schedule
-            ? `${schedule} [trip_id:${tripId}]`
-            : `[trip_id:${tripId}]`;
+  // 쓰지 않는 holidays 테이블 정리 (공휴일은 src/data/holidays.js에서 바로 읽는다)
+  step('holidays 테이블 제거', () => {
+    if (!tableExists(db, 'holidays')) return false;
+    db.run('DROP TABLE holidays');
+    return true;
+  });
 
-          db.run(
-            `INSERT INTO calendar_events (title, date_from, date_to, event_type, color, note, sort_order)
-             VALUES (?, '', '', 'trip', '#F0A500', ?, ?)`,
-            [name, noteVal, sortOrder]
-          );
-          const newEventRes = db.exec('SELECT last_insert_rowid()');
-          const newEventId = newEventRes[0].values[0][0];
-
-          // trip_countries → event_countries
-          const countries = db.exec(
-            'SELECT country, currency, sort_order FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
-            [tripId]
-          );
-          if (countries.length) {
-            countries[0].values.forEach(([country, currency, cSort]) => {
-              db.run(
-                'INSERT INTO event_countries (event_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
-                [newEventId, country, currency, cSort]
-              );
-            });
-          }
-
-          // transactions.event_id 매핑
-          db.run(
-            'UPDATE transactions SET event_id = ? WHERE trip_id = ? AND event_id IS NULL',
-            [newEventId, tripId]
-          );
-        });
-      }
-
-      // row count 검증 후 DROP
-      const ecCount = db.exec('SELECT COUNT(*) FROM event_countries');
-      const tcCount = db.exec("SELECT COUNT(*) FROM trip_countries");
-      const evtCount = db.exec('SELECT COUNT(*) FROM calendar_events WHERE event_type = ?', ['trip']);
-      const trCount = db.exec('SELECT COUNT(*) FROM trips');
-      const ecOk = (ecCount[0]?.values[0][0] || 0) >= (tcCount[0]?.values[0][0] || 0);
-      const evtOk = (evtCount[0]?.values[0][0] || 0) >= (trCount[0]?.values[0][0] || 0);
-      if (ecOk && evtOk) {
-        db.run('DROP TABLE IF EXISTS trip_countries');
-        db.run('DROP TABLE IF EXISTS trips');
-      }
-      didMigrate = true;
-    }
-  } catch (e) {}
-
-  // ── calendar_event_types 초기화 및 데이터 정규화 ────────────────────
-  try {
-    db.run(`INSERT OR IGNORE INTO calendar_event_types (value, label, color, sort_order, is_system, is_trip_type)
+  // ── calendar_event_types 기본값 및 데이터 정규화 ───────────────────
+  step('일정 유형 기본값', () => {
+    let changed = 0;
+    changed += runCount(db, `INSERT OR IGNORE INTO calendar_event_types (value, label, color, sort_order, is_system, is_trip_type)
       VALUES
         ('trip',     '여행',   '#F0A500', 0, 1, 1),
         ('occasion', '경조사', '#EC4899', 1, 0, 0),
         ('general',  '일상',   '#9CA3AF', 2, 1, 0)`);
-    // general: 이름 '기타'→'일상', sort_order 999→2 로 업데이트 (기존 DB 호환)
-    db.run(`UPDATE calendar_event_types SET label='일상', sort_order=2 WHERE value='general' AND (label='기타' OR sort_order=999)`);
-    // 구 유형(holiday, medical) → general 이전
-    db.run(`UPDATE calendar_events SET event_type = 'general' WHERE event_type IN ('holiday', 'medical')`);
-    // 미정의 event_type 방어
-    db.run(`UPDATE calendar_events SET event_type = 'general'
-            WHERE event_type NOT IN (SELECT value FROM calendar_event_types)`);
+    // general: 이름 '기타'→'일상', sort_order 999→2 (기존 DB 호환)
+    changed += runCount(db, `UPDATE calendar_event_types SET label='일상', sort_order=2
+      WHERE value='general' AND (label='기타' OR sort_order=999)`);
+    // 구 유형(holiday, medical) 및 정의되지 않은 유형 → general
+    changed += runCount(db, `UPDATE calendar_events SET event_type = 'general'
+      WHERE event_type IN ('holiday', 'medical')
+         OR event_type NOT IN (SELECT value FROM calendar_event_types)`);
+    return changed > 0;
+  });
+
+  // ── 계좌 자동등록 내역의 '대상 월' 채우기 + 중복 정리 (B-007) ─────────
+  step('계좌 자동등록 대상 월 정리', () => normalizeAccountRecurringMonths(db));
+
+  const newerSchema = storedVersion > SCHEMA_VERSION;
+  if (!newerSchema && storedVersion !== SCHEMA_VERSION && migrationErrors.length === 0) {
+    db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     didMigrate = true;
-  } catch (e) {}
+  }
 
-  // ── holidays 테이블 동기화 ────────────────────────────────────
-  try {
-    Object.values(HOLIDAYS_BY_YEAR).flat().forEach(({ date, name }) => {
-      db.run('INSERT OR REPLACE INTO holidays (date, name) VALUES (?, ?)', [date, name]);
-    });
-  } catch (e) {}
-
-  return { db, didMigrate };
+  return { db, didMigrate, migrationErrors, newerSchema };
 }
 
 export function exportDatabase(db) {
@@ -487,17 +521,18 @@ export function addTransaction(db, tx) {
 }
 
 export function updateTransaction(db, id, tx) {
+  // discount_note를 넘기지 않으면(undefined) 기존 메모를 그대로 둔다 — 금액만 고쳐도 메모가 지워지지 않게
   db.run(
     `UPDATE transactions
      SET payment_method=?, date=?, budget_category=?, sub_category=?,
-         detail=?, amount=?, discount_amount=?, discount_note=?,
+         detail=?, amount=?, discount_amount=?, discount_note=COALESCE(?, discount_note),
          event_id=?, foreign_amounts=?, split_group_id=?,
          updated_at=datetime('now','localtime')
      WHERE id=?`,
     [
       tx.payment_method, tx.date, tx.budget_category,
       tx.sub_category || '', tx.detail || '',
-      tx.amount, tx.discount_amount || 0, tx.discount_note || '',
+      tx.amount, tx.discount_amount || 0, tx.discount_note === undefined ? null : (tx.discount_note || ''),
       tx.event_id || null,
       tx.foreign_amounts && Object.keys(tx.foreign_amounts).length ? JSON.stringify(tx.foreign_amounts) : '',
       tx.split_group_id || '',
@@ -587,15 +622,16 @@ export function getCalendarEvents(db, opts = {}) {
 
 export function getCalendarEventsInRange(db, dateFrom, dateTo) {
   if (!db) return [];
-  // date_from이 비어있지 않고, 기간이 겹치는 이벤트
+  // date_from이 비어있지 않고, 기간이 겹치는 이벤트.
+  // 종료일이 없으면 하루짜리, 예전에 시작·종료가 뒤바뀌어 저장된 일정은 두 날짜 중 앞·뒤로 본다.
   const res = db.exec(
     `SELECT * FROM calendar_events
      WHERE is_hidden = 0
        AND date_from != ''
-       AND date_from <= ?
-       AND (date_to >= ? OR (date_to = '' AND date_from >= ?))
+       AND MIN(date_from, COALESCE(NULLIF(date_to, ''), date_from)) <= ?
+       AND MAX(date_from, COALESCE(NULLIF(date_to, ''), date_from)) >= ?
      ORDER BY date_from, id`,
-    [dateTo, dateFrom, dateFrom]
+    [dateTo, dateFrom]
   );
   if (!res.length) return [];
   const { columns, values } = res[0];
@@ -633,8 +669,17 @@ export function getEventCountries(db, eventId) {
     ({ id, country, currency, exchange_rate: Number(exchange_rate) || 0, sort_order }));
 }
 
+/** 일정 날짜 검증 — 종료일만 있거나 종료일이 시작일보다 빠르면 달력에 나타나지 않으므로 막는다 */
+function validateEventDates(ev) {
+  const from = ev.date_from || '';
+  const to = ev.date_to || '';
+  if (to && !from) throw new Error('종료일이 있으면 시작일도 입력하세요');
+  if (from && to && to < from) throw new Error('종료일이 시작일보다 빠릅니다');
+}
+
 export function addCalendarEvent(db, ev) {
   if (!db || !ev.title?.trim()) throw new Error('제목을 입력하세요');
+  validateEventDates(ev);
   const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM calendar_events');
   const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
   db.run(
@@ -649,6 +694,7 @@ export function addCalendarEvent(db, ev) {
 
 export function updateCalendarEvent(db, id, ev) {
   if (!db || !ev.title?.trim()) throw new Error('제목을 입력하세요');
+  validateEventDates(ev);
   db.run(
     `UPDATE calendar_events SET title=?, date_from=?, date_to=?, event_type=?, color=?, note=?, is_hidden=?
      WHERE id=?`,
@@ -657,10 +703,37 @@ export function updateCalendarEvent(db, id, ev) {
   );
 }
 
+/**
+ * 일정을 지우면 함께 바뀌는 것 — 삭제 확인 문구용.
+ *  txCount: 일정 연결만 풀리고 남는 거래 수
+ *  flowCount: 같이 지워지는 환전·정산 기록 수 (accountFlowCount: 그중 계좌 입출금으로도 기록된 것)
+ */
+export function getCalendarEventLinkCounts(db, id) {
+  if (!db || !id) return { txCount: 0, flowCount: 0, accountFlowCount: 0 };
+  const one = (sql) => Number(db.exec(sql, [id])[0]?.values[0][0]) || 0;
+  return {
+    txCount: one('SELECT COUNT(*) FROM transactions WHERE event_id = ?'),
+    flowCount: one('SELECT COUNT(*) FROM event_cash_flows WHERE event_id = ?'),
+    // addEventCashFlow는 계좌를 지정하고 원화 금액이 있을 때만 계좌 내역을 만든다
+    accountFlowCount: one(`SELECT COUNT(*) FROM event_cash_flows
+      WHERE event_id = ? AND account_id IS NOT NULL AND COALESCE(krw_cost, 0) != 0`),
+  };
+}
+
+/**
+ * 일정 삭제 — 국가·환율과 환전·정산 기록(event_cash_flows)은 함께 지우고,
+ * 연결된 거래는 남긴 채 일정 연결만 푼다. 계좌 입출금 내역(account_transactions)은 실제 돈의 이동이라 그대로 둔다.
+ */
 export function deleteCalendarEvent(db, id) {
-  db.run('DELETE FROM event_countries WHERE event_id = ?', [id]);
-  db.run('UPDATE transactions SET event_id = NULL WHERE event_id = ?', [id]);
-  db.run('DELETE FROM calendar_events WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    db.run('DELETE FROM event_countries WHERE event_id = ?', [id]);
+    // 다른 일정에 남는 이월 짝은 실제로 옮긴 현금이라 지우지 않고, 연결만 끊는다
+    db.run(`UPDATE event_cash_flows SET linked_flow_id = NULL
+            WHERE event_id != ? AND linked_flow_id IN (SELECT id FROM event_cash_flows WHERE event_id = ?)`, [id, id]);
+    db.run('DELETE FROM event_cash_flows WHERE event_id = ?', [id]);
+    db.run('UPDATE transactions SET event_id = NULL WHERE event_id = ?', [id]);
+    db.run('DELETE FROM calendar_events WHERE id = ?', [id]);
+  });
 }
 
 export function addEventCountry(db, eventId, country, currency, exchangeRate = 0) {
@@ -705,45 +778,150 @@ export function getEventCashFlows(db, eventId) {
     ({ id, event_id, date, type, currency, amount: Number(amount), krw_cost: Number(krw_cost) || 0, account_id, note }));
 }
 
+const lastInsertId = (db) => db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+
+/** 결과가 정확히 한 행일 때만 그 id — 예전 기록의 짝을 추정할 때 애매하면 건드리지 않는다 */
+function uniqueRowId(db, sql, params) {
+  const rows = db.exec(sql, params)[0]?.values || [];
+  return rows.length === 1 ? rows[0][0] : null;
+}
+
+const CASH_FLOW_ACCOUNT_CATEGORY = '여행 현금';
+
 export function addEventCashFlow(db, flow) {
   if (!db || !flow.event_id) throw new Error('일정을 선택하세요');
   const currency = (flow.currency || KRW).trim().toUpperCase();
   const amount = Number(flow.amount);
   if (!isFinite(amount) || amount === 0) throw new Error('금액을 입력하세요');
+  const krwCost = Math.round(Number(flow.krw_cost) || 0);
 
-  db.run(
-    `INSERT INTO event_cash_flows (event_id, date, type, currency, amount, krw_cost, account_id, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [flow.event_id, flow.date, flow.type || 'exchange', currency, amount,
-     Math.round(Number(flow.krw_cost) || 0), flow.account_id || null, flow.note || '']
-  );
-  const id = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
-
-  // 계좌를 지정했으면 계좌 잔액에도 반영 (출금=지출 / 입금=수입)
-  if (flow.account_id) {
-    const krw = Math.abs(Math.round(Number(flow.krw_cost) || 0));
-    if (krw > 0) {
+  return withTransaction(db, () => {
+    // 계좌를 지정했으면 계좌 잔액에도 반영 (출금=지출 / 입금=수입).
+    // 흐름을 지울 때 같이 지우도록 계좌 기록 id를 흐름에 남긴다.
+    let accountTxId = null;
+    if (flow.account_id && krwCost !== 0) {
       addAccountTransaction(db, {
         account_id: flow.account_id,
         date: flow.date,
         type: amount > 0 ? 'expense' : 'income',
-        category: '여행 현금',
+        category: CASH_FLOW_ACCOUNT_CATEGORY,
         description: flow.note || (amount > 0 ? `${currency} 환전/출금` : `${currency} 재환전/입금`),
-        amount: krw,
+        amount: Math.abs(krwCost),
       });
+      accountTxId = lastInsertId(db);
     }
-  }
 
-  syncEventRateFromFlows(db, flow.event_id, currency);
-  return id;
+    db.run(
+      `INSERT INTO event_cash_flows
+         (event_id, date, type, currency, amount, krw_cost, account_id, note, account_tx_id, linked_flow_id, linked_tx_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [flow.event_id, flow.date, flow.type || 'exchange', currency, amount,
+       krwCost, flow.account_id || null, flow.note || '',
+       accountTxId, flow.linked_flow_id || null, flow.linked_tx_id || null]
+    );
+    const id = lastInsertId(db);
+
+    syncEventRateFromFlows(db, flow.event_id, currency);
+    return id;
+  });
 }
 
+/**
+ * 현금 흐름 하나를 지울 때 함께 정리할 기록 — 삭제 확인 문구와 deleteEventCashFlow가 같이 쓴다.
+ *  accountTx : 이 흐름으로 만든 계좌 출금/입금 기록
+ *  pairFlow  : 이월의 짝 (다른 일정의 '이월 들어옴'/'이월 나감')
+ *  fxTx      : 재환전 때 기록한 환차손익 거래
+ *  accountTxMissing : 계좌에 반영된 흐름인데 그 기록을 찾지 못함 (직접 지워야 함)
+ * 연결 id가 없는 예전 기록은 같은 날짜·금액으로 짝을 찾되, 후보가 하나일 때만 연결로 본다.
+ */
+export function getCashFlowLinks(db, id) {
+  if (!db || !id) return null;
+  const flow = dbRowsToObjects(db.exec('SELECT * FROM event_cash_flows WHERE id = ?', [id]))[0];
+  if (!flow) return null;
+  const cur = String(flow.currency || '').trim().toUpperCase();
+  const amount = Number(flow.amount) || 0;
+  const krw = Math.abs(Math.round(Number(flow.krw_cost) || 0));
+
+  // 계좌 기록
+  let accountTxId = flow.account_tx_id || null;
+  if (!accountTxId && flow.account_id && krw > 0) {
+    accountTxId = db.exec(
+      `SELECT id FROM account_transactions
+       WHERE account_id = ? AND date = ? AND category = ? AND amount = ? AND type = ?
+         AND id NOT IN (SELECT account_tx_id FROM event_cash_flows WHERE account_tx_id IS NOT NULL)
+       ORDER BY id DESC LIMIT 1`,
+      [flow.account_id, flow.date, CASH_FLOW_ACCOUNT_CATEGORY, krw, amount > 0 ? 'expense' : 'income']
+    )[0]?.values[0]?.[0] || null;
+  }
+  const accountTx = accountTxId ? dbRowsToObjects(db.exec(
+    `SELECT t.id, t.amount, t.type, a.name AS account_name
+     FROM account_transactions t LEFT JOIN accounts a ON a.id = t.account_id WHERE t.id = ?`,
+    [accountTxId]
+  ))[0] || null : null;
+
+  // 이월의 짝
+  let pairId = flow.linked_flow_id || null;
+  if (!pairId && (flow.type === 'carryover_out' || flow.type === 'carryover_in')) {
+    pairId = uniqueRowId(db,
+      `SELECT id FROM event_cash_flows
+       WHERE type = ? AND date = ? AND UPPER(currency) = ? AND ABS(amount + ?) < 0.005
+         AND event_id != ? AND linked_flow_id IS NULL`,
+      [flow.type === 'carryover_out' ? 'carryover_in' : 'carryover_out', flow.date, cur, amount, flow.event_id]);
+  }
+  const pairFlow = pairId ? dbRowsToObjects(db.exec(
+    `SELECT f.*, e.title AS event_title
+     FROM event_cash_flows f LEFT JOIN calendar_events e ON e.id = f.event_id WHERE f.id = ?`,
+    [pairId]
+  ))[0] || null : null;
+
+  // 재환전의 환차손익 거래 — 예전 기록은 그날 이 일정의 외화 재환전이 하나뿐일 때만 추정한다
+  let fxTxId = flow.linked_tx_id || null;
+  if (!fxTxId && flow.type === 'refund' && cur !== KRW) {
+    const sameDayRefunds = Number(db.exec(
+      `SELECT COUNT(*) FROM event_cash_flows
+       WHERE event_id = ? AND date = ? AND type = 'refund' AND UPPER(currency) != ?`,
+      [flow.event_id, flow.date, KRW]
+    )[0]?.values[0][0]) || 0;
+    if (sameDayRefunds === 1) {
+      fxTxId = uniqueRowId(db,
+        `SELECT id FROM transactions
+         WHERE event_id = ? AND date = ? AND COALESCE(is_cash_adjustment, 0) = 1
+           AND detail IN ('환전 차손', '환전 차익')
+           AND id NOT IN (SELECT linked_tx_id FROM event_cash_flows WHERE linked_tx_id IS NOT NULL)`,
+        [flow.event_id, flow.date]);
+    }
+  }
+  const fxTx = fxTxId ? dbRowsToObjects(db.exec(
+    'SELECT id, detail, amount, discount_amount FROM transactions WHERE id = ?', [fxTxId]
+  ))[0] || null : null;
+
+  return {
+    flow,
+    accountTx,
+    accountTxMissing: !!flow.account_id && krw > 0 && !accountTx,
+    pairFlow,
+    fxTx,
+  };
+}
+
+/** 현금 흐름 삭제 — 함께 만든 계좌 기록·이월 짝·환차손익 거래도 지운다. 지운 내용을 돌려준다. */
 export function deleteEventCashFlow(db, id) {
-  if (!db) return;
-  const res = db.exec('SELECT event_id, currency FROM event_cash_flows WHERE id = ?', [id]);
-  const row = res[0]?.values[0];
-  db.run('DELETE FROM event_cash_flows WHERE id = ?', [id]);
-  if (row) syncEventRateFromFlows(db, row[0], row[1]);
+  if (!db) return null;
+  const links = getCashFlowLinks(db, id);
+  if (!links) return null;
+
+  withTransaction(db, () => {
+    if (links.accountTx) deleteAccountTransaction(db, links.accountTx.id);
+    if (links.fxTx) deleteTransaction(db, links.fxTx.id);
+    if (links.pairFlow) {
+      if (links.pairFlow.account_tx_id) deleteAccountTransaction(db, links.pairFlow.account_tx_id);
+      db.run('DELETE FROM event_cash_flows WHERE id = ?', [links.pairFlow.id]);
+      syncEventRateFromFlows(db, links.pairFlow.event_id, links.pairFlow.currency);
+    }
+    db.run('DELETE FROM event_cash_flows WHERE id = ?', [id]);
+    syncEventRateFromFlows(db, links.flow.event_id, links.flow.currency);
+  });
+  return links;
 }
 
 /**
@@ -886,8 +1064,10 @@ export function getEventCashLedger(db, eventId) {
     }));
   });
 
+  // 같은 날짜면 흐름 먼저. 같은 종류끼리는 0을 돌려 원래 순서(id 순)를 유지한다 (sort는 안정 정렬)
+  const kindOrder = r => (r.kind === 'flow' ? 0 : 1);
   return rows.sort((a, b) =>
-    a.date.localeCompare(b.date) || (a.kind === 'flow' ? -1 : 1));
+    a.date.localeCompare(b.date) || kindOrder(a) - kindOrder(b));
 }
 
 /** 환전 기록에서 실효 환율을 구해 event_countries.exchange_rate에 반영한다. */
@@ -914,16 +1094,30 @@ function walletOf(db, eventId, currency) {
   return getEventWallets(db, eventId).find(w => w.currency === cur) || null;
 }
 
+/**
+ * 지갑의 원가 환율 — 평균 취득 환율, 없으면 일정에 설정된 환율 (원화는 1, 모르면 0).
+ * 화면(종료 처리의 취득 원가·환차손익 표시)도 이 값을 써야 DB 계산과 어긋나지 않는다.
+ */
+export function getWalletRate(db, eventId, wallet) {
+  if (!wallet) return 0;
+  if (wallet.currency === KRW) return 1;
+  if (wallet.avgRate) return wallet.avgRate;
+  const c = getEventCountries(db, eventId)
+    .find(x => String(x.currency).trim().toUpperCase() === wallet.currency);
+  return c?.exchange_rate || 0;
+}
+
 /** 지갑의 현지 금액을 원화로 환산한다. 평균 환율이 없으면 일정에 설정된 환율을 쓴다. */
 function walletKrw(db, eventId, wallet, foreignAmount) {
-  if (wallet.currency === KRW) return Math.round(foreignAmount);
-  let rate = wallet.avgRate;
-  if (!rate) {
-    const c = getEventCountries(db, eventId)
-      .find(x => String(x.currency).trim().toUpperCase() === wallet.currency);
-    rate = c?.exchange_rate || 0;
+  return Math.round(foreignAmount * getWalletRate(db, eventId, wallet));
+}
+
+/** 가계부에 거래를 만들 때의 분류 검사 — 세부카테고리가 있는 카테고리면 세부카테고리도 필수 */
+function requireCategory(db, budgetCategory, subCategory, what) {
+  if (!budgetCategory) throw new Error(`${what} 카테고리를 선택하세요`);
+  if (!subCategory && getSubCategories(db, budgetCategory).length > 0) {
+    throw new Error(`${what} 세부카테고리를 선택하세요`);
   }
-  return Math.round(foreignAmount * rate);
 }
 
 /**
@@ -945,6 +1139,7 @@ export function reconcileEventWallet(db, opts) {
   const date = opts.date || todayLocal();
 
   if (opts.mode === 'expense' && diff < 0) {
+    requireCategory(db, opts.budget_category, opts.sub_category, '지출로 기록할');
     const missing = -diff;
     addTransaction(db, {
       payment_method: '현금',
@@ -986,6 +1181,11 @@ export function closeEventWallet(db, opts) {
   const balance = Number(wallet.balance.toFixed(2));
   if (Math.abs(balance) < 0.005) return { closed: false };
 
+  // 잔액이 음수면 환전 기록이 빠진 것 — 재환전·이월하면 가짜 환차익·빚 이월이 생긴다
+  if (balance < 0 && opts.mode !== 'writeoff') {
+    throw new Error('잔액이 음수인 지갑은 재환전·이월할 수 없습니다. 빠진 환전 기록을 추가하거나 "지갑에서 비우기"를 쓰세요.');
+  }
+
   const date = opts.date || todayLocal();
 
   if (opts.mode === 'carryover') {
@@ -993,52 +1193,64 @@ export function closeEventWallet(db, opts) {
     const srcTitle = db.exec('SELECT title FROM calendar_events WHERE id = ?', [opts.event_id])[0]?.values[0][0] || '';
     const dstTitle = db.exec('SELECT title FROM calendar_events WHERE id = ?', [opts.target_event_id])[0]?.values[0][0] || '';
 
-    addEventCashFlow(db, {
-      event_id: opts.event_id, date, type: 'carryover_out', currency: cur,
-      amount: -balance, krw_cost: 0, note: `${dstTitle}(으)로 이월`,
-    });
+    return withTransaction(db, () => {
+      const outId = addEventCashFlow(db, {
+        event_id: opts.event_id, date, type: 'carryover_out', currency: cur,
+        amount: -balance, krw_cost: 0, note: `${dstTitle}(으)로 이월`,
+      });
 
-    // 이월 대상에 해당 통화가 없으면 만들어 줘야 환율이 따라간다
-    const hasCountry = getEventCountries(db, opts.target_event_id)
-      .some(c => String(c.currency).trim().toUpperCase() === cur);
-    if (!hasCountry && cur !== KRW) {
-      addEventCountry(db, opts.target_event_id, wallet.country || cur, cur, wallet.avgRate || 0);
-    }
+      // 이월 대상에 해당 통화가 없으면 만들어 줘야 환율이 따라간다
+      const hasCountry = getEventCountries(db, opts.target_event_id)
+        .some(c => String(c.currency).trim().toUpperCase() === cur);
+      if (!hasCountry && cur !== KRW) {
+        addEventCountry(db, opts.target_event_id, wallet.country || cur, cur, wallet.avgRate || 0);
+      }
 
-    addEventCashFlow(db, {
-      event_id: opts.target_event_id, date, type: 'carryover_in', currency: cur,
-      amount: balance, krw_cost: walletKrw(db, opts.event_id, wallet, balance),
-      note: `${srcTitle}에서 이월`,
+      // 나감 ↔ 들어옴을 서로 연결해 두어, 한쪽을 지우면 짝도 함께 지운다
+      const inId = addEventCashFlow(db, {
+        event_id: opts.target_event_id, date, type: 'carryover_in', currency: cur,
+        amount: balance, krw_cost: walletKrw(db, opts.event_id, wallet, balance),
+        note: `${srcTitle}에서 이월`, linked_flow_id: outId,
+      });
+      db.run('UPDATE event_cash_flows SET linked_flow_id = ? WHERE id = ?', [inId, outId]);
+      return { closed: true, mode: 'carryover', balance };
     });
-    return { closed: true, mode: 'carryover', balance };
   }
 
   if (opts.mode === 'refund') {
     const received = Math.round(Number(opts.received_krw) || 0);
-    addEventCashFlow(db, {
-      event_id: opts.event_id, date, type: 'refund', currency: cur,
-      amount: -balance, krw_cost: received, account_id: opts.account_id || null,
-      note: opts.note || (cur === KRW ? '현금 입금' : '재환전 후 입금'),
-    });
 
-    // 취득 원가 대비 실제로 회수한 금액의 차이 = 환차손익
+    // 취득 원가 대비 실제로 회수한 금액의 차이 = 환차손익.
+    // 원가를 모르면(환율 없음) 차이를 계산할 수 없으므로 기록하지 않는다.
     const basis = walletKrw(db, opts.event_id, wallet, balance);
-    const fx = received - basis;
+    const fx = basis > 0 ? received - basis : 0;
+    const recordFx = !!opts.record_fx && fx !== 0 && cur !== KRW;
+    if (recordFx) requireCategory(db, opts.budget_category, opts.sub_category, '환차손익을 기록할');
 
-    if (opts.record_fx && fx !== 0 && cur !== KRW) {
-      addTransaction(db, {
-        payment_method: '현금',
-        date,
-        budget_category: opts.budget_category || '',
-        sub_category: opts.sub_category || '',
-        detail: fx < 0 ? '환전 차손' : '환전 차익',
-        amount: fx < 0 ? -fx : 0,
-        discount_amount: fx > 0 ? fx : 0,
-        event_id: opts.event_id,
-        is_cash_adjustment: 1,
+    return withTransaction(db, () => {
+      const flowId = addEventCashFlow(db, {
+        event_id: opts.event_id, date, type: 'refund', currency: cur,
+        amount: -balance, krw_cost: received, account_id: opts.account_id || null,
+        note: opts.note || (cur === KRW ? '현금 입금' : '재환전 후 입금'),
       });
-    }
-    return { closed: true, mode: 'refund', balance, basis, fx };
+
+      if (recordFx) {
+        const txId = addTransaction(db, {
+          payment_method: '현금',
+          date,
+          budget_category: opts.budget_category,
+          sub_category: opts.sub_category || '',
+          detail: fx < 0 ? '환전 차손' : '환전 차익',
+          amount: fx < 0 ? -fx : 0,
+          discount_amount: fx > 0 ? fx : 0,
+          event_id: opts.event_id,
+          is_cash_adjustment: 1,
+        });
+        // 재환전 기록을 지우면 이 환차손익 거래도 함께 지운다
+        db.run('UPDATE event_cash_flows SET linked_tx_id = ? WHERE id = ?', [txId, flowId]);
+      }
+      return { closed: true, mode: 'refund', balance, basis, fx, recordedFx: recordFx };
+    });
   }
 
   addEventCashFlow(db, {
@@ -1090,15 +1302,22 @@ export function deleteCalendarEventType(db, id) {
   db.run('DELETE FROM calendar_event_types WHERE id = ?', [id]);
 }
 
+/**
+ * 일정 유형을 targetIndex로 옮긴다 (B-026).
+ * targetIndex는 옮기는 유형을 뺀 목록 기준이다 (moveItemToPosition·reorderFavorite와 같은 규칙).
+ */
 export function moveCalendarEventType(db, id, targetIndex) {
   const all = getCalendarEventTypes(db);
   const fromIdx = all.findIndex(t => t.id === id);
   if (fromIdx === -1) return;
   const reordered = [...all];
   const [moved] = reordered.splice(fromIdx, 1);
-  reordered.splice(targetIndex, 0, moved);
-  reordered.forEach((t, i) => {
-    db.run('UPDATE calendar_event_types SET sort_order=? WHERE id=?', [i, t.id]);
+  const clamped = Math.max(0, Math.min(targetIndex, reordered.length));
+  reordered.splice(clamped, 0, moved);
+  withTransaction(db, () => {
+    reordered.forEach((t, i) => {
+      db.run('UPDATE calendar_event_types SET sort_order=? WHERE id=?', [i, t.id]);
+    });
   });
 }
 
@@ -1185,7 +1404,12 @@ export function getEventDetailSummary(db, eventId) {
   return subOrder.map(k => subMap[k]).sort((a, b) => b.total - a.total);
 }
 
-export function getEventPaymentMethodSummary(db, eventId = null) {
+/**
+ * 일정에 연결된 거래의 결제수단별 합계.
+ *  - eventId가 있으면 그 일정만 (event_type은 '')
+ *  - 없으면 결제수단 × 일정 유형별 소계. eventType을 주면 그 유형의 일정만 (요약 화면의 유형 필터)
+ */
+export function getEventPaymentMethodSummary(db, eventId = null, eventType = null) {
   if (!db) return [];
   let q, params;
   if (eventId) {
@@ -1199,52 +1423,54 @@ export function getEventPaymentMethodSummary(db, eventId = null) {
                 SUM(t.amount) as total, SUM(t.discount_amount) as discount, COUNT(*) as cnt
          FROM transactions t
          JOIN calendar_events ce ON t.event_id = ce.id
-         WHERE t.event_id IS NOT NULL
+         WHERE t.event_id IS NOT NULL${eventType ? ' AND ce.event_type = ?' : ''}
          GROUP BY t.payment_method, ce.event_type
          ORDER BY t.payment_method, total DESC`;
-    params = [];
+    params = eventType ? [eventType] : [];
   }
-  const res = db.exec(q, params);
-  if (!res.length) return [];
-  const { columns, values } = res[0];
-  return values.map(row => { const o = {}; columns.forEach((c, i) => o[c] = row[i]); return o; });
+  return dbRowsToObjects(db.exec(q, params));
+}
+
+// ── 기간별 요약 (월·연·기간 × 카테고리·세부카테고리·결제수단) ──────────────
+// 아래 9개 함수는 기간 조건과 묶는 기준만 다르다. 쿼리는 summarizeTransactions 한 곳에서 만든다.
+
+const SUMMARY_GROUP_COLUMNS = ['budget_category', 'sub_category', 'payment_method'];
+
+/** 기간 조건 — { month } | { year } | { from, to }. month가 비어 있으면 전체 기간 (연·기간은 항상 적용) */
+function summaryPeriod(period) {
+  if ('month' in period) {
+    return period.month ? { conds: ["strftime('%Y-%m', date) = ?"], params: [period.month] } : { conds: [], params: [] };
+  }
+  if ('year' in period) return { conds: ["strftime('%Y', date) = ?"], params: [period.year] };
+  return { conds: ['date >= ?', 'date <= ?'], params: [period.from, period.to] };
+}
+
+/**
+ * 거래를 groupBy 열로 묶은 합계: [{ [groupBy], total, discount, cnt }] (total 내림차순).
+ * 세부카테고리 요약은 항상 budgetCategory 한 카테고리 안에서 묶는다 (드릴다운).
+ */
+function summarizeTransactions(db, groupBy, period, budgetCategory) {
+  if (!SUMMARY_GROUP_COLUMNS.includes(groupBy)) throw new Error(`알 수 없는 요약 기준: ${groupBy}`);
+  const { conds, params } = summaryPeriod(period);
+  if (groupBy === 'sub_category') {
+    conds.push('budget_category = ?');
+    params.push(budgetCategory);
+  }
+  const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
+  return dbRowsToObjects(db.exec(
+    `SELECT ${groupBy}, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
+     FROM transactions${where}
+     GROUP BY ${groupBy} ORDER BY total DESC`,
+    params
+  ));
 }
 
 export function getMonthlySummary(db, month) {
-  const query = month
-    ? `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions WHERE strftime('%Y-%m', date) = ?
-       GROUP BY budget_category ORDER BY total DESC`
-    : `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions GROUP BY budget_category ORDER BY total DESC`;
-
-  const result = db.exec(query, month ? [month] : []);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'budget_category', { month });
 }
 
 export function getMonthlySubCategorySummary(db, month, budgetCategory) {
-  const query = month
-    ? `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions WHERE strftime('%Y-%m', date) = ? AND budget_category = ?
-       GROUP BY sub_category ORDER BY total DESC`
-    : `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions WHERE budget_category = ?
-       GROUP BY sub_category ORDER BY total DESC`;
-  const params = month ? [month, budgetCategory] : [budgetCategory];
-  const result = db.exec(query, params);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'sub_category', { month }, budgetCategory);
 }
 
 export function getMonthlyTotals(db, limit = 24) {
@@ -1273,21 +1499,7 @@ export function getMonthlyTotals(db, limit = 24) {
 }
 
 export function getPaymentMethodSummary(db, month) {
-  const query = month
-    ? `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions WHERE strftime('%Y-%m', date) = ?
-       GROUP BY payment_method ORDER BY total DESC`
-    : `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-       FROM transactions GROUP BY payment_method ORDER BY total DESC`;
-
-  const result = db.exec(query, month ? [month] : []);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'payment_method', { month });
 }
 
 export function getAvailableYears(db) {
@@ -1298,180 +1510,27 @@ export function getAvailableYears(db) {
 }
 
 export function getYearlySummary(db, year) {
-  const query = `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE strftime('%Y', date) = ?
-                 GROUP BY budget_category ORDER BY total DESC`;
-  const result = db.exec(query, [year]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'budget_category', { year });
 }
 
 export function getYearlySubCategorySummary(db, year, budgetCategory) {
-  const query = `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE strftime('%Y', date) = ? AND budget_category = ?
-                 GROUP BY sub_category ORDER BY total DESC`;
-  const result = db.exec(query, [year, budgetCategory]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'sub_category', { year }, budgetCategory);
 }
 
 export function getYearlyPaymentMethodSummary(db, year) {
-  const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE strftime('%Y', date) = ?
-                 GROUP BY payment_method ORDER BY total DESC`;
-  const result = db.exec(query, [year]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'payment_method', { year });
 }
 
 export function getRangeSummary(db, dateFrom, dateTo) {
-  const query = `SELECT budget_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE date >= ? AND date <= ?
-                 GROUP BY budget_category ORDER BY total DESC`;
-  const result = db.exec(query, [dateFrom, dateTo]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'budget_category', { from: dateFrom, to: dateTo });
 }
 
 export function getRangeSubCategorySummary(db, dateFrom, dateTo, budgetCategory) {
-  const query = `SELECT sub_category, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE date >= ? AND date <= ? AND budget_category = ?
-                 GROUP BY sub_category ORDER BY total DESC`;
-  const result = db.exec(query, [dateFrom, dateTo, budgetCategory]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'sub_category', { from: dateFrom, to: dateTo }, budgetCategory);
 }
 
 export function getRangePaymentMethodSummary(db, dateFrom, dateTo) {
-  const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE date >= ? AND date <= ?
-                 GROUP BY payment_method ORDER BY total DESC`;
-  const result = db.exec(query, [dateFrom, dateTo]);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
-}
-
-export function getTripSummary(db) {
-  const query = `
-    SELECT tr.id as trip_id, tr.name as trip_name, tr.schedule as trip_schedule,
-           t.amount, t.discount_amount, t.foreign_amounts
-    FROM transactions t
-    JOIN trips tr ON t.trip_id = tr.id
-    WHERE t.trip_id IS NOT NULL
-    ORDER BY tr.sort_order, tr.id
-  `;
-
-  const result = db.exec(query);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-
-  const tripMap = {};
-  const tripOrder = [];
-  values.forEach(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-
-    const key = obj.trip_id;
-    if (!tripMap[key]) {
-      tripMap[key] = { trip_id: obj.trip_id, trip_name: obj.trip_name, trip_schedule: obj.trip_schedule || '', total: 0, discount: 0, cnt: 0, foreignTotals: {} };
-      tripOrder.push(key);
-    }
-    const trip = tripMap[key];
-    trip.total += obj.amount || 0;
-    trip.discount += obj.discount_amount || 0;
-    trip.cnt += 1;
-
-    if (obj.foreign_amounts) {
-      try {
-        const fa = JSON.parse(obj.foreign_amounts);
-        Object.entries(fa).forEach(([currency, amount]) => {
-          trip.foreignTotals[currency] = (trip.foreignTotals[currency] || 0) + Number(amount);
-        });
-      } catch (e) {}
-    }
-  });
-
-  return tripOrder.map(k => tripMap[k]).sort((a, b) => b.total - a.total);
-}
-
-export function getTripDetailSummary(db, tripId) {
-  const result = db.exec(
-    'SELECT sub_category, amount, discount_amount, foreign_amounts FROM transactions WHERE trip_id = ?',
-    [tripId]
-  );
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-
-  const subMap = {};
-  const subOrder = [];
-  values.forEach(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    const key = obj.sub_category || '(미분류)';
-    if (!subMap[key]) {
-      subMap[key] = { sub_category: key, total: 0, discount: 0, cnt: 0, foreignTotals: {} };
-      subOrder.push(key);
-    }
-    const sub = subMap[key];
-    sub.total += obj.amount || 0;
-    sub.discount += obj.discount_amount || 0;
-    sub.cnt += 1;
-    if (obj.foreign_amounts) {
-      try {
-        const fa = JSON.parse(obj.foreign_amounts);
-        Object.entries(fa).forEach(([currency, amount]) => {
-          sub.foreignTotals[currency] = (sub.foreignTotals[currency] || 0) + Number(amount);
-        });
-      } catch (e) {}
-    }
-  });
-  return subOrder.map(k => subMap[k]).sort((a, b) => b.total - a.total);
-}
-
-export function getTripPaymentMethodSummary(db, tripId = null) {
-  const where = tripId ? 'trip_id = ?' : 'trip_id IS NOT NULL';
-  const params = tripId ? [tripId] : [];
-  const query = `SELECT payment_method, SUM(amount) as total, SUM(discount_amount) as discount, COUNT(*) as cnt
-                 FROM transactions WHERE ${where}
-                 GROUP BY payment_method ORDER BY total DESC`;
-  const result = db.exec(query, params);
-  if (!result.length) return [];
-  const { columns, values } = result[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
+  return summarizeTransactions(db, 'payment_method', { from: dateFrom, to: dateTo });
 }
 
 // ── 마스터 데이터 편집 (설정용) ──────────────────────────
@@ -1557,43 +1616,45 @@ export function reorderMasterItem(db, table, id, direction) {
   db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [currentOrder, neighborId]);
 }
 
-export function moveItemToPosition(db, table, id, newIndex, budgetCategory = null) {
+/**
+ * 항목을 같은 그룹(표시/숨김) 안의 newIndex 위치로 옮긴다.
+ * newIndex는 옮기는 항목을 뺀 그룹 목록 기준이다.
+ * 표시 → 숨김 순으로 전체를 1..n으로 다시 번호 매겨, 두 그룹의 sort_order가 겹치지 않게 한다 (B-027).
+ * 정렬 기준(is_hidden, sort_order, name, id)은 설정 화면의 표시 순서와 같다.
+ * sub_categories는 그 항목이 속한 대분류 안에서만 움직인다.
+ */
+export function moveItemToPosition(db, table, id, newIndex) {
   const allowed = ['payment_methods', 'budget_categories', 'sub_categories'];
   if (!allowed.includes(table)) throw new Error('Invalid table name');
 
-  let hiddenRes;
-  if (table === 'sub_categories') {
-    hiddenRes = db.exec('SELECT is_hidden FROM sub_categories WHERE id = ?', [id]);
-  } else {
-    hiddenRes = db.exec(`SELECT is_hidden FROM ${table} WHERE id = ?`, [id]);
-  }
-  if (!hiddenRes.length || !hiddenRes[0].values.length) return;
-  const isHidden = hiddenRes[0].values[0][0];
+  const isSub = table === 'sub_categories';
+  const rowRes = db.exec(
+    `SELECT is_hidden${isSub ? ', budget_category' : ''} FROM ${table} WHERE id = ?`,
+    [id]
+  );
+  const row = rowRes[0]?.values[0];
+  if (!row) return;
+  const isHidden = row[0] ? 1 : 0;
 
-  let itemsRes;
-  if (table === 'sub_categories' && budgetCategory) {
-    itemsRes = db.exec(
-      'SELECT id FROM sub_categories WHERE is_hidden = ? AND budget_category = ? ORDER BY sort_order',
-      [isHidden, budgetCategory]
-    );
-  } else {
-    itemsRes = db.exec(
-      `SELECT id FROM ${table} WHERE is_hidden = ? ORDER BY sort_order`,
-      [isHidden]
-    );
-  }
-  if (!itemsRes.length) return;
-  const ids = itemsRes[0].values.map(([itemId]) => itemId);
+  const itemsRes = isSub
+    ? db.exec(
+      `SELECT id, COALESCE(is_hidden, 0) FROM sub_categories WHERE budget_category = ?
+       ORDER BY COALESCE(is_hidden, 0), sort_order, name, id`,
+      [row[1]]
+    )
+    : db.exec(`SELECT id, COALESCE(is_hidden, 0) FROM ${table} ORDER BY COALESCE(is_hidden, 0), sort_order, name, id`);
+  const items = itemsRes[0]?.values || [];
 
-  const currentIdx = ids.indexOf(id);
-  if (currentIdx === -1) return;
-  ids.splice(currentIdx, 1);
+  const group = items.filter(([itemId, h]) => (h ? 1 : 0) === isHidden && itemId !== id).map(([itemId]) => itemId);
+  const others = items.filter(([, h]) => (h ? 1 : 0) !== isHidden).map(([itemId]) => itemId);
+  const clamped = Math.max(0, Math.min(newIndex, group.length));
+  group.splice(clamped, 0, id);
+  const ordered = isHidden ? [...others, ...group] : [...group, ...others];
 
-  const clamped = Math.max(0, Math.min(newIndex, ids.length));
-  ids.splice(clamped, 0, id);
-
-  ids.forEach((itemId, i) => {
-    db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [i + 1, itemId]);
+  withTransaction(db, () => {
+    ordered.forEach((itemId, i) => {
+      db.run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, [i + 1, itemId]);
+    });
   });
 }
 
@@ -1624,67 +1685,129 @@ export function addSubCategory(db, budgetCategory, name) {
   db.run('INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [budgetCategory, name.trim(), nextSort]);
 }
 
+// 카테고리·세부카테고리를 이름으로 참조하는 테이블 (이름 변경·삭제 시 함께 고친다)
+const CATEGORY_REF_TABLES = ['transactions', 'recurring_transactions', 'favorite_transactions', 'payment_method_discount_rules'];
+
+function countRows(db, sql, params) {
+  return Number(db.exec(sql, params)[0]?.values[0][0]) || 0;
+}
+
+/** 세부카테고리 이름이 다른 대분류에도 있으면 true (auto_pattern_settings는 세부카테고리 이름만 키로 쓴다) */
+function subCategoryNameUsedElsewhere(db, budgetCategory, name) {
+  return countRows(db, 'SELECT COUNT(*) FROM sub_categories WHERE name = ? AND budget_category != ?', [name, budgetCategory]) > 0;
+}
+
+/**
+ * 대분류 이름 변경 — 거래·정기지출·즐겨찾기·할인규칙·여행 기본 카테고리 설정까지 한 번에 바꾼다 (B-019).
+ */
 export function renameBudgetCategory(db, oldName, newName) {
   if (!newName || !newName.trim()) throw new Error('이름을 입력하세요.');
   const trimmed = newName.trim();
-  const exists = db.exec('SELECT COUNT(*) FROM budget_categories WHERE name = ? AND name != ?', [trimmed, oldName]);
-  if ((exists[0]?.values[0][0] || 0) > 0) throw new Error('이미 같은 이름의 카테고리가 있습니다.');
-  db.run('UPDATE budget_categories SET name = ? WHERE name = ?', [trimmed, oldName]);
-  db.run('UPDATE sub_categories SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
-  db.run('UPDATE transactions SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
+  if (trimmed === oldName) return;
+  if (countRows(db, 'SELECT COUNT(*) FROM budget_categories WHERE name = ?', [trimmed]) > 0) {
+    throw new Error('이미 같은 이름의 카테고리가 있습니다.');
+  }
+  withTransaction(db, () => {
+    db.run('UPDATE budget_categories SET name = ? WHERE name = ?', [trimmed, oldName]);
+    db.run('UPDATE sub_categories SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
+    CATEGORY_REF_TABLES.forEach(table => {
+      db.run(`UPDATE ${table} SET budget_category = ? WHERE budget_category = ?`, [trimmed, oldName]);
+    });
+    db.run("UPDATE settings SET value = ? WHERE key = 'trip_default_category' AND value = ?", [trimmed, oldName]);
+  });
 }
 
+/**
+ * 세부카테고리 이름 변경 — 거래·정기지출·즐겨찾기·할인규칙·자동 결제수단 패턴까지 바꾼다 (B-019).
+ */
 export function renameSubCategory(db, budgetCategory, oldName, newName) {
   if (!newName || !newName.trim()) throw new Error('이름을 입력하세요.');
   const trimmed = newName.trim();
-  const exists = db.exec('SELECT COUNT(*) FROM sub_categories WHERE budget_category = ? AND name = ? AND name != ?', [budgetCategory, trimmed, oldName]);
-  if ((exists[0]?.values[0][0] || 0) > 0) throw new Error('이미 같은 이름의 세부카테고리가 있습니다.');
-  db.run('UPDATE sub_categories SET name = ? WHERE budget_category = ? AND name = ?', [trimmed, budgetCategory, oldName]);
-  db.run('UPDATE transactions SET sub_category = ? WHERE budget_category = ? AND sub_category = ?', [trimmed, budgetCategory, oldName]);
+  if (trimmed === oldName) return;
+  if (countRows(db, 'SELECT COUNT(*) FROM sub_categories WHERE budget_category = ? AND name = ?', [budgetCategory, trimmed]) > 0) {
+    throw new Error('이미 같은 이름의 세부카테고리가 있습니다.');
+  }
+  withTransaction(db, () => {
+    db.run('UPDATE sub_categories SET name = ? WHERE budget_category = ? AND name = ?', [trimmed, budgetCategory, oldName]);
+    CATEGORY_REF_TABLES.forEach(table => {
+      db.run(
+        `UPDATE ${table} SET sub_category = ? WHERE budget_category = ? AND sub_category = ?`,
+        [trimmed, budgetCategory, oldName]
+      );
+    });
+    // 같은 이름의 세부카테고리가 다른 대분류에 없을 때만 패턴 설정을 새 이름으로 옮긴다
+    if (!subCategoryNameUsedElsewhere(db, budgetCategory, oldName)) {
+      db.run(
+        `INSERT OR IGNORE INTO auto_pattern_settings (sub_category, is_disabled)
+         SELECT ?, is_disabled FROM auto_pattern_settings WHERE sub_category = ?`,
+        [trimmed, oldName]
+      );
+      db.run('DELETE FROM auto_pattern_settings WHERE sub_category = ?', [oldName]);
+    }
+  });
 }
 
-export function getSubCategoryTxCount(db, budgetCategory, name) {
-  const res = db.exec(
-    'SELECT COUNT(*) FROM transactions WHERE budget_category = ? AND sub_category = ?',
-    [budgetCategory, name]
+/** 세부카테고리를 쓰는 곳별 건수 { transactions, recurring, favorites, discountRules } */
+export function getSubCategoryUsage(db, budgetCategory, name) {
+  const count = (table) => countRows(
+    db, `SELECT COUNT(*) FROM ${table} WHERE budget_category = ? AND sub_category = ?`, [budgetCategory, name]
   );
-  return res[0]?.values[0][0] || 0;
+  return {
+    transactions: count('transactions'),
+    recurring: count('recurring_transactions'),
+    favorites: count('favorite_transactions'),
+    discountRules: count('payment_method_discount_rules'),
+  };
 }
 
+/**
+ * 세부카테고리 삭제 (B-020).
+ * 거래·정기지출·즐겨찾기의 세부카테고리는 비우고(거래는 이슈 필터에 잡힌다),
+ * 이 세부카테고리 전용 할인규칙은 더 이상 맞는 거래가 없으므로 지운다.
+ */
 export function deleteSubCategory(db, budgetCategory, name) {
-  db.run('DELETE FROM sub_categories WHERE budget_category = ? AND name = ?', [budgetCategory, name]);
+  withTransaction(db, () => {
+    db.run('DELETE FROM sub_categories WHERE budget_category = ? AND name = ?', [budgetCategory, name]);
+    ['transactions', 'recurring_transactions', 'favorite_transactions'].forEach(table => {
+      db.run(
+        `UPDATE ${table} SET sub_category = '' WHERE budget_category = ? AND sub_category = ?`,
+        [budgetCategory, name]
+      );
+    });
+    db.run(
+      'DELETE FROM payment_method_discount_rules WHERE budget_category = ? AND sub_category = ?',
+      [budgetCategory, name]
+    );
+    if (!subCategoryNameUsedElsewhere(db, budgetCategory, name)) {
+      db.run('DELETE FROM auto_pattern_settings WHERE sub_category = ?', [name]);
+    }
+  });
 }
 
-export function getBudgetCategoryTxCount(db, name) {
-  const res = db.exec(
-    'SELECT COUNT(*) FROM transactions WHERE budget_category = ?',
-    [name]
-  );
-  return res[0]?.values[0][0] || 0;
+/** 대분류를 쓰는 곳별 건수 { transactions, recurring, favorites, discountRules } */
+export function getBudgetCategoryUsage(db, name) {
+  const count = (table) => countRows(db, `SELECT COUNT(*) FROM ${table} WHERE budget_category = ?`, [name]);
+  return {
+    transactions: count('transactions'),
+    recurring: count('recurring_transactions'),
+    favorites: count('favorite_transactions'),
+    discountRules: count('payment_method_discount_rules'),
+  };
 }
 
+/**
+ * 대분류 삭제 (B-020) — 어디에서도 쓰지 않을 때만 지운다.
+ * 사용 중이면 이름 변경이나 숨기기를 쓰도록 오류를 낸다.
+ */
 export function deleteBudgetCategory(db, name) {
-  db.run('DELETE FROM sub_categories WHERE budget_category = ?', [name]);
-  db.run('DELETE FROM budget_categories WHERE name = ?', [name]);
-}
-
-export function moveTripCountryToPosition(db, id, tripId, newIndex) {
-  const itemsRes = db.exec(
-    'SELECT id FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
-    [tripId]
-  );
-  if (!itemsRes.length) return;
-  const ids = itemsRes[0].values.map(([itemId]) => itemId);
-
-  const currentIdx = ids.indexOf(id);
-  if (currentIdx === -1) return;
-  ids.splice(currentIdx, 1);
-
-  const clamped = Math.max(0, Math.min(newIndex, ids.length));
-  ids.splice(clamped, 0, id);
-
-  ids.forEach((itemId, i) => {
-    db.run('UPDATE trip_countries SET sort_order = ? WHERE id = ?', [i + 1, itemId]);
+  const usage = getBudgetCategoryUsage(db, name);
+  if (Object.values(usage).some(n => n > 0)) {
+    throw new Error(`"${name}"은(는) 사용 중이라 삭제할 수 없습니다. 이름을 바꾸거나 숨기기를 사용하세요.`);
+  }
+  withTransaction(db, () => {
+    db.run('DELETE FROM sub_categories WHERE budget_category = ?', [name]);
+    db.run('DELETE FROM budget_categories WHERE name = ?', [name]);
+    db.run("UPDATE settings SET value = '' WHERE key = 'trip_default_category' AND value = ?", [name]);
   });
 }
 
@@ -1705,16 +1828,12 @@ export function ensurePaymentMethodsExist(db, txList) {
   });
 }
 
+// 호출부의 withTransaction 안에서도 쓸 수 있도록 SAVEPOINT(withTransaction)로 묶는다
 export function bulkInsertTransactions(db, txList) {
-  db.run('BEGIN');
-  try {
+  withTransaction(db, () => {
     ensurePaymentMethodsExist(db, txList);
     txList.forEach(tx => addTransaction(db, tx));
-    db.run('COMMIT');
-  } catch (e) {
-    db.run('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 export function ensureCategoriesExist(db, categoryNames) {
@@ -1726,6 +1845,7 @@ export function ensureCategoriesExist(db, categoryNames) {
   categoryNames.forEach(name => {
     if (!existing.has(name)) {
       db.run('INSERT INTO budget_categories (name, sort_order) VALUES (?, ?)', [name, nextSort++]);
+      existing.add(name);
     }
   });
 }
@@ -1744,45 +1864,36 @@ export function ensureSubCategoriesExist(db, subcats) {
   });
 }
 
-export function ensureTripsExist(db, trips) {
-  // trips: [{name, schedule}]
-  trips.forEach(({ name, schedule }) => {
-    const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM trips')[0]?.values[0][0] || 0;
-    db.run(
-      'INSERT OR IGNORE INTO trips (name, schedule, sort_order, is_hidden) VALUES (?, ?, ?, 0)',
-      [name, schedule || '', maxSort + 1]
-    );
-  });
-}
-
-export function cleanupHiddenPaymentMethods(db) {
-  // 숨겨진 결제수단 중 데이터에서 사용되지 않는 것들 삭제
-  const result = db.exec(
-    `SELECT id, name FROM payment_methods WHERE is_hidden = 1`
-  );
-  if (!result.length) return;
-
-  result[0].values.forEach(row => {
-    const [id, name] = row;
-    const usageResult = db.exec(
-      'SELECT COUNT(*) FROM transactions WHERE payment_method = ?',
+/**
+ * 결제수단을 쓰는 곳별 건수 (B-021)
+ * { transactions, discountRules, recurring, favorites, accountItems }
+ * accountItems: 계좌 고정항목의 '카드 자동 집계' 결제수단 (삭제된 항목 제외)
+ */
+export function getPaymentMethodUsage(db, name) {
+  return {
+    transactions: countRows(db, 'SELECT COUNT(*) FROM transactions WHERE payment_method = ?', [name]),
+    discountRules: countRows(db, 'SELECT COUNT(*) FROM payment_method_discount_rules WHERE payment_method_name = ?', [name]),
+    recurring: countRows(db, 'SELECT COUNT(*) FROM recurring_transactions WHERE payment_method = ?', [name]),
+    favorites: countRows(db, 'SELECT COUNT(*) FROM favorite_transactions WHERE payment_method = ?', [name]),
+    accountItems: countRows(
+      db,
+      'SELECT COUNT(*) FROM account_recurring_items WHERE auto_payment_method = ? AND COALESCE(is_active, 1) = 1',
       [name]
-    );
-    const count = usageResult[0]?.values[0][0] || 0;
-    if (count === 0) {
-      db.run('DELETE FROM payment_methods WHERE id = ?', [id]);
-    }
-  });
+    ),
+  };
 }
 
-export function setCategoryColor(db, categoryId, color) {
-  db.run('UPDATE budget_categories SET color = ? WHERE id = ?', [color, categoryId]);
-}
-
-export function getCategoryColor(db, categoryName) {
-  const result = db.exec('SELECT color FROM budget_categories WHERE name = ?', [categoryName]);
-  if (!result.length) return '';
-  return result[0].values[0][0] || '';
+/**
+ * 결제수단 삭제 (B-021) — 숨기기와 분리했다. 어디에서도 쓰지 않을 때만 지운다.
+ */
+export function deletePaymentMethod(db, id) {
+  const name = db.exec('SELECT name FROM payment_methods WHERE id = ?', [id])[0]?.values[0]?.[0];
+  if (name === undefined) return;
+  const usage = getPaymentMethodUsage(db, name);
+  if (Object.values(usage).some(n => n > 0)) {
+    throw new Error(`"${name}"은(는) 사용 중이라 삭제할 수 없습니다. 숨기기를 사용하세요.`);
+  }
+  db.run('DELETE FROM payment_methods WHERE id = ?', [id]);
 }
 
 export function getPaymentMethodDiscountRates(db) {
@@ -1795,123 +1906,6 @@ export function getPaymentMethodDiscountRates(db) {
 
 export function setPaymentMethodDiscountRate(db, name, rate) {
   db.run('UPDATE payment_methods SET discount_rate = ? WHERE name = ?', [rate, name]);
-}
-
-
-// ── 여행 ──────────────────────────────────────────────────────────
-
-export function getTrips(db) {
-  const res = db.exec('SELECT id, name, schedule FROM trips WHERE is_hidden = 0 ORDER BY sort_order, id');
-  if (!res.length) return [];
-  return res[0].values.map(([id, name, schedule]) => ({
-    id, name, schedule: schedule || '',
-    countries: getTripCountries(db, id),
-  }));
-}
-
-export function getTripCountries(db, tripId) {
-  const res = db.exec(
-    'SELECT id, country, currency FROM trip_countries WHERE trip_id = ? ORDER BY sort_order, id',
-    [tripId]
-  );
-  if (!res.length) return [];
-  return res[0].values.map(([id, country, currency]) => ({ id, country, currency }));
-}
-
-export function getAllTrips(db) {
-  const res = db.exec('SELECT id, name, schedule, sort_order, is_hidden FROM trips ORDER BY sort_order, id');
-  if (!res.length) return [];
-  const { columns, values } = res[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return obj;
-  });
-}
-
-export function addTrip(db, name, schedule = '') {
-  if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
-  const minSort = db.exec('SELECT COALESCE(MIN(sort_order), 1) FROM trips');
-  const nextSort = (minSort[0]?.values[0][0] || 1) - 1;
-  try {
-    db.run('INSERT INTO trips (name, schedule, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [name.trim(), schedule.trim(), nextSort]);
-  } catch (e) {
-    throw new Error(`"${name.trim()}${schedule.trim() ? ` (${schedule.trim()})` : ''}" 여행이 이미 존재합니다`);
-  }
-}
-
-export function updateTripName(db, id, name, schedule = '') {
-  if (!name || !name.trim()) throw new Error('여행 이름을 입력하세요');
-  try {
-    db.run('UPDATE trips SET name = ?, schedule = ? WHERE id = ?', [name.trim(), schedule.trim(), id]);
-  } catch (e) {
-    throw new Error(`"${name.trim()}${schedule.trim() ? ` (${schedule.trim()})` : ''}" 여행이 이미 존재합니다`);
-  }
-}
-
-export function deleteTrip(db, id) {
-  const res = db.exec('SELECT COUNT(*) FROM transactions WHERE trip_id = ?', [id]);
-  const count = res[0]?.values[0][0] || 0;
-  db.run('UPDATE transactions SET trip_id = NULL WHERE trip_id = ?', [id]);
-  db.run('DELETE FROM trip_countries WHERE trip_id = ?', [id]);
-  db.run('DELETE FROM trips WHERE id = ?', [id]);
-  return count;
-}
-
-export function moveTripToPosition(db, id, newIndex) {
-  const hiddenRes = db.exec('SELECT is_hidden FROM trips WHERE id = ?', [id]);
-  if (!hiddenRes.length || !hiddenRes[0].values.length) return;
-  const isHidden = hiddenRes[0].values[0][0];
-
-  const itemsRes = db.exec('SELECT id FROM trips WHERE is_hidden = ? ORDER BY sort_order', [isHidden]);
-  if (!itemsRes.length) return;
-  const ids = itemsRes[0].values.map(([itemId]) => itemId);
-
-  const currentIdx = ids.indexOf(id);
-  if (currentIdx === -1) return;
-  ids.splice(currentIdx, 1);
-
-  const clamped = Math.max(0, Math.min(newIndex, ids.length));
-  ids.splice(clamped, 0, id);
-
-  ids.forEach((itemId, i) => {
-    db.run('UPDATE trips SET sort_order = ? WHERE id = ?', [i + 1, itemId]);
-  });
-}
-
-export function reorderTrip(db, id, direction) {
-  const currRes = db.exec('SELECT sort_order FROM trips WHERE id = ?', [id]);
-  if (!currRes.length || !currRes[0].values.length) return;
-  const currentOrder = currRes[0].values[0][0];
-  const neighborRes = direction === 'up'
-    ? db.exec('SELECT id, sort_order FROM trips WHERE sort_order < ? ORDER BY sort_order DESC LIMIT 1', [currentOrder])
-    : db.exec('SELECT id, sort_order FROM trips WHERE sort_order > ? ORDER BY sort_order ASC LIMIT 1', [currentOrder]);
-  if (!neighborRes.length || !neighborRes[0].values.length) return;
-  const [neighborId, neighborOrder] = neighborRes[0].values[0];
-  db.run('UPDATE trips SET sort_order = ? WHERE id = ?', [neighborOrder, id]);
-  db.run('UPDATE trips SET sort_order = ? WHERE id = ?', [currentOrder, neighborId]);
-}
-
-export function addTripCountry(db, tripId, country, currency) {
-  if (!currency || !currency.trim()) throw new Error('화폐 단위를 입력하세요');
-  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), 0) FROM trip_countries WHERE trip_id = ?', [tripId]);
-  const nextSort = (maxSort[0]?.values[0][0] || 0) + 1;
-  db.run(
-    'INSERT INTO trip_countries (trip_id, country, currency, sort_order) VALUES (?, ?, ?, ?)',
-    [tripId, country.trim(), currency.trim().toUpperCase(), nextSort]
-  );
-}
-
-export function updateTripCountry(db, id, country, currency) {
-  if (!currency || !currency.trim()) throw new Error('화폐 단위를 입력하세요');
-  db.run(
-    'UPDATE trip_countries SET country = ?, currency = ? WHERE id = ?',
-    [country.trim(), currency.trim().toUpperCase(), id]
-  );
-}
-
-export function deleteTripCountry(db, id) {
-  db.run('DELETE FROM trip_countries WHERE id = ?', [id]);
 }
 
 // ── 결제수단 할인규칙 ────────────────────────────────────────────
@@ -1988,14 +1982,15 @@ export function setSetting(db, key, value) {
 
 /**
  * 여행 유형 일정 선택 시 자동으로 채울 가계부 카테고리.
- * 설정값이 없으면 이름에 '여행'이 들어간 카테고리를 자동 추론한다.
+ * 설정한 적이 없으면 이름에 '여행'이 들어간 카테고리를 자동 추론한다.
+ * '사용 안 함'은 빈 값으로 저장되며, 이때는 추론하지 않는다.
  * 반환값은 현재 숨겨지지 않은 카테고리일 때만 유효하다.
  */
 export function getTripDefaultCategory(db) {
   if (!db) return '';
   const categories = getBudgetCategories(db);
-  const saved = getSetting(db, 'trip_default_category', '');
-  if (saved) return categories.includes(saved) ? saved : '';
+  const saved = getSetting(db, 'trip_default_category', null);
+  if (saved !== null) return saved && categories.includes(saved) ? saved : '';
   return categories.find(c => c === '여행') || categories.find(c => c.includes('여행')) || '';
 }
 
@@ -2011,7 +2006,7 @@ export function getEffectiveMonthlyGoal(db, yearMonth) {
   const override = getMonthlyGoal(db, yearMonth);
   if (override !== null) return override;
   const def = getSetting(db, 'default_monthly_goal', '');
-  return def !== '' ? parseInt(def, 10) : null;
+  return def !== '' ? Number(def) : null;
 }
 
 export function setMonthlyGoal(db, yearMonth, amount) {
@@ -2019,28 +2014,30 @@ export function setMonthlyGoal(db, yearMonth, amount) {
 }
 
 /**
- * 상시 목표금액 변경 시 호출.
+ * 상시 목표금액 변경·해제 시 호출. newAmount가 null이면 상시 목표를 해제한다.
  * 기존 거래내역이 있는 월 중 개별 설정이 없는 월을 현재(구) 기본값으로 스냅샷한 뒤 새 값을 저장.
  * 이후 새로 생기는 월만 신규 기본값이 적용된다.
  */
 export function changeDefaultMonthlyGoal(db, newAmount) {
-  const oldDefault = getSetting(db, 'default_monthly_goal', '');
-  if (oldDefault !== '') {
-    const oldVal = parseInt(oldDefault, 10);
-    // 거래내역이 있는 모든 월 조회
-    const monthsRes = db.exec(
-      "SELECT DISTINCT strftime('%Y-%m', date) as month FROM transactions ORDER BY month"
-    );
-    const months = monthsRes.length ? monthsRes[0].values.map(r => r[0]) : [];
-    // 개별 설정이 없는 월만 구 기본값으로 고정
-    months.forEach(ym => {
-      db.run(
-        'INSERT OR IGNORE INTO monthly_goals (year_month, goal_amount) VALUES (?, ?)',
-        [ym, oldVal]
+  withTransaction(db, () => {
+    const oldDefault = getSetting(db, 'default_monthly_goal', '');
+    if (oldDefault !== '') {
+      const oldVal = Math.round(Number(oldDefault)) || 0;
+      // 거래내역이 있는 모든 월 조회
+      const monthsRes = db.exec(
+        "SELECT DISTINCT strftime('%Y-%m', date) as month FROM transactions ORDER BY month"
       );
-    });
-  }
-  setSetting(db, 'default_monthly_goal', String(newAmount));
+      const months = monthsRes.length ? monthsRes[0].values.map(r => r[0]) : [];
+      // 개별 설정이 없는 월만 구 기본값으로 고정
+      months.forEach(ym => {
+        db.run(
+          'INSERT OR IGNORE INTO monthly_goals (year_month, goal_amount) VALUES (?, ?)',
+          [ym, oldVal]
+        );
+      });
+    }
+    setSetting(db, 'default_monthly_goal', newAmount === null ? '' : String(newAmount));
+  });
 }
 
 export function deleteMonthlyGoal(db, yearMonth) {
@@ -2059,7 +2056,7 @@ export function getMonthlyTotalsWithGoals(db, limit = 24) {
   const totals = getMonthlyTotals(db, limit);
   const goalsMap = getAllMonthlyGoals(db);
   const defaultGoal = getSetting(db, 'default_monthly_goal', '');
-  const defGoalNum = defaultGoal !== '' ? parseInt(defaultGoal, 10) : null;
+  const defGoalNum = defaultGoal !== '' ? Number(defaultGoal) : null;
   return totals.map(r => ({
     ...r,
     goal: goalsMap[r.month] !== undefined ? goalsMap[r.month] : defGoalNum,
@@ -2179,47 +2176,55 @@ export function recordFavoriteUse(db, id) {
   );
 }
 
+/**
+ * 즐겨찾기를 newPosition으로 옮긴다 (B-018). newPosition은 옮기는 항목을 뺀 목록 기준이다.
+ * 순서 기준은 getFavorites와 같고(sort_order, created_at DESC), 전체를 0..n-1로 다시 번호 매긴다.
+ */
 export function reorderFavorite(db, id, newPosition) {
-  moveItemToPosition(db, 'favorite_transactions', id, newPosition);
+  const res = db.exec('SELECT id FROM favorite_transactions ORDER BY sort_order ASC, created_at DESC, id DESC');
+  const ids = (res[0]?.values || []).map(([itemId]) => itemId).filter(itemId => itemId !== id);
+  if (ids.length === (res[0]?.values.length || 0)) return; // 없는 id
+  const clamped = Math.max(0, Math.min(newPosition, ids.length));
+  ids.splice(clamped, 0, id);
+  withTransaction(db, () => {
+    ids.forEach((itemId, i) => {
+      db.run('UPDATE favorite_transactions SET sort_order = ? WHERE id = ?', [i, itemId]);
+    });
+  });
 }
 
 // ── 스마트 패턴: 자동 결제수단 선택 ─────────────────────────────────
 
-export function getAutoPaymentMethod(db, subCategory) {
-  if (!subCategory) return null;
+// 자동 결제수단 기준: 그 세부카테고리의 최근 20건 중 10건 이상이고, 한 결제수단이 80% 이상
+const AUTO_PM_SAMPLE = 20;
+const AUTO_PM_MIN = 10;
+const AUTO_PM_RATIO = 0.8;
 
-  // 최근 20개 거래에서 결제수단 목록 가져오기
+/** 세부카테고리의 자동 결제수단 후보와 근거 { payment_method, count, total } — 기준 미달이면 null */
+function autoPaymentStats(db, subCategory) {
   const res = db.exec(
     `SELECT payment_method
      FROM transactions
      WHERE sub_category = ? AND payment_method IN (SELECT name FROM payment_methods WHERE is_hidden = 0)
-     ORDER BY created_at DESC
-     LIMIT 20`,
-    [subCategory]
+     ORDER BY created_at DESC, id DESC
+     LIMIT ?`,
+    [subCategory, AUTO_PM_SAMPLE]
   );
+  const methods = (res[0]?.values || []).map(r => r[0]);
+  if (methods.length < AUTO_PM_MIN) return null;
+  const counts = {};
+  methods.forEach(m => { counts[m] = (counts[m] || 0) + 1; });
+  const [paymentMethod, count] = Object.entries(counts).sort((x, y) => y[1] - x[1])[0];
+  if (count / methods.length < AUTO_PM_RATIO) return null;
+  return { payment_method: paymentMethod, count, total: methods.length };
+}
 
-  if (!res.length || !res[0].values.length) return null;
-
-  // 결제수단별 집계
-  const methodCounts = {};
-  let total = 0;
-  res[0].values.forEach(row => {
-    const method = row[0];
-    methodCounts[method] = (methodCounts[method] || 0) + 1;
-    total++;
-  });
-
-  // 가장 많은 결제수단 찾기
-  const sorted = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]);
-  if (sorted.length === 0) return null;
-
-  const [paymentMethod, count] = sorted[0];
-
-  // 80% 이상이고 10건 이상이면 반환
-  if (total >= 10 && count / total >= 0.8) {
-    return paymentMethod;
-  }
-  return null;
+/** 세부카테고리를 고르면 자동으로 채울 결제수단. 설정에서 끈 패턴은 쓰지 않는다 (B-058). */
+export function getAutoPaymentMethod(db, subCategory) {
+  if (!subCategory) return null;
+  const disabled = db.exec('SELECT is_disabled FROM auto_pattern_settings WHERE sub_category = ?', [subCategory]);
+  if (disabled[0]?.values[0]?.[0]) return null;
+  return autoPaymentStats(db, subCategory)?.payment_method || null;
 }
 
 /**
@@ -2244,36 +2249,26 @@ export function getDetailPatterns(db, { sinceMonths = 12, limit = 500 } = {}) {
   return dbRowsToObjects(res).map(r => ({ ...r, cnt: Number(r.cnt) }));
 }
 
+/**
+ * 설정 화면의 자동 결제수단 패턴 목록 — 실제 자동 선택(getAutoPaymentMethod)과 같은 기준으로 계산한다 (B-028, B-058).
+ * 최근 거래 100건에 나온 세부카테고리 중 기준을 넘는 것만 보여 준다. 반환: [{ sub_category, payment_method, count, total, is_disabled }]
+ */
 export function getDetectedPatterns(db) {
-  const res = db.exec(
-    `SELECT t.sub_category, t.payment_method, COUNT(*) as cnt, COALESCE(aps.is_disabled, 0) as is_disabled
-     FROM (
-       SELECT sub_category, payment_method FROM transactions
-       ORDER BY created_at DESC
+  const subs = db.exec(
+    `SELECT DISTINCT sub_category FROM (
+       SELECT sub_category FROM transactions
+       WHERE COALESCE(sub_category, '') != ''
+       ORDER BY created_at DESC, id DESC
        LIMIT 100
-     ) t
-     LEFT JOIN auto_pattern_settings aps ON aps.sub_category = t.sub_category
-     JOIN payment_methods pm ON pm.name = t.payment_method AND pm.is_hidden = 0
-     GROUP BY t.sub_category, t.payment_method
-     HAVING cnt >= 10
-     ORDER BY t.sub_category, cnt DESC`
-  );
+     ) ORDER BY sub_category`
+  )[0]?.values.map(r => r[0]) || [];
 
-  if (!res.length) return [];
-  const { columns, values } = res[0];
-  const patterns = {};
-
-  values.forEach(row => {
-    const obj = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    const { sub_category, payment_method, cnt, is_disabled } = obj;
-
-    if (!patterns[sub_category]) {
-      patterns[sub_category] = { sub_category, payment_method, count: cnt, total: cnt, is_disabled };
-    }
-  });
-
-  return Object.values(patterns);
+  return subs.map(sub => {
+    const stats = autoPaymentStats(db, sub);
+    if (!stats) return null;
+    const disabled = db.exec('SELECT is_disabled FROM auto_pattern_settings WHERE sub_category = ?', [sub]);
+    return { sub_category: sub, ...stats, is_disabled: disabled[0]?.values[0]?.[0] ? 1 : 0 };
+  }).filter(Boolean);
 }
 
 export function toggleAutoPattern(db, subCategory, isDisabled) {
@@ -2341,54 +2336,83 @@ function resolveDay(year, month1based, dayOfMonth) {
   return Math.min(dayOfMonth, lastDay);
 }
 
-export function runAutoRegister(db) {
-  const now = new Date();
-  const targetDate = new Date(now.getFullYear(), now.getMonth() + 2, 1);
-  const targetYear = targetDate.getFullYear();
-  const targetMonth = targetDate.getMonth() + 1; // 1-indexed
-  const targetYearMonth = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+function ymOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
 
+function nextYm(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return ymOf(new Date(y, m, 1)); // m은 1부터 → 그대로 넣으면 다음 달
+}
+
+const AUTO_REGISTER_MAX_BACKFILL = 12;
+
+/**
+ * 정기지출 자동등록 — 오늘 기준 두 달 뒤까지 등록한다.
+ * 마지막으로 등록한 달 다음부터 목표 달까지 빠진 달을 모두 채운다 (B-010: 앱을 한 달 넘게 안 열어도 누락 없음).
+ * 처음 등록하는 항목은 목표 달만 등록한다 (이미 손으로 적은 이번 달 몫과 겹치지 않게).
+ * 이미 등록한 달은 recurring_registration_log(UNIQUE)로 다시 만들지 않는다.
+ */
+export function runAutoRegister(db, now = new Date()) {
+  const targetYearMonth = ymOf(new Date(now.getFullYear(), now.getMonth() + 2, 1));
   const recurring = getRecurringTransactions(db);
   let count = 0;
+  const months = new Set();
 
-  recurring.forEach(r => {
-    if (r.frequency === 'annual' && r.month_of_year !== targetMonth) return;
+  withTransaction(db, () => {
+    recurring.forEach(r => {
+      const last = db.exec(
+        'SELECT MAX(registered_for_month) FROM recurring_registration_log WHERE recurring_id = ?',
+        [r.id]
+      )[0]?.values[0]?.[0] || null;
 
-    const alreadyDone = db.exec(
-      'SELECT 1 FROM recurring_registration_log WHERE recurring_id = ? AND registered_for_month = ?',
-      [r.id, targetYearMonth]
-    );
-    if (alreadyDone.length && alreadyDone[0].values.length) return;
+      const candidates = [];
+      if (!last) {
+        candidates.push(targetYearMonth);
+      } else {
+        for (let ym = nextYm(last); ym <= targetYearMonth; ym = nextYm(ym)) candidates.push(ym);
+      }
 
-    const day = resolveDay(targetYear, targetMonth, r.day_of_month);
-    const txDate = `${targetYearMonth}-${String(day).padStart(2, '0')}`;
+      candidates.slice(-AUTO_REGISTER_MAX_BACKFILL).forEach(ym => {
+        const [year, month] = ym.split('-').map(Number);
+        if (r.frequency === 'annual' && Number(r.month_of_year) !== month) return;
 
-    // 자동 할인 계산: template에 할인이 없으면 결제수단 규칙 적용
-    let discountAmt = r.discount_amount || 0;
-    let discountNote = r.discount_note || '';
-    if (discountAmt === 0) {
-      const rules = getDiscountRules(db, r.payment_method);
-      const autoDiscount = evaluateDiscountRule(rules, r.budget_category, r.sub_category || '', r.amount, r.detail || '');
-      if (autoDiscount > 0) discountAmt = autoDiscount;
-    }
+        const alreadyDone = db.exec(
+          'SELECT 1 FROM recurring_registration_log WHERE recurring_id = ? AND registered_for_month = ?',
+          [r.id, ym]
+        );
+        if (alreadyDone[0]?.values.length) return;
 
-    db.run(
-      `INSERT INTO transactions (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, is_recurring, recurring_source_id, recurring_frequency)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-      [r.payment_method, txDate, r.budget_category, r.sub_category || '', r.detail || '', r.amount, discountAmt, discountNote, r.id, r.frequency]
-    );
+        const day = resolveDay(year, month, r.day_of_month);
+        const txDate = `${ym}-${String(day).padStart(2, '0')}`;
 
-    const txIdRes = db.exec('SELECT last_insert_rowid()');
-    const txId = txIdRes[0]?.values[0][0] || null;
+        // 자동 할인 계산: template에 할인이 없으면 결제수단 규칙 적용
+        let discountAmt = r.discount_amount || 0;
+        const discountNote = r.discount_note || '';
+        if (discountAmt === 0) {
+          const rules = getDiscountRules(db, r.payment_method);
+          const autoDiscount = evaluateDiscountRule(rules, r.budget_category, r.sub_category || '', r.amount, r.detail || '');
+          if (autoDiscount > 0) discountAmt = autoDiscount;
+        }
 
-    db.run(
-      'INSERT OR IGNORE INTO recurring_registration_log (recurring_id, registered_for_month, transaction_id) VALUES (?, ?, ?)',
-      [r.id, targetYearMonth, txId]
-    );
-    count++;
+        db.run(
+          `INSERT INTO transactions (payment_method, date, budget_category, sub_category, detail, amount, discount_amount, discount_note, is_recurring, recurring_source_id, recurring_frequency)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          [r.payment_method, txDate, r.budget_category, r.sub_category || '', r.detail || '', r.amount, discountAmt, discountNote, r.id, r.frequency]
+        );
+        const txId = db.exec('SELECT last_insert_rowid()')[0]?.values[0][0] || null;
+
+        db.run(
+          'INSERT OR IGNORE INTO recurring_registration_log (recurring_id, registered_for_month, transaction_id) VALUES (?, ?, ?)',
+          [r.id, ym, txId]
+        );
+        count++;
+        months.add(ym);
+      });
+    });
   });
 
-  return { count, targetYearMonth };
+  return { count, targetYearMonth, months: [...months].sort() };
 }
 
 // ── 계좌 관리 ────────────────────────────────────────────────────
@@ -2414,14 +2438,21 @@ export function getAccount(db, id) {
   return rows[0] || null;
 }
 
-// 각 계좌의 실제 현재 잔액 (current_balance + 오늘까지의 거래 합산)
+/**
+ * 각 계좌의 잔액 기준일(balance_date)부터 오늘까지 거래 합계 (B-022)
+ * 실제 현재 잔액 = current_balance(기준일 시작 잔액) + 이 합계.
+ * 기준일 이전 거래는 이미 current_balance에 들어 있으므로 더하지 않는다. 기준일이 비었으면 전부 더한다.
+ */
 export function getAccountsActualBalances(db) {
   const today = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const res = db.exec(
-    `SELECT account_id,
-            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END), 0) AS tx_sum
-     FROM account_transactions WHERE date <= ? GROUP BY account_id`,
+    `SELECT t.account_id,
+            COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE -t.amount END), 0) AS tx_sum
+     FROM account_transactions t
+     JOIN accounts a ON a.id = t.account_id
+     WHERE t.date <= ? AND t.date >= COALESCE(a.balance_date, '')
+     GROUP BY t.account_id`,
     [todayStr]
   );
   const txSums = {};
@@ -2430,38 +2461,47 @@ export function getAccountsActualBalances(db) {
 }
 
 export function getDefaultAccount(db) {
-  const res = db.exec('SELECT * FROM accounts WHERE is_default = 1 AND is_active = 1 LIMIT 1');
+  const res = db.exec('SELECT * FROM accounts WHERE is_default = 1 AND is_active = 1 ORDER BY sort_order, id LIMIT 1');
   const rows = dbRowsToObjects(res);
   return rows[0] || null;
 }
 
+// 기본 계좌는 하나만 — 이 계좌를 기본으로 하면 나머지는 해제한다 (B-023)
 export function addAccount(db, data) {
-  const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM accounts');
-  const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
-  db.run(
-    `INSERT INTO accounts (name, bank, account_number, current_balance, balance_date, danger_threshold, is_default, note, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [data.name || '', data.bank || '', data.account_number || '',
-     data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
-     data.is_default ? 1 : 0, data.note || '', nextSort]
-  );
-  const res = db.exec('SELECT last_insert_rowid()');
-  return res[0].values[0][0];
+  return withTransaction(db, () => {
+    const maxSort = db.exec('SELECT COALESCE(MAX(sort_order), -1) FROM accounts');
+    const nextSort = (maxSort[0]?.values[0][0] ?? -1) + 1;
+    if (data.is_default) db.run('UPDATE accounts SET is_default = 0 WHERE is_default = 1');
+    db.run(
+      `INSERT INTO accounts (name, bank, account_number, current_balance, balance_date, danger_threshold, is_default, note, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [data.name || '', data.bank || '', data.account_number || '',
+       data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
+       data.is_default ? 1 : 0, data.note || '', nextSort]
+    );
+    const res = db.exec('SELECT last_insert_rowid()');
+    return res[0].values[0][0];
+  });
 }
 
 export function updateAccount(db, id, data) {
-  db.run(
-    `UPDATE accounts SET name=?, bank=?, account_number=?, current_balance=?, balance_date=?,
-     danger_threshold=?, is_default=?, note=? WHERE id=?`,
-    [data.name || '', data.bank || '', data.account_number || '',
-     data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
-     data.is_default ? 1 : 0, data.note || '', id]
-  );
+  withTransaction(db, () => {
+    if (data.is_default) db.run('UPDATE accounts SET is_default = 0 WHERE is_default = 1 AND id != ?', [id]);
+    db.run(
+      `UPDATE accounts SET name=?, bank=?, account_number=?, current_balance=?, balance_date=?,
+       danger_threshold=?, is_default=?, note=? WHERE id=?`,
+      [data.name || '', data.bank || '', data.account_number || '',
+       data.current_balance || 0, data.balance_date || '', data.danger_threshold || 0,
+       data.is_default ? 1 : 0, data.note || '', id]
+    );
+  });
 }
 
 export function setDefaultAccount(db, id) {
-  db.run('UPDATE accounts SET is_default = 0');
-  if (id) db.run('UPDATE accounts SET is_default = 1 WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    db.run('UPDATE accounts SET is_default = 0 WHERE is_default = 1');
+    if (id) db.run('UPDATE accounts SET is_default = 1 WHERE id = ?', [id]);
+  });
 }
 
 export function deleteAccount(db, id) {
@@ -2503,21 +2543,42 @@ export function addRecurringItem(db, data) {
   );
 }
 
+/**
+ * 고정항목 수정 — 이미 만들어 둔 미래 자동 내역 중 사용자가 고치지 않은 것은 새 조건으로 다시 만든다 (B-009).
+ */
 export function updateRecurringItem(db, id, data) {
-  db.run(
-    `UPDATE account_recurring_items SET name=?, type=?, day_of_month=?, holiday_rule=?,
-     amount_type=?, fixed_amount=?, auto_payment_method=?, auto_register=?,
-     register_months_ahead=?, note=? WHERE id=?`,
-    [data.name || '', data.type || 'expense', data.day_of_month || 1,
-     data.holiday_rule || 'next_business', data.amount_type || 'fixed',
-     data.fixed_amount || 0, data.auto_payment_method || '',
-     data.auto_register !== false ? 1 : 0, data.register_months_ahead || 2,
-     data.note || '', id]
-  );
+  withTransaction(db, () => {
+    db.run(
+      `UPDATE account_recurring_items SET name=?, type=?, day_of_month=?, holiday_rule=?,
+       amount_type=?, fixed_amount=?, auto_payment_method=?, auto_register=?,
+       register_months_ahead=?, note=? WHERE id=?`,
+      [data.name || '', data.type || 'expense', data.day_of_month || 1,
+       data.holiday_rule || 'next_business', data.amount_type || 'fixed',
+       data.fixed_amount || 0, data.auto_payment_method || '',
+       data.auto_register !== false ? 1 : 0, data.register_months_ahead || 2,
+       data.note || '', id]
+    );
+    db.run(
+      'DELETE FROM account_transactions WHERE recurring_item_id = ? AND is_modified = 0 AND date > ?',
+      [id, todayLocal()]
+    );
+    const item = dbRowsToObjects(db.exec('SELECT * FROM account_recurring_items WHERE id = ?', [id]))[0];
+    const account = item && getAccount(db, item.account_id);
+    if (item && account && account.is_active && item.auto_register) {
+      registerAccountItem(db, account, item, new Date());
+    }
+  });
 }
 
+/** 고정항목 삭제 — 사용자가 고치지 않은 미래 자동 내역도 함께 지운다 (B-009) */
 export function deleteRecurringItem(db, id) {
-  db.run('UPDATE account_recurring_items SET is_active = 0 WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    db.run('UPDATE account_recurring_items SET is_active = 0 WHERE id = ?', [id]);
+    db.run(
+      'DELETE FROM account_transactions WHERE recurring_item_id = ? AND is_modified = 0 AND date > ?',
+      [id, todayLocal()]
+    );
+  });
 }
 
 // ── 계좌 거래 내역 ───────────────────────────────────────────────
@@ -2536,13 +2597,15 @@ export function addAccountTransaction(db, data) {
   db.run(
     `INSERT INTO account_transactions
        (account_id, date, type, category, description, amount, base_amount,
-        recurring_item_id, is_auto_generated, is_modified, is_imported)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        recurring_item_id, recurring_month, is_auto_generated, is_modified, is_imported)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [data.account_id, data.date, data.type || 'expense', data.category || '',
      data.description || '', data.amount, data.base_amount ?? null,
      data.recurring_item_id ?? null,
+     data.recurring_item_id ? (data.recurring_month || String(data.date).slice(0, 7)) : '',
      data.is_auto_generated ? 1 : 0, data.is_modified ? 1 : 0, data.is_imported ? 1 : 0]
   );
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
 }
 
 export function updateAccountTransaction(db, id, data) {
@@ -2554,13 +2617,28 @@ export function updateAccountTransaction(db, id, data) {
   );
 }
 
+/**
+ * 계좌 내역 삭제. 고정항목에서 자동 생성된 내역이면 그 달을 '건너뜀'으로 기록해
+ * 자동등록이 다시 만들지 않게 한다 (B-008).
+ */
 export function deleteAccountTransaction(db, id) {
-  db.run('DELETE FROM account_transactions WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    const row = db.exec(
+      'SELECT recurring_item_id, recurring_month FROM account_transactions WHERE id = ?', [id]
+    )[0]?.values[0];
+    if (row && row[0] && row[1]) {
+      db.run(
+        'INSERT OR IGNORE INTO account_recurring_skips (recurring_item_id, recurring_month) VALUES (?, ?)',
+        [row[0], row[1]]
+      );
+    }
+    db.run('DELETE FROM account_transactions WHERE id = ?', [id]);
+  });
 }
 
 export function bulkInsertAccountTransactions(db, accountId, rows) {
-  db.run('BEGIN');
-  try {
+  // withTransaction(SAVEPOINT)이라 다른 트랜잭션 안에서 불러도 안전하다 (B-059)
+  withTransaction(db, () => {
     rows.forEach(row => {
       db.run(
         `INSERT INTO account_transactions
@@ -2569,11 +2647,7 @@ export function bulkInsertAccountTransactions(db, accountId, rows) {
         [accountId, row.date, row.type, row.description, row.amount]
       );
     });
-    db.run('COMMIT');
-  } catch (e) {
-    db.run('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 // ── 카드 결제 추정액 집계 ────────────────────────────────────────
@@ -2589,80 +2663,151 @@ export function getCardPaymentTotal(db, paymentMethod, yearMonth) {
 }
 
 // ── 계좌 자동 등록 ───────────────────────────────────────────────
+// 자동 생성 내역은 (고정항목, 대상 월)로 식별한다. 휴일 보정으로 실제 날짜가 다른 달이 되어도
+// 대상 월은 그대로라 중복이 생기지 않는다 (B-007). UNIQUE 인덱스가 이를 보장한다.
 
-export function runAccountAutoRegister(db) {
-  const accounts = getAllAccounts(db);
-  const now = new Date();
-  let totalCount = 0;
+/** 고정항목의 해당 월 실제 처리일 (말일 보정 + 휴일 규칙) */
+function recurringDateFor(item, ym) {
+  const [year, month] = ym.split('-').map(Number);
+  const day = resolveDay(year, month, Number(item.day_of_month) || 0);
+  const rawDate = `${ym}-${String(day).padStart(2, '0')}`;
+  if (item.holiday_rule === 'next_business') return getNextBusinessDay(rawDate);
+  if (item.holiday_rule === 'prev_business') return getPrevBusinessDay(rawDate);
+  return rawDate;
+}
 
-  accounts.forEach(account => {
-    const items = getRecurringItems(db, account.id).filter(i => i.auto_register);
+/** 고정항목 하나를 이번 달부터 register_months_ahead개월 뒤까지 등록·갱신한다. 새로 만든 건수를 돌려준다. */
+function registerAccountItem(db, account, item, now) {
+  const today = todayLocal();
+  const monthsAhead = item.register_months_ahead || 2;
+  let count = 0;
 
-    items.forEach(item => {
-      const monthsAhead = item.register_months_ahead || 2;
+  for (let m = 0; m <= monthsAhead; m++) {
+    const ym = ymOf(new Date(now.getFullYear(), now.getMonth() + m, 1));
+    const [year, month] = ym.split('-').map(Number);
+    const actualDate = recurringDateFor(item, ym);
 
-      for (let m = 0; m <= monthsAhead; m++) {
-        const targetDate = new Date(now.getFullYear(), now.getMonth() + m, 1);
-        const year = targetDate.getFullYear();
-        const month = targetDate.getMonth() + 1;
-        const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+    let amount = item.fixed_amount || 0;
+    let baseAmount = null;
+    if (item.amount_type === 'auto' && item.auto_payment_method) {
+      amount = getCardPaymentTotal(db, item.auto_payment_method, ymOf(new Date(year, month - 2, 1)));
+      baseAmount = amount;
+    }
 
-        const lastDay = new Date(year, month, 0).getDate();
-        const day = Math.min(item.day_of_month, lastDay);
-        const rawDate = `${yearMonth}-${String(day).padStart(2, '0')}`;
-        const actualDate = item.holiday_rule === 'next_business'
-          ? getNextBusinessDay(rawDate)
-          : item.holiday_rule === 'prev_business'
-            ? getPrevBusinessDay(rawDate)
-            : rawDate;
+    const skipped = db.exec(
+      'SELECT 1 FROM account_recurring_skips WHERE recurring_item_id = ? AND recurring_month = ?',
+      [item.id, ym]
+    );
+    if (skipped[0]?.values.length) continue;
 
-        let amount = item.fixed_amount || 0;
-        let baseAmount = null;
+    const existing = dbRowsToObjects(db.exec(
+      `SELECT id, date, amount, is_modified FROM account_transactions
+       WHERE recurring_item_id = ? AND recurring_month = ?`,
+      [item.id, ym]
+    ))[0];
 
-        if (item.amount_type === 'auto' && item.auto_payment_method) {
-          const prevDate = new Date(year, month - 2, 1);
-          const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-          amount = getCardPaymentTotal(db, item.auto_payment_method, prevYM);
-          baseAmount = amount;
-        }
-
-        const alreadyExists = db.exec(
-          `SELECT id, is_modified FROM account_transactions
-           WHERE recurring_item_id = ? AND strftime('%Y-%m', date) = ?`,
-          [item.id, yearMonth]
-        );
-
-        if (alreadyExists.length && alreadyExists[0].values.length) {
-          // auto 항목은 사용자가 직접 수정하지 않은 경우에만 금액 갱신
-          if (item.amount_type === 'auto' && amount > 0) {
-            const existingId = alreadyExists[0].values[0][0];
-            const isModified = alreadyExists[0].values[0][1];
-            if (!isModified) {
-              db.run(
-                `UPDATE account_transactions SET amount = ?, base_amount = ? WHERE id = ?`,
-                [amount, baseAmount, existingId]
-              );
-            }
-          }
-          continue;
-        }
-
-        if (amount === 0) continue;
-
-        db.run(
-          `INSERT INTO account_transactions
-             (account_id, date, type, category, description, amount, base_amount,
-              recurring_item_id, is_auto_generated, is_modified)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)`,
-          [account.id, actualDate, item.type, '',
-           item.name, amount, baseAmount, item.id]
-        );
-        totalCount++;
+    if (existing) {
+      if (existing.is_modified) continue; // 사용자가 고친 내역은 건드리지 않는다
+      // auto 금액이 바뀌었으면 갱신
+      if (item.amount_type === 'auto' && amount > 0 && amount !== existing.amount) {
+        db.run('UPDATE account_transactions SET amount = ?, base_amount = ? WHERE id = ?',
+          [amount, baseAmount, existing.id]);
       }
+      // 공휴일 데이터가 바뀌어 처리일이 달라졌으면 미래 내역만 고친다 (B-006)
+      if (existing.date !== actualDate && existing.date > today && actualDate > today) {
+        db.run('UPDATE account_transactions SET date = ? WHERE id = ?', [actualDate, existing.id]);
+      }
+      continue;
+    }
+
+    if (amount === 0) continue;
+
+    db.run(
+      `INSERT INTO account_transactions
+         (account_id, date, type, category, description, amount, base_amount,
+          recurring_item_id, recurring_month, is_auto_generated, is_modified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)`,
+      [account.id, actualDate, item.type, '', item.name, amount, baseAmount, item.id, ym]
+    );
+    count++;
+  }
+  return count;
+}
+
+export function runAccountAutoRegister(db, now = new Date()) {
+  let totalCount = 0;
+  withTransaction(db, () => {
+    getAllAccounts(db).forEach(account => {
+      getRecurringItems(db, account.id)
+        .filter(i => i.auto_register)
+        .forEach(item => { totalCount += registerAccountItem(db, account, item, now); });
     });
   });
-
   return totalCount;
+}
+
+/**
+ * 예전 자동 생성 내역에 대상 월을 채우고, 같은 달 중복을 정리한 뒤 UNIQUE 인덱스를 만든다 (B-007 마이그레이션).
+ * 대상 월은 실제 날짜가 그 달·전달·다음 달 중 어느 달의 처리일과 맞는지로 판단한다.
+ */
+function normalizeAccountRecurringMonths(db) {
+  let changed = false;
+  const rows = dbRowsToObjects(db.exec(
+    `SELECT t.id, t.date, i.day_of_month, i.holiday_rule
+     FROM account_transactions t
+     LEFT JOIN account_recurring_items i ON i.id = t.recurring_item_id
+     WHERE t.recurring_item_id IS NOT NULL AND COALESCE(t.recurring_month, '') = ''`
+  ));
+  if (rows.length) {
+    withTransaction(db, () => {
+      rows.forEach(r => {
+        let ym = String(r.date).slice(0, 7);
+        if (r.day_of_month != null) {
+          const [y, m] = String(r.date).split('-').map(Number);
+          for (const offset of [0, -1, 1]) {
+            const cand = ymOf(new Date(y, m - 1 + offset, 1));
+            if (recurringDateFor(r, cand) === r.date) { ym = cand; break; }
+          }
+        }
+        db.run('UPDATE account_transactions SET recurring_month = ? WHERE id = ?', [ym, r.id]);
+      });
+    });
+    changed = true;
+  }
+
+  // 같은 항목·같은 달이 여러 건이면 사용자가 고친 것, 없으면 먼저 만든 것 하나만 남긴다
+  const dups = db.exec(
+    `SELECT recurring_item_id, recurring_month FROM account_transactions
+     WHERE recurring_item_id IS NOT NULL AND recurring_month != ''
+     GROUP BY recurring_item_id, recurring_month HAVING COUNT(*) > 1`
+  )[0]?.values || [];
+  if (dups.length) {
+    withTransaction(db, () => {
+      dups.forEach(([itemId, ym]) => {
+        const keep = db.exec(
+          `SELECT id FROM account_transactions WHERE recurring_item_id = ? AND recurring_month = ?
+           ORDER BY is_modified DESC, id ASC LIMIT 1`,
+          [itemId, ym]
+        )[0].values[0][0];
+        db.run(
+          'DELETE FROM account_transactions WHERE recurring_item_id = ? AND recurring_month = ? AND id != ?',
+          [itemId, ym, keep]
+        );
+      });
+    });
+    changed = true;
+  }
+
+  const hasIndex = db.exec(
+    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ux_account_tx_recurring'"
+  )[0]?.values.length;
+  if (!hasIndex) {
+    db.run(`CREATE UNIQUE INDEX ux_account_tx_recurring
+            ON account_transactions (recurring_item_id, recurring_month)
+            WHERE recurring_item_id IS NOT NULL AND recurring_month != ''`);
+    changed = true;
+  }
+  return changed;
 }
 
 // ── 잔액 예측 ────────────────────────────────────────────────────
@@ -2677,10 +2822,12 @@ export function getBalanceForecast(db, accountId, daysAhead = 90) {
   endDate.setDate(endDate.getDate() + daysAhead);
   const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
 
-  // current_balance(시작 금액)에서 과거 거래를 순서대로 적용 → 실제 현재 잔액
+  // current_balance(잔액 기준일 시작 잔액)에 기준일~오늘 거래를 순서대로 적용 → 실제 현재 잔액 (B-022)
+  // 기준일 이전 거래는 이미 current_balance에 들어 있으므로 제외한다.
+  const balanceDate = account.balance_date || '';
   const pastRes = db.exec(
-    'SELECT * FROM account_transactions WHERE account_id = ? AND date <= ? ORDER BY date ASC, id ASC',
-    [accountId, todayStr]
+    'SELECT * FROM account_transactions WHERE account_id = ? AND date <= ? AND date >= ? ORDER BY date ASC, id ASC',
+    [accountId, todayStr, balanceDate]
   );
   const pastTxs = dbRowsToObjects(pastRes);
 
@@ -2692,8 +2839,8 @@ export function getBalanceForecast(db, accountId, daysAhead = 90) {
 
   // 오늘 이후 거래를 예측 이벤트로 처리
   const futureRes = db.exec(
-    'SELECT * FROM account_transactions WHERE account_id = ? AND date > ? AND date <= ? ORDER BY date ASC, id ASC',
-    [accountId, todayStr, endStr]
+    'SELECT * FROM account_transactions WHERE account_id = ? AND date > ? AND date <= ? AND date >= ? ORDER BY date ASC, id ASC',
+    [accountId, todayStr, endStr, balanceDate]
   );
   const futureTxs = dbRowsToObjects(futureRes);
 

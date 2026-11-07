@@ -1,41 +1,15 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
+import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
 
-const DEFAULT_CATEGORY_COLORS = {
-  '식비': '#FF6B6B',
-  '쇼핑': '#4ECDC4',
-  '차량교통비': '#45B7D1',
-  '의류/미용': '#F7DC6F',
-  '의료/건강': '#82E0AA',
-  '교육': '#BB8FCE',
-  '여행/문화': '#F0A500',
-  '반려동물': '#A3C4F3',
-  '기타': '#AAB7B8',
-};
-
-function stringToHue(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash) % 360;
-}
-
-function categoryColor(cat) {
-  if (!cat) return '#AAB7B8';
-  if (DEFAULT_CATEGORY_COLORS[cat]) return DEFAULT_CATEGORY_COLORS[cat];
-  const hue = stringToHue(cat);
-  return `hsl(${hue}, 55%, 52%)`;
-}
-
-function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck }) {
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck }) {
   const [filters, setFilters] = useState({ month: '', payment_method: '', budget_category: '', search: '' });
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
@@ -68,24 +42,27 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }, []);
 
-  const months = useMemo(() => getAvailableMonths(db), [db]);
-  const monthlyGoalsMap = useMemo(() => getAllMonthlyGoals(db), [db]);
+  // sql.js DB는 같은 객체가 제자리에서 바뀌므로, db만으로는 변경을 알 수 없다.
+  // App이 쓰기마다 올리는 dataVersion을 의존성에 넣어 다시 읽는다.
+  /* eslint-disable react-hooks/exhaustive-deps */
+  const months = useMemo(() => getAvailableMonths(db), [db, dataVersion]);
+  const monthlyGoalsMap = useMemo(() => getAllMonthlyGoals(db), [db, dataVersion]);
   const defaultGoal = useMemo(() => {
     const v = getSetting(db, 'default_monthly_goal', '');
     return v !== '' ? parseInt(v, 10) : null;
-  }, [db]);
+  }, [db, dataVersion]);
   const isMobile = useIsMobile();
   const showGoal = useMemo(
     () => getSetting(db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
-    [db, isMobile]
+    [db, isMobile, dataVersion]
   );
   const showCalendarBtn = useMemo(
     () => getSetting(db, isMobile ? 'show_calendar_btn_mobile' : 'show_calendar_btn_pc', '1') !== '0',
-    [db, isMobile]
+    [db, isMobile, dataVersion]
   );
   const calendarAmountUnit = useMemo(
     () => getSetting(db, 'calendar_mini_amount_unit', '만'),
-    [db]
+    [db, dataVersion]
   );
 
   const getGoalForMonth = (yearMonth) => {
@@ -100,23 +77,24 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
       if (a.is_hidden !== b.is_hidden) return a.is_hidden ? 1 : -1;
       return a.sort_order - b.sort_order;
     });
-  }, [db]);
+  }, [db, dataVersion]);
 
-  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db]);
+  const budgetCategories = useMemo(() => getAllBudgetCategories(db), [db, dataVersion]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
     return map;
-  }, [db]);
+  }, [db, dataVersion]);
 
 
   // 이슈 감지용 공통 컨텍스트 (ImportModal과 동일한 로직)
-  const validationCtx = useMemo(() => buildValidationContext(db), [db]);
+  const validationCtx = useMemo(() => buildValidationContext(db), [db, dataVersion]);
 
   const allTransactions = useMemo(
     () => getTransactions(db, filters),
-    [db, filters]
+    [db, filters, dataVersion]
   );
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const hasAnyIssue = useMemo(
     () => allTransactions.some(tx => hasIssue(tx, validationCtx)),
@@ -130,7 +108,8 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
   }, [allTransactions, showIssueOnly, validationCtx]);
 
   // 월별로 그룹화된 거래내역 (월 내에서 날짜 내림차순 정렬)
-  const groupedTransactions = useMemo(() => {
+  // firstOfDate: 각 날짜의 첫 번째 거래 id — 달력에서 날짜를 누르면 이 행으로 스크롤한다
+  const { groupedTransactions, firstOfDate } = useMemo(() => {
     const groups = {};
     transactions.forEach(tx => {
       const month = tx.date.substring(0, 7);
@@ -138,7 +117,11 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
       groups[month].push(tx);
     });
     Object.values(groups).forEach(arr => arr.sort((a, b) => b.date.localeCompare(a.date)));
-    return groups;
+    const firsts = new Set();
+    Object.values(groups).forEach(arr => arr.forEach((tx, i) => {
+      if (i === 0 || arr[i - 1].date !== tx.date) firsts.add(tx.id);
+    }));
+    return { groupedTransactions: groups, firstOfDate: firsts };
   }, [transactions]);
 
   // 펼침 상태를 sessionStorage에 저장해 탭 전환 후에도 유지
@@ -236,7 +219,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
       cache[month] = getDailyTotals(db, month);
     });
     return cache;
-  }, [db, calendarOpenMonths]);
+  }, [db, calendarOpenMonths, dataVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCalendarDateClick = useCallback((dateStr) => {
     setFocusedDate(dateStr);
@@ -271,11 +254,41 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
     setSelectedForDelete(newSet);
   };
 
+  // 분할 결제로 묶인 거래는 한쪽만 지우면 짝이 분할 표시를 단 채 고아로 남는다.
+  // 지울 때는 묶음 전체를 함께 지운다. partners: 선택하지 않았지만 함께 지워지는 거래
+  const withSplitPartners = (ids, txs) => {
+    const all = new Set(ids);
+    const partners = [];
+    txs.forEach(tx => {
+      if (!tx.split_group_id) return;
+      getSplitGroupTransactions(db, tx.split_group_id).forEach(p => {
+        if (!all.has(p.id)) { all.add(p.id); partners.push(p); }
+      });
+    });
+    return { ids: [...all], partners };
+  };
+
   const handleBulkDelete = () => {
-    if (!window.confirm(`${selectedForDelete.size}개의 거래를 삭제하시겠습니까?`)) return;
-    selectedForDelete.forEach(id => onDelete(id));
+    const selectedTxs = allTransactions.filter(tx => selectedForDelete.has(tx.id));
+    const { ids, partners } = withSplitPartners(selectedForDelete, selectedTxs);
+    const msg = partners.length
+      ? `${selectedForDelete.size}개의 거래를 삭제하시겠습니까?\n분할 결제로 묶인 ${partners.length}건도 함께 삭제됩니다 (총 ${ids.length}건).`
+      : `${selectedForDelete.size}개의 거래를 삭제하시겠습니까?`;
+    if (!window.confirm(msg)) return;
+    onDelete(ids);
     setSelectedForDelete(new Set());
     setDeleteMode(false);
+  };
+
+  const handleDetailDelete = (tx) => {
+    const { ids, partners } = withSplitPartners([tx.id], [tx]);
+    const msg = partners.length
+      ? `이 거래는 분할 결제로 묶여 있습니다. 묶인 ${ids.length}건을 모두 삭제하시겠습니까?\n`
+        + [tx, ...partners].map(t => `· ${t.payment_method} ${formatAmount(t.amount)}원`).join('\n')
+      : '이 거래를 삭제하시겠습니까?';
+    if (!window.confirm(msg)) return;
+    onDelete(ids.length === 1 ? ids[0] : ids);
+    setSelectedDetail(null);
   };
 
   return (
@@ -468,14 +481,12 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
               )}
               {expandedMonths.has(month) && (
                 <ul className="tx-list-items">
-                  {groupedTransactions[month].map((tx, txIdx) => (
+                  {groupedTransactions[month].map(tx => (
                     <li
                       key={tx.id}
                       ref={el => {
                         // 각 날짜의 첫 번째 거래만 ref에 등록
-                        if (el && txIdx === groupedTransactions[month].findIndex(t => t.date === tx.date)) {
-                          txDateRefs.current[tx.date] = el;
-                        }
+                        if (el && firstOfDate.has(tx.id)) txDateRefs.current[tx.date] = el;
                       }}
                       className={`tx-item${deleteMode && selectedForDelete.has(tx.id) ? ' tx-item-selected' : ''}${hasIssue(tx, validationCtx) ? ' tx-item-issue' : ''}${focusedDate === tx.date ? ' tx-item-date-focused' : ''}`}
                       onClick={() => {
@@ -504,7 +515,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
                           <span className="tx-date">{tx.date.substring(5).replace('-', '/')}</span>
                           <span
                             className="tx-badge"
-                            style={{ backgroundColor: categoryColor(tx.budget_category) + '33', color: categoryColor(tx.budget_category) }}
+                            style={{ backgroundColor: categoryColorAlpha(tx.budget_category, 0.2), color: categoryColor(tx.budget_category) }}
                           >
                             {tx.budget_category}
                           </span>
@@ -648,11 +659,7 @@ function TransactionList({ db, goTodayKey, onAdd, onEdit, onDelete, onChanged, o
               <button
                 className="btn-danger"
                 style={{ marginRight: 'auto', flex: 'none', padding: '8px 14px', fontSize: '13px' }}
-                onClick={() => {
-                  if (!window.confirm('이 거래를 삭제하시겠습니까?')) return;
-                  onDelete(selectedDetail.id);
-                  setSelectedDetail(null);
-                }}
+                onClick={() => handleDetailDelete(selectedDetail)}
               >
                 삭제
               </button>

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  getEventWallets, getEventCashLedger, addEventCashFlow, deleteEventCashFlow,
-  reconcileEventWallet, closeEventWallet,
+  getEventWallets, getEventCashLedger, addEventCashFlow, deleteEventCashFlow, getCashFlowLinks,
+  reconcileEventWallet, closeEventWallet, getWalletRate,
   getEventCountries, getAllAccounts,
   getBudgetCategories, getSubCategories, getTripDefaultCategory,
   getCalendarEvents, getCalendarEventTypes,
@@ -29,6 +29,29 @@ function fmtCur(value, currency) {
   return rounded.toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
+/** 현금 흐름 삭제 확인 문구 — 함께 지워지는 기록을 실제 삭제 범위대로 알린다 */
+function describeFlowDeletion(links) {
+  const { flow, accountTx, accountTxMissing, pairFlow, fxTx } = links;
+  const lines = [
+    `${FLOW_LABEL[flow.type] || flow.type} ${flow.amount > 0 ? '+' : ''}${fmtCur(flow.amount, flow.currency)} ${flow.currency} (${flow.date}) 기록을 삭제할까요?`,
+  ];
+  const also = [];
+  if (accountTx) {
+    also.push(`계좌 ${accountTx.account_name ? `'${accountTx.account_name}' ` : ''}${accountTx.type === 'income' ? '입금' : '출금'} ${formatAmount(accountTx.amount)}원`);
+  }
+  if (pairFlow) {
+    also.push(`'${pairFlow.event_title || '다른 일정'}'의 ${FLOW_LABEL[pairFlow.type] || pairFlow.type} ${fmtCur(pairFlow.amount, pairFlow.currency)} ${pairFlow.currency}`);
+  }
+  if (fxTx) {
+    also.push(`가계부의 ${fxTx.detail} ${formatAmount(fxTx.amount || fxTx.discount_amount)}원`);
+  }
+  if (also.length) lines.push('', '함께 삭제됩니다:', ...also.map(s => `· ${s}`));
+  if (accountTxMissing) {
+    lines.push('', '계좌에 반영된 기록을 찾지 못했습니다. 계좌 내역에서 직접 지워 주세요.');
+  }
+  return lines.join('\n');
+}
+
 function Tabs({ value, onChange, items }) {
   return (
     <div className="tc-tabs">
@@ -44,7 +67,7 @@ function Tabs({ value, onChange, items }) {
   );
 }
 
-export default function TripCashModal({ db, event, onClose, onChanged }) {
+export default function TripCashModal({ db, dataVersion = 0, event, onClose, onChanged }) {
   const [tab, setTab] = useState('wallets');
   const [version, setVersion] = useState(0);
   const [error, setError] = useState('');
@@ -54,15 +77,23 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
     onChanged?.();
   }, [onChanged]);
 
-  // version은 sql.js DB가 제자리에서 바뀌므로 다시 읽기 위한 캐시 무효화 키
+  // version·dataVersion은 sql.js DB가 제자리에서 바뀌므로 다시 읽기 위한 캐시 무효화 키
+  // (version: 이 창에서 바꾼 것, dataVersion: 앱 어디서든 DB에 쓴 것)
   /* eslint-disable react-hooks/exhaustive-deps */
-  const wallets = useMemo(() => getEventWallets(db, event.id), [db, event.id, version]);
-  const ledger = useMemo(() => getEventCashLedger(db, event.id), [db, event.id, version]);
-  const countries = useMemo(() => getEventCountries(db, event.id), [db, event.id, version]);
+  const wallets = useMemo(() => getEventWallets(db, event.id), [db, event.id, version, dataVersion]);
+  const ledger = useMemo(() => getEventCashLedger(db, event.id), [db, event.id, version, dataVersion]);
+  const countries = useMemo(() => getEventCountries(db, event.id), [db, event.id, version, dataVersion]);
+  const accounts = useMemo(() => getAllAccounts(db), [db, dataVersion]);
+  const categories = useMemo(() => getBudgetCategories(db), [db, dataVersion]);
+  const tripCategory = useMemo(() => getTripDefaultCategory(db), [db, dataVersion]);
   /* eslint-enable react-hooks/exhaustive-deps */
-  const accounts = useMemo(() => getAllAccounts(db), [db]);
-  const categories = useMemo(() => getBudgetCategories(db), [db]);
-  const tripCategory = useMemo(() => getTripDefaultCategory(db), [db]);
+
+  const handleDeleteFlow = (id) => {
+    const links = getCashFlowLinks(db, id);
+    if (!links) return;
+    if (!window.confirm(describeFlowDeletion(links))) return;
+    run(() => { deleteEventCashFlow(db, id); bump(); });
+  };
 
   // 이월 대상 후보 — 다른 여행 유형 일정
   const tripEvents = useMemo(() => {
@@ -70,7 +101,7 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
     return getCalendarEvents(db)
       .filter(e => e.id !== event.id && typeMap[e.event_type]?.is_trip_type)
       .sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
-  }, [db, event.id]);
+  }, [db, event.id, dataVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 원화는 환전 대상이 아니므로 환전/출금 통화 목록에서 제외한다
   const currencyOptions = useMemo(() => {
@@ -156,13 +187,13 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
           )}
           {tab === 'close' && (
             <CloseForm
-              db={db} wallets={wallets} accounts={accounts} tripEvents={tripEvents}
+              db={db} eventId={event.id} wallets={wallets} accounts={accounts} tripEvents={tripEvents}
               categories={categories} tripCategory={tripCategory}
               onSubmit={payload => run(() => {
                 const r = closeEventWallet(db, { ...payload, event_id: event.id });
                 bump();
                 if (r.mode === 'refund' && r.fx) {
-                  setError(`처리 완료 — 환차${r.fx < 0 ? '손' : '익'} ${formatAmount(Math.abs(r.fx))}원`);
+                  setError(`처리 완료 — 환차${r.fx < 0 ? '손' : '익'} ${formatAmount(Math.abs(r.fx))}원${r.recordedFx ? ' (가계부에 기록)' : ''}`);
                 } else {
                   setTab('wallets');
                 }
@@ -172,7 +203,7 @@ export default function TripCashModal({ db, event, onClose, onChanged }) {
           {tab === 'history' && (
             <FlowHistory
               ledger={ledger} accounts={accounts}
-              onDelete={id => run(() => { deleteEventCashFlow(db, id); bump(); })}
+              onDelete={handleDeleteFlow}
             />
           )}
         </div>
@@ -333,6 +364,10 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
   // 현금이 비면 대개 기록 못 한 지출, 남으면 입력 실수 → 남을 땐 지갑만 조정
   const effectiveMode = diff !== null && diff > 0 ? 'adjust' : mode;
 
+  // 지출로 기록하면 가계부 거래가 생기므로 분류가 있어야 한다 (세부카테고리가 있는 카테고리면 그것도)
+  const needsCategory = effectiveMode === 'expense' && diff !== null && diff < 0;
+  const categoryMissing = needsCategory && (!category || (subs.length > 0 && !subCategory));
+
   if (!wallets.length) return <div className="tc-empty">먼저 환전/출금을 기록하세요.</div>;
 
   return (
@@ -397,7 +432,7 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
             <div className="tc-note-sm">현금이 더 많으므로 지갑 잔액만 조정합니다.</div>
           )}
 
-          {effectiveMode === 'expense' && diff < 0 && (
+          {needsCategory && (
             <div className="tc-row">
               <div className="tc-field">
                 <label>카테고리</label>
@@ -415,11 +450,14 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
               </div>
             </div>
           )}
+          {categoryMissing && (
+            <div className="tc-note-sm">지출로 기록하려면 카테고리와 세부카테고리를 선택하세요.</div>
+          )}
         </>
       )}
 
       <button
-        className="tc-submit" disabled={diff === null || diff === 0}
+        className="tc-submit" disabled={diff === null || diff === 0 || categoryMissing}
         onClick={() => onSubmit({
           currency, actual: actualNum, date, mode: effectiveMode,
           budget_category: category, sub_category: subCategory,
@@ -430,7 +468,7 @@ function ReconcileForm({ db, wallets, categories, tripCategory, onSubmit }) {
 }
 
 // ── 여행 종료 처리 ───────────────────────────────────────────────
-function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory, onSubmit }) {
+function CloseForm({ db, eventId, wallets, accounts, tripEvents, categories, tripCategory, onSubmit }) {
   const open = wallets.filter(w => Math.abs(w.balance) >= 0.005);
   const [currency, setCurrency] = useState(open[0]?.currency || '');
   const [mode, setMode] = useState('refund');
@@ -446,18 +484,29 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
   const wallet = open.find(w => w.currency === currency);
 
   const isKrw = wallet?.currency === KRW;
-  const basis = wallet ? Math.round(wallet.balance * (isKrw ? 1 : wallet.avgRate || 0)) : 0;
+  // 잔액이 음수면 환전 기록이 빠진 것 — 재환전·이월은 막고 비우기만 허용한다
+  const isNegative = !!wallet && wallet.balance < 0;
+  const effectiveMode = isNegative ? 'writeoff' : mode;
+
+  // 원가 환율은 DB(closeEventWallet)와 같은 규칙: 평균 취득 환율, 없으면 일정에 설정된 환율
+  const rate = wallet ? getWalletRate(db, eventId, wallet) : 0;
+  const basis = wallet ? Math.round(wallet.balance * rate) : 0;
   const received = evaluateFormula(receivedKrw);
   const receivedValid = received !== null && !isNaN(received) && received >= 0;
   const fx = receivedValid && basis > 0 ? received - basis : null;
+
+  // 화면에 체크박스가 보일 때만 환차손익을 기록한다
+  const showFxOption = effectiveMode === 'refund' && fx !== null && fx !== 0 && !isKrw;
+  const willRecordFx = showFxOption && recordFx;
+  const fxCategoryMissing = willRecordFx && (!category || (subs.length > 0 && !subCategory));
 
   if (!open.length) {
     return <div className="tc-empty">정리할 잔액이 없습니다. 모든 지갑이 비어 있습니다.</div>;
   }
 
-  const canSubmit = mode === 'refund'
-    ? receivedValid
-    : mode === 'carryover' ? !!targetEventId : true;
+  const canSubmit = effectiveMode === 'refund'
+    ? receivedValid && !fxCategoryMissing
+    : effectiveMode === 'carryover' ? !!targetEventId : true;
 
   return (
     <div className="tc-form">
@@ -477,29 +526,45 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
       <div className="tc-compare">
         <div><span>남은 금액</span><b>{fmtCur(wallet?.balance || 0, currency)} {currency}</b></div>
         {!isKrw && basis > 0 && (
-          <div><span>취득 원가</span><b>{formatAmount(basis)}원</b></div>
+          <div>
+            <span>취득 원가{wallet && !wallet.avgRate ? ' (일정 환율 기준)' : ''}</span>
+            <b>{formatAmount(basis)}원</b>
+          </div>
         )}
       </div>
+
+      {isNegative && (
+        <div className="tc-warn">
+          잔액이 음수입니다 — 환전 기록이 빠졌다면 '환전/출금' 탭에서 추가하세요.
+          기록 없이 잔액만 0으로 맞추려면 아래 '지갑에서 비우기'로 처리합니다.
+        </div>
+      )}
 
       <div className="tc-field">
         <label>처리 방법</label>
         <div className="tc-modes">
-          <button type="button" className={`tc-mode${mode === 'refund' ? ' active' : ''}`} onClick={() => setMode('refund')}>
+          <button
+            type="button" className={`tc-mode${effectiveMode === 'refund' ? ' active' : ''}`}
+            onClick={() => setMode('refund')} disabled={isNegative}
+          >
             <b>{isKrw ? '계좌 입금' : '재환전 후 입금'}</b>
             <span>남은 현금을 원화로 회수합니다</span>
           </button>
-          <button type="button" className={`tc-mode${mode === 'carryover' ? ' active' : ''}`} onClick={() => setMode('carryover')}>
+          <button
+            type="button" className={`tc-mode${effectiveMode === 'carryover' ? ' active' : ''}`}
+            onClick={() => setMode('carryover')} disabled={isNegative}
+          >
             <b>다음 여행으로 이월</b>
             <span>취득 원가와 함께 다른 일정으로 넘깁니다</span>
           </button>
-          <button type="button" className={`tc-mode${mode === 'writeoff' ? ' active' : ''}`} onClick={() => setMode('writeoff')}>
+          <button type="button" className={`tc-mode${effectiveMode === 'writeoff' ? ' active' : ''}`} onClick={() => setMode('writeoff')}>
             <b>지갑에서 비우기</b>
             <span>집에 보관 등 — 잔액만 0으로 만듭니다</span>
           </button>
         </div>
       </div>
 
-      {mode === 'refund' && (
+      {effectiveMode === 'refund' && (
         <>
           <div className="tc-field">
             <label>실제로 받은 원화</label>
@@ -524,12 +589,15 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
             </div>
           )}
 
-          {fx !== null && fx !== 0 && !isKrw && (
+          {showFxOption && (
             <>
               <label className="tc-check">
                 <input type="checkbox" checked={recordFx} onChange={e => setRecordFx(e.target.checked)} />
                 <span>환차{fx < 0 ? '손' : '익'}을 가계부에도 기록 (여행 총비용이 정확해집니다)</span>
               </label>
+              {fxCategoryMissing && (
+                <div className="tc-note-sm">가계부에 기록하려면 카테고리와 세부카테고리를 선택하세요.</div>
+              )}
               {recordFx && (
                 <div className="tc-row">
                   <div className="tc-field">
@@ -553,7 +621,7 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
         </>
       )}
 
-      {mode === 'carryover' && (
+      {effectiveMode === 'carryover' && (
         <div className="tc-field">
           <label>이월할 일정</label>
           {tripEvents.length === 0 ? (
@@ -574,10 +642,10 @@ function CloseForm({ db, wallets, accounts, tripEvents, categories, tripCategory
       <button
         className="tc-submit" disabled={!canSubmit}
         onClick={() => onSubmit({
-          currency, mode, date,
+          currency, mode: effectiveMode, date,
           received_krw: received, account_id: accountId ? Number(accountId) : null,
           target_event_id: targetEventId ? Number(targetEventId) : null,
-          record_fx: recordFx, budget_category: category, sub_category: subCategory,
+          record_fx: willRecordFx, budget_category: category, sub_category: subCategory,
         })}
       >처리하기</button>
     </div>

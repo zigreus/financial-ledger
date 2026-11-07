@@ -2,13 +2,9 @@ import React from 'react';
 import { useMsal } from '@azure/msal-react';
 import './Header.css';
 
-function Header({ onRefresh, onSave, loading, saving, dirty, onSettings, settingsActive }) {
-  const { accounts, instance } = useMsal();
+function Header({ onRefresh, onSave, onLogout, loading, saving, dirty, pendingCount = 0, onSettings, settingsActive }) {
+  const { accounts } = useMsal();
   const userName = accounts[0]?.name || accounts[0]?.username?.split('@')[0] || '';
-
-  const handleLogout = () => {
-    instance.logoutPopup().catch(console.error);
-  };
 
   return (
     <header className="app-header">
@@ -17,14 +13,14 @@ function Header({ onRefresh, onSave, loading, saving, dirty, onSettings, setting
         <span className="header-title">지금 가계부</span>
       </div>
       <div className="header-right">
-        {dirty && (
+        {(dirty || saving) && (
           <button
             className="btn-header btn-save"
             onClick={onSave}
             disabled={saving}
-            title="OneDrive에 저장"
+            title={saving ? 'OneDrive에 저장 중' : `저장 안 된 변경 ${pendingCount}건 — 눌러서 다시 저장`}
           >
-            {saving ? '저장 중…' : '저장'}
+            {saving ? '저장 중…' : `저장 안 됨${pendingCount ? ` ${pendingCount}` : ''}`}
           </button>
         )}
         <button
@@ -42,7 +38,7 @@ function Header({ onRefresh, onSave, loading, saving, dirty, onSettings, setting
         >
           ⚙️
         </button>
-        <button className="btn-header btn-user" onClick={handleLogout} title="로그아웃">
+        <button className="btn-header btn-user" onClick={onLogout} title="로그아웃">
           {userName || '로그아웃'}
         </button>
       </div>

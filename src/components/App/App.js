@@ -13,18 +13,20 @@ import CardStatementModal from '../CardStatement/CardStatementModal';
 import CalendarView from '../CalendarView/CalendarView';
 
 import AccountManagement from '../AccountManagement/AccountManagement';
-import { initSQL, createDatabase, exportDatabase, addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAutoRegister, runAccountAutoRegister } from '../../services/dbManager';
-import { readDbFromOneDrive, writeDbToOneDrive } from '../../services/oneDriveService';
+import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction } from '../../services/dbManager';
+import { getAIConfig, clearAIKeys } from '../../services/aiClient';
+import useLedgerSync from '../../hooks/useLedgerSync';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
   const { instance, accounts } = useMsal();
 
-  const [db, setDb] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState('');
+  // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
+  // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
+  const {
+    db, dataVersion, loading, saving, error, setError, notice,
+    dirty, pendingCount, loadDb, saveNow, resetForLogout,
+  } = useLedgerSync({ instance, accounts });
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -58,10 +60,7 @@ function App() {
     accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
   });
   const historyInitialized = React.useRef(false);
-  // 저장 큐 (saveAndReload 참고)
-  const changeSeqRef = React.useRef(0);
-  const latestDbRef = React.useRef(null);
-  const saveLoopRef = React.useRef(null);
+  const loadAttemptedRef = React.useRef(false);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -105,13 +104,19 @@ function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [applyNavState]);
 
-  // 로그인 후 DB 자동 로드
+  // 로그인 후 DB 자동 로드 (실패하면 버튼으로 다시 시도)
   useEffect(() => {
-    if (isAuthenticated && accounts.length > 0 && !db) {
+    if (!isAuthenticated || accounts.length === 0) { loadAttemptedRef.current = false; return; }
+    if (!db && !loadAttemptedRef.current) {
+      loadAttemptedRef.current = true;
       loadDb();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, accounts]);
+  }, [isAuthenticated, accounts, db, loadDb]);
+
+  // 동기화 안내(병합·자동등록 등)는 토스트로 보여준다
+  useEffect(() => {
+    if (notice) showToast(notice.text);
+  }, [notice, showToast]);
 
   // DB 최초 로드 완료 시 브라우저 히스토리 초기화
   useEffect(() => {
@@ -120,124 +125,12 @@ function App() {
     window.history.replaceState(navRef.current, '');
   }, [db]);
 
-  const loadDb = useCallback(async () => {
-    if (loading) return;
-    // 저장이 진행 중이면 끝날 때 어차피 새로고침된다 — 겹쳐 읽으면 방금 넣은 내용이 사라질 수 있음
-    if (saveLoopRef.current) {
-      showToast('저장 중입니다 — 끝나면 자동으로 새로고침됩니다');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const SQL = await initSQL();
-      const data = await readDbFromOneDrive(instance, accounts);
-      const { db: newDb, didMigrate } = createDatabase(SQL, data);
-
-      // 자동등록 실행 (매 로그인 시)
-      const { count, targetYearMonth } = runAutoRegister(newDb);
-      const accountAutoCount = runAccountAutoRegister(newDb);
-
-      const needsSave = didMigrate || count > 0 || accountAutoCount > 0;
-      if (needsSave) {
-        try {
-          const bytes = exportDatabase(newDb);
-          await writeDbToOneDrive(instance, accounts, bytes);
-        } catch (e) {
-          setError(`저장 실패: ${e.message}`);
-        }
-        if (count > 0) {
-          showToast(`✓ ${targetYearMonth} 정기지출 ${count}건 자동 등록됨`);
-        }
-      }
-
-      setDb(newDb);
-      setDirty(false);
-    } catch (e) {
-      setError(`로드 실패: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [loading, instance, accounts, showToast]);
-
-  const saveDb = useCallback(async () => {
-    if (!db || saving) return;
-    if (saveLoopRef.current) return saveLoopRef.current;
-    setSaving(true);
-    setError('');
-    try {
-      const bytes = exportDatabase(db);
-      await writeDbToOneDrive(instance, accounts, bytes);
-      setDirty(false);
-    } catch (e) {
-      setError(`저장 실패: ${e.message}`);
-    } finally {
-      setSaving(false);
-    }
-  }, [db, saving, instance, accounts]);
-
-  // ── 저장 후 OneDrive에서 새로고침 (수정 시 자동 호출) ───────────────
-  // 저장(쓰기 → 다시 읽기)이 여러 번 겹치면, 늦게 끝난 '다시 읽기'가 그 사이에
-  // 추가한 거래를 덮어써 사라지게 할 수 있다. 그래서 한 줄로 세워 처리한다.
-  //  - 변경이 들어올 때마다 번호(changeSeq)를 올린다
-  //  - 쓰는 동안 새 변경이 오면 최신 DB로 다시 쓴다
-  //  - 다시 읽는 동안 새 변경이 오면 읽은 결과를 버리고 다시 쓴다
-  // 진행 중인 저장이 있으면 새 호출은 그 저장에 합류한다 (같은 Promise를 돌려줌).
-  const saveAndReload = useCallback((currentDb) => {
-    changeSeqRef.current += 1;
-    latestDbRef.current = currentDb;
-    if (saveLoopRef.current) return saveLoopRef.current;
-
-    const run = async () => {
-      setError('');
-      for (;;) {
-        const seq = changeSeqRef.current;
-
-        setSaving(true);
-        try {
-          await writeDbToOneDrive(instance, accounts, exportDatabase(latestDbRef.current));
-        } catch (e) {
-          setError(`저장 실패: ${e.message}`);
-          return;
-        } finally {
-          setSaving(false);
-        }
-        if (seq !== changeSeqRef.current) continue;
-        setDirty(false);
-
-        setLoading(true);
-        try {
-          const SQL = await initSQL();
-          const data = await readDbFromOneDrive(instance, accounts);
-          if (seq !== changeSeqRef.current) continue;
-          const { db: newDb, didMigrate } = createDatabase(SQL, data);
-          if (didMigrate) {
-            try {
-              await writeDbToOneDrive(instance, accounts, exportDatabase(newDb));
-            } catch (e) {
-              setError(`저장 실패: ${e.message}`);
-            }
-          }
-          if (seq !== changeSeqRef.current) continue;
-          setDb(newDb);
-          return;
-        } catch (e) {
-          setError(`새로고침 실패: ${e.message}`);
-          return;
-        } finally {
-          setLoading(false);
-        }
-      }
-    };
-
-    saveLoopRef.current = run().finally(() => { saveLoopRef.current = null; });
-    return saveLoopRef.current;
-  }, [instance, accounts]);
-
-  const handleAdd = useCallback(async (txData, { keepOpen = false } = {}) => {
+  // 저장은 자동으로 된다 — 여기서는 DB에 반영하고 결과만 알린다.
+  // 저장 실패는 헤더의 '저장 안 됨' 표시와 오류 배너로 따로 보여준다 (B-003).
+  const handleAdd = useCallback((txData, { keepOpen = false } = {}) => {
     // 분할 결제는 거래 2건으로 들어온다
     const rows = Array.isArray(txData) ? txData : [txData];
-    rows.forEach(row => addTransaction(db, row));
+    withTransaction(db, () => rows.forEach(row => addTransaction(db, row)));
 
     // 연속 입력 중이면 폼을 열어둔 채 뒤에서 저장한다
     if (!keepOpen) {
@@ -249,25 +142,21 @@ function App() {
     const label = rows.length > 1
       ? `${rows[0].budget_category} ${total.toLocaleString()}원 분할 ${rows.length}건`
       : `${rows[0].budget_category} ${total.toLocaleString()}원`;
-    showToast(keepOpen ? `✓ ${label} 추가 — 저장 중…` : '저장 중…');
-    await saveAndReload(db);
     showToast(`✓ ${label} 추가됨`);
-  }, [db, showToast, saveAndReload]);
+  }, [db, showToast]);
 
   // 말로 입력한 여러 건을 한 번에 추가
-  const handleBulkAdd = useCallback(async (rows) => {
+  const handleBulkAdd = useCallback((rows) => {
     if (!rows.length) return;
-    rows.forEach(row => addTransaction(db, row));
+    withTransaction(db, () => rows.forEach(row => addTransaction(db, row)));
     setShowForm(false);
     setEditingTx(null);
     window.history.back();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
-    showToast('저장 중…');
-    await saveAndReload(db);
     showToast(`✓ ${rows.length}건 ${total.toLocaleString()}원 추가됨`);
-  }, [db, showToast, saveAndReload]);
+  }, [db, showToast]);
 
-  const handleUpdate = useCallback(async (txData) => {
+  const handleUpdate = useCallback((txData) => {
     // 분할 결제는 묶음 전체를 한 번에 반영한다.
     // id가 있으면 갱신, 없으면 새로 만들고, 묶음에 있었는데 빠진 건 삭제한다.
     const rows = Array.isArray(txData) ? txData : [txData];
@@ -276,30 +165,50 @@ function App() {
       : [editingTx.id];
 
     const keptIds = new Set(rows.map(r => r.id).filter(Boolean));
-    rows.forEach(row => {
-      if (row.id) updateTransaction(db, row.id, row);
-      else addTransaction(db, row);
+    withTransaction(db, () => {
+      rows.forEach(row => {
+        if (row.id) updateTransaction(db, row.id, row);
+        else addTransaction(db, row);
+      });
+      priorIds.filter(id => !keptIds.has(id)).forEach(id => deleteTransaction(db, id));
     });
-    priorIds.filter(id => !keptIds.has(id)).forEach(id => deleteTransaction(db, id));
 
     setShowForm(false);
     setEditingTx(null);
     window.history.back();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
     const amt = total.toLocaleString();
-    showToast(`저장 중…`);
-    await saveAndReload(db);
     showToast(rows.length > 1
       ? `✓ ${rows[0].budget_category} ${amt}원 분할 ${rows.length}건 수정됨`
-      : `✓ ${rows[0].budget_category} ${amt}원 수정 및 저장됨`);
-  }, [db, editingTx, showToast, saveAndReload]);
+      : `✓ ${rows[0].budget_category} ${amt}원 수정됨`);
+  }, [db, editingTx, showToast]);
 
-  const handleDelete = useCallback(async (id) => {
-    deleteTransaction(db, id);
-    showToast('저장 중…');
-    await saveAndReload(db);
-    showToast('✓ 거래가 삭제되었습니다');
-  }, [db, showToast, saveAndReload]);
+  // id 하나 또는 id 배열(분할 묶음 전체 삭제 등)
+  const handleDelete = useCallback((idOrIds) => {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    withTransaction(db, () => ids.forEach(id => deleteTransaction(db, id)));
+    showToast(ids.length > 1 ? `✓ 거래 ${ids.length}건이 삭제되었습니다` : '✓ 거래가 삭제되었습니다');
+  }, [db, showToast]);
+
+  /** 화면이 변경 후 부르는 콜백 — 바로 저장하고, 성공하면 안내한다 */
+  const saveWithToast = useCallback(async (msg = '✓ 저장됨') => {
+    const ok = await saveNow();
+    if (ok) showToast(msg);
+    return ok;
+  }, [saveNow, showToast]);
+
+  const handleLogout = useCallback(async () => {
+    if (dirty) {
+      const ok = await saveNow();
+      if (!ok && !window.confirm(`저장되지 않은 변경 ${pendingCount}건이 있습니다.\n로그아웃하면 이 변경은 사라집니다. 그래도 로그아웃할까요?`)) return;
+    }
+    const hasAIKey = Object.values(getAIConfig().keys).some(k => String(k || '').trim());
+    if (hasAIKey && window.confirm('이 기기에 저장된 AI API 키도 지울까요?\n(다른 사람도 쓰는 기기라면 지우는 것을 권장합니다)')) {
+      clearAIKeys();
+    }
+    resetForLogout();
+    instance.logoutRedirect({ account: accounts[0] }).catch(e => setError(`로그아웃 실패: ${e.message}`));
+  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError]);
 
   const openAdd = (date) => {
     setDefaultFormDate(typeof date === 'string' ? date : null);
@@ -320,10 +229,8 @@ function App() {
   const handleImport = useCallback(async () => {
     setShowImport(false);
     window.history.back();
-    showToast('저장 중…');
-    await saveAndReload(db);
-    showToast('✓ 가져오기 완료 및 저장됨');
-  }, [db, showToast, saveAndReload]);
+    await saveWithToast('✓ 가져오기 완료 및 저장됨');
+  }, [saveWithToast]);
 
   if (!isAuthenticated) return <LoginPage />;
 
@@ -338,7 +245,7 @@ function App() {
         ) : (
           <>
             {error && <p className="error-msg">{error}</p>}
-            <button className="btn-primary" onClick={loadDb}>가계부 불러오기</button>
+            <button className="btn-primary" onClick={() => loadDb()}>가계부 불러오기</button>
           </>
         )}
       </div>
@@ -348,11 +255,13 @@ function App() {
   return (
     <div className="app-container">
       <Header
-        onRefresh={loadDb}
-        onSave={saveDb}
+        onRefresh={() => loadDb()}
+        onSave={() => saveNow()}
+        onLogout={handleLogout}
         loading={loading}
         saving={saving}
         dirty={dirty}
+        pendingCount={pendingCount}
         onSettings={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         settingsActive={activeTab === 'settings'}
       />
@@ -373,13 +282,12 @@ function App() {
         {activeTab === 'list' && (
           <TransactionList
             db={db}
+            dataVersion={dataVersion}
             goTodayKey={listGoTodayKey}
             onAdd={openAdd}
             onEdit={openEdit}
             onDelete={handleDelete}
-            onChanged={async () => {
-              await saveAndReload(db);
-            }}
+            onChanged={() => saveWithToast()}
             onOpenImport={() => navigate({ showImport: true })}
             onOpenCardCheck={() => navigate({ showCardCheck: true })}
           />
@@ -387,6 +295,7 @@ function App() {
         {activeTab === 'summary' && (
           <SummaryView
             db={db}
+            dataVersion={dataVersion}
             tab={summaryTab}
             drilldownCategory={summaryDrilldown}
             onTabChange={(t) => navigate({ summaryTab: t, summaryDrilldown: null })}
@@ -396,12 +305,9 @@ function App() {
         {activeTab === 'calendar' && (
           <CalendarView
             db={db}
+            dataVersion={dataVersion}
             goTodayKey={calendarGoTodayKey}
-            onChanged={async () => {
-              showToast('저장 중…');
-              await saveAndReload(db);
-              showToast('✓ 저장됨');
-            }}
+            onChanged={() => saveWithToast()}
             showEventForm={showEventForm}
             onOpenEventForm={() => navigate({ showEventForm: true })}
             onCloseEventForm={() => { setShowEventForm(false); window.history.back(); }}
@@ -412,28 +318,24 @@ function App() {
         {activeTab === 'account' && (
           <AccountManagement
             db={db}
+            dataVersion={dataVersion}
             drilldown={accountDrilldown}
             detailTab={accountDetailTab}
             showForm={showAccountForm}
             onDrilldownChange={(v) => navigate({ accountDrilldown: v })}
             onDetailTabChange={(t) => navigate({ accountDetailTab: t })}
             onCloseForm={() => setShowAccountForm(false)}
-            onChanged={async () => {
-              showToast('저장 중…');
+            onChanged={() => {
               runAccountAutoRegister(db);
-              await saveAndReload(db);
-              showToast('✓ 저장됨');
+              return saveWithToast();
             }}
           />
         )}
         {activeTab === 'settings' && (
           <SettingsView
             db={db}
-            onChanged={async () => {
-              showToast('저장 중…');
-              await saveAndReload(db);
-              showToast('✓ 설정이 저장됨');
-            }}
+            dataVersion={dataVersion}
+            onChanged={() => saveWithToast('✓ 설정이 저장됨')}
             activeSection={settingsSection}
             drilldownCategory={settingsDrilldownCategory}
             drilldownTrip={settingsDrilldownTrip}
@@ -513,6 +415,7 @@ function App() {
       {showForm && (
         <TransactionForm
           db={db}
+          dataVersion={dataVersion}
           editingTx={editingTx}
           defaultDate={defaultFormDate}
           onSave={editingTx ? handleUpdate : handleAdd}
@@ -525,7 +428,8 @@ function App() {
       {showCardCheck && (
         <CardStatementModal
           db={db}
-          onChanged={() => saveAndReload(db)}
+          dataVersion={dataVersion}
+          onChanged={() => saveNow()}
           onClose={() => { setShowCardCheck(false); window.history.back(); }}
         />
       )}
@@ -534,6 +438,7 @@ function App() {
       {showImport && (
         <ImportModal
           db={db}
+          dataVersion={dataVersion}
           onImport={handleImport}
           onClose={() => { setShowImport(false); window.history.back(); }}
         />

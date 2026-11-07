@@ -1,0 +1,143 @@
+# AGENTS.md — 지금 가계부 코드 작성 규칙
+
+이 파일은 이 저장소에서 작업하는 모든 AI 코딩 도구와 사람이 **작업을 시작하기 전에 읽는 기준**입니다.
+- Claude Code는 `CLAUDE.md`가 이 파일을 불러옵니다.
+- Codex·Cursor·Copilot 등 다른 도구는 이 파일을 직접 읽습니다.
+
+규칙마다 괄호 안에 근거가 된 버그 번호(docs/BUGS.md)를 적었습니다. 규칙을 어기면 그 버그가 다시 생깁니다.
+
+## 1. 프로젝트 한눈에
+
+- 가족이 함께 쓰는 가계부 웹앱입니다. 서버가 없습니다.
+- 기술: React 18, CRA + react-app-rewired, sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`)
+- 모바일 우선, UI 문구는 한국어입니다.
+
+| 위치 | 역할 |
+|---|---|
+| `src/services/dbManager.js` | 스키마·마이그레이션·모든 DB 읽기/쓰기 함수 |
+| `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
+| `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
+| `src/services/oneDriveService.js` | Graph 호출(eTag 조건부 저장) |
+| `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
+| `src/data/holidays.js` | 한국 공휴일(연도별) |
+| `src/components/*` | 화면 |
+| `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
+
+## 2. 데이터와 저장 — 가장 중요
+
+1. **DB 쓰기는 dbManager 함수로만 합니다.**
+   - 컴포넌트에서 쓰기 SQL을 직접 실행하지 않습니다. 읽기도 가능하면 dbManager 함수를 씁니다.
+   - 쓰기는 `db.run`으로 합니다. `db.prepare`로 쓰면 변경 기록에 잡히지 않아 저장·병합에서 빠집니다. (B-001)
+2. **저장은 자동입니다.**
+   - useLedgerSync가 모든 쓰기를 기록하고 잠시 뒤 OneDrive에 저장합니다. 다른 기기와 충돌하면 최신 파일에 내 변경을 다시 실행해 합칩니다.
+   - 컴포넌트는 OneDrive를 직접 부르지 않습니다.
+   - `onChanged()`는 "지금 저장하고 토스트를 보여 줘"라는 뜻입니다. 부르지 않아도 저장은 됩니다. (B-001, B-003, B-037)
+3. **확정 전에는 DB에 쓰지 않습니다.**
+   - 미리보기, 마법사 중간 단계, 취소 가능한 화면에서 쓰면 바로 저장됩니다.
+   - 사용자가 확정할 때 한 번에 씁니다. (B-029)
+4. **db를 읽는 useMemo/useEffect는 `dataVersion`이 바뀌면 다시 계산되게 합니다.**
+   - sql.js는 같은 객체를 제자리에서 바꾸므로 `[db]`만으로는 화면이 갱신되지 않습니다.
+   - App이 모든 화면에 `dataVersion` prop을 넘깁니다. (B-014)
+   - 새 코드는 `useDbSnapshot`을 씁니다. eslint 예외 주석이 필요 없습니다. 예전의 `[db, dataVersion]` + eslint-disable 방식은 I-010에서 이쪽으로 통일합니다.
+     ```js
+     const live = useDbSnapshot(db, dataVersion);
+     const items = useMemo(() => getItems(live.db), [live]);
+     ```
+5. **여러 문장으로 된 변경은 `withTransaction(db, () => { ... })`로 감쌉니다.**
+   - 중간에 실패하면 전부 되돌립니다. SAVEPOINT 기반이라 중첩해도 안전합니다. (B-019)
+6. **다른 테이블의 id를 담는 컬럼을 새로 만들면** `changeLog.js`의 `FK_COLUMNS`에 `컬럼: 테이블`을 추가합니다.
+   - 충돌 병합 때 새로 추가한 행의 id가 바뀌면, 이 목록으로 참조를 고칩니다. (B-001)
+7. **자동 생성 로직(자동등록 등)은 멱등이어야 합니다.**
+   - 여러 번 실행해도 결과가 같아야 하고, 사용자가 지운 것은 되살리지 않습니다.
+   - "이미 만들었는지"는 실제 날짜가 아니라 고정된 키(항목 id + 대상 월 등)로 판단하고, 가능하면 UNIQUE 인덱스로 막습니다. (B-007, B-008)
+   - 정기지출 자동등록(`runAutoRegister`)은 불러온 직후, 변경 기록을 붙이기 전에만 실행합니다.
+8. **스키마는 이렇게 바꿉니다.** (B-002, B-015, I-009)
+   - 새 컬럼은 `COLUMN_MIGRATIONS`에 한 줄 추가합니다.
+   - 새 테이블은 `SCHEMA`에 `CREATE TABLE IF NOT EXISTS`로 추가합니다.
+   - 데이터 변환은 `createDatabase`의 `step()`으로 작성하고, **실제로 바꿨을 때만 true를 돌려줍니다.**
+   - `didMigrate = true`를 조건 없이 설정하지 않습니다. 매번 OneDrive 전체 업로드가 일어납니다.
+   - 스키마를 바꾸면 `SCHEMA_VERSION`을 올립니다.
+   - 쓰지 않게 된 테이블을 `SCHEMA`에 남겨 두지 않습니다.
+9. **SQL 값은 항상 `?` 파라미터로 바인딩합니다.** 테이블·컬럼 이름을 보간해야 하면 허용 목록으로 검사합니다.
+
+## 3. 이름 변경·삭제는 모든 참조와 함께
+
+카테고리·세부카테고리·결제수단은 id가 아니라 **이름(문자열)으로 참조**됩니다.
+이름을 바꾸거나 지우면 아래 참조를 모두 처리하고, 하나의 트랜잭션으로 묶습니다. (B-019, B-020, B-021)
+- 이 규칙은 dbManager의 `CATEGORY_REF_TABLES`, `rename*`, `get*Usage`, `delete*` 함수에 구현되어 있습니다.
+- 카테고리를 참조하는 테이블을 새로 만들면 이 목록과 함수들에 추가합니다.
+
+- `transactions`(budget_category, sub_category, payment_method)
+- `recurring_transactions`, `favorite_transactions`
+- `payment_method_discount_rules`(payment_method_name, budget_category, sub_category)
+- `auto_pattern_settings`(sub_category)
+- `settings`의 `trip_default_category`
+- `account_recurring_items.auto_payment_method`(결제수단)
+
+다음 규칙도 함께 지킵니다.
+- **확인창 문구는 실제 동작과 정확히 일치해야 합니다.** 예: "거래가 비워집니다"라고 썼으면 실제로 비웁니다.
+- **연결된 기록은 함께 정리합니다.** 예: 현금 흐름 ↔ 계좌 거래, 이월 짝, 분할 결제 짝, 일정 ↔ 현금 흐름. (B-038, B-044, B-053)
+
+## 4. 금액
+
+- **모든 금액·환율 입력은 `AmountInput` + `formulaEvaluator`를 씁니다.** `parseInt`·`parseFloat`·`Number()`로 직접 읽지 않습니다. (B-025)
+  - `evaluateFormula`: 원화(정수)
+  - `parseForeignAmount`: 외화(소수)
+  - `parseRate`: 환율
+- **잘못된 입력은 NaN으로 보고 오류를 보여 줍니다.**
+  - `|| 0`으로 조용히 0을 만들지 않습니다. (B-036, B-041)
+  - 허용 문자는 숫자, 사칙연산, 괄호, 쉼표, ×, ÷, 끝의 '원'입니다.
+- **순지출은 `amount - discount_amount`입니다.** 화면 막대·합계·정렬이 같은 값을 써야 합니다. (B-051)
+- **분할 결제는 몫마다 한 행이고 `split_group_id`로 묶습니다.**
+  - 할인은 몫의 금액 기준으로 계산합니다. (B-030)
+  - 수정할 때는 저장된 몫·환율을 유지합니다. (B-033)
+- **외화는 `foreign_amounts`(JSON `{통화: 금액}`)에 기록합니다.** 원화 `amount`는 별도로 저장합니다.
+
+## 5. 날짜
+
+- 날짜는 로컬 `'YYYY-MM-DD'` 문자열로 다룹니다.
+- **금지:** `toISOString()`(UTC라 한국에서 하루 전 날짜가 나옴), `new Date('YYYY-MM-DD')`(UTC 자정으로 해석). (B-011)
+- 문자열을 Date로 바꿀 때는 `new Date(y, m - 1, d)`를 씁니다.
+- 날짜 입력은 실제 달력 기준으로 검증합니다. 2월 30일, 종료일 < 시작일은 막습니다. (B-029, B-050)
+- **공휴일:** 매년 하반기에 `src/data/holidays.js`에 다음 해를 추가합니다(대체공휴일 포함). 데이터가 없는 연도는 앱이 경고합니다. (B-006)
+
+## 6. 화면(React)
+
+- 모바일 우선입니다. UI 문구는 한국어로 쓰고 존댓말 안내체를 씁니다.
+- 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
+- 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)
+- `dangerouslySetInnerHTML`은 쓰지 않습니다. AI 응답과 사용자 입력은 텍스트로만 렌더링합니다.
+- 비동기 요청(AI·네트워크)은 `AbortController`로 취소할 수 있게 하고, 취소는 오류로 표시하지 않습니다.
+- 늦게 도착한 응답이 현재 화면 상태와 맞는지 확인합니다. (B-049, B-052)
+- 같은 로직을 복사하지 않습니다. 카테고리 색은 `common/categoryColor`, CSV는 공통 파서를 씁니다. (B-054, I-005)
+
+## 7. AI 연동
+
+- API 키는 기기의 localStorage에만 둡니다. 가족이 함께 쓰는 DB에는 절대 저장하지 않습니다.
+- AI가 고른 결제수단·카테고리는 DB 목록과 대조해 검증합니다. 목록에 없으면 버립니다.
+- AI에게 보내는 가계부 정보는 결제수단·카테고리 목록과 입력 습관처럼 필요한 범위로 제한합니다.
+
+## 8. 버그 기록 — docs/BUGS.md
+
+버그를 찾거나 고치면 `docs/BUGS.md`에 기록합니다.
+- **번호:** 버그는 `B-xxx`, 개선은 `I-xxx`입니다. 파일 상단의 "다음 번호"를 쓰고, 번호는 재사용하지 않습니다.
+- **항목 키:** `상태 / 심각도 / 영역 / 문제 / 원인 / 해결 / 파일`이고, 문제·원인·해결은 **각 1줄**입니다.
+- **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고칩니다.
+
+## 9. 테스트와 검증
+
+- dbManager·changeLog·formulaEvaluator 같은 로직을 바꾸면 `src/services/__tests__/`에 테스트를 추가합니다.
+  - sql.js는 Node에서 바로 돌아갑니다. 파일 맨 위에 `@jest-environment node`를 둡니다.
+- 커밋 전에 아래를 확인합니다.
+  - `npm test -- --watchAll=false`(CI=true): 전부 통과
+  - `npx eslint src`: 경고 0
+  - `npm run build`: 성공
+- sql.js WASM은 `scripts/copy-sql-wasm.js`가 빌드 전에 `public/`으로 복사합니다. CDN URL을 쓰지 않습니다. (B-013)
+
+## 10. Git
+
+- 사용자가 "커밋해줘"라고 하면 main에 직접 커밋하고 푸시까지 합니다.
+- 여러 AI 세션이 같은 저장소에서 동시에 작업할 수 있습니다.
+  - `git add -A`나 `git add .` 대신 내가 바꾼 파일만 지정합니다.
+  - 작업을 시작할 때 `git status`로 다른 사람의 미커밋 변경이 있는지 확인합니다.
+- 커밋 메시지는 한국어로, 무엇을 왜 바꿨는지 요약합니다.

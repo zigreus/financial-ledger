@@ -24,3 +24,6 @@ yarn-error.log*
 
 .vercel
 .env*.local
+
+# sql.js WASM (scripts/copy-sql-wasm.js가 빌드 때 복사)
+/public/sql-wasm.wasm
