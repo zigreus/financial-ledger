@@ -153,7 +153,10 @@ npm start
 - 앱의 **설정 > AI**에서 공급자(Gemini 또는 Claude)를 고르고 API 키를 입력합니다.
   - Gemini: Google AI Studio(aistudio.google.com/app/apikey)에서 무료로 발급
   - Claude: Anthropic Console(console.anthropic.com)의 API Keys에서 발급(사용량만큼 과금)
-- API 키는 **이 기기의 브라우저(localStorage)에만** 저장됩니다. 가족이 함께 쓰는 DB에는 저장하지 않으므로, 기기마다 따로 입력합니다.
+- API 키는 가계부 DB(`ledger.db`)에 넣지 않습니다. 이 기기의 브라우저(localStorage)와, 같은 계정 OneDrive의 별도 파일 `Apps/financial-ledger/ai-settings.json`에 둡니다.
+  - 한 기기에서 입력하면, 같은 Microsoft 계정으로 로그인한 다른 기기도 앱을 열 때 받아 옵니다. 기기마다 다시 입력하지 않아도 됩니다.
+  - 같은 계정으로 로그인하는 가족은 모두 이 키를 함께 씁니다.
+  - **키 삭제 (모든 기기)**를 누르면 모든 기기에서 지워집니다. 로그아웃은 이 기기에서만 지우므로, 다시 로그인하면 돌아옵니다.
 
 ---
 
