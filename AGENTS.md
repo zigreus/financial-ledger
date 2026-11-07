@@ -14,7 +14,8 @@
 
 | 위치 | 역할 |
 |---|---|
-| `src/services/dbManager.js` | 스키마·마이그레이션·모든 DB 읽기/쓰기 함수 |
+| `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts, discounts. 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/oneDriveService.js` | Graph 호출(eTag 조건부 저장) |
@@ -25,7 +26,7 @@
 
 ## 2. 데이터와 저장 — 가장 중요
 
-1. **DB 쓰기는 dbManager 함수로만 합니다.**
+1. **DB 쓰기는 dbManager 함수로만 합니다.** 새 함수는 `src/services/db/`의 해당 모듈에 추가하고, 모듈 사이 순환 import는 만들지 않습니다(공용 도우미는 `db/common.js`).
    - 컴포넌트에서 쓰기 SQL을 직접 실행하지 않습니다. 읽기도 가능하면 dbManager 함수를 씁니다.
    - 쓰기는 `db.run`으로 합니다. `db.prepare`로 쓰면 변경 기록에 잡히지 않아 저장·병합에서 빠집니다. (B-001)
 2. **저장은 자동입니다.**
@@ -52,7 +53,7 @@
    - "이미 만들었는지"는 실제 날짜가 아니라 고정된 키(항목 id + 대상 월 등)로 판단하고, 가능하면 UNIQUE 인덱스로 막습니다. (B-007, B-008)
    - 정기지출 자동등록(`runAutoRegister`)은 불러온 직후, 변경 기록을 붙이기 전에만 실행합니다.
 8. **스키마는 이렇게 바꿉니다.** (B-002, B-015, I-009)
-   - 새 컬럼은 `COLUMN_MIGRATIONS`에 한 줄 추가합니다.
+   - 새 컬럼은 `db/schema.js`의 `COLUMN_MIGRATIONS`에 한 줄 추가합니다.
    - 새 테이블은 `SCHEMA`에 `CREATE TABLE IF NOT EXISTS`로 추가합니다.
    - 데이터 변환은 `createDatabase`의 `step()`으로 작성하고, **실제로 바꿨을 때만 true를 돌려줍니다.**
    - `didMigrate = true`를 조건 없이 설정하지 않습니다. 매번 OneDrive 전체 업로드가 일어납니다.
@@ -64,7 +65,7 @@
 
 카테고리·세부카테고리·결제수단은 id가 아니라 **이름(문자열)으로 참조**됩니다.
 이름을 바꾸거나 지우면 아래 참조를 모두 처리하고, 하나의 트랜잭션으로 묶습니다. (B-019, B-020, B-021)
-- 이 규칙은 dbManager의 `CATEGORY_REF_TABLES`, `rename*`, `get*Usage`, `delete*` 함수에 구현되어 있습니다.
+- 이 규칙은 `db/masterData.js`의 `CATEGORY_REF_TABLES`, `rename*`, `get*Usage`, `delete*` 함수에 구현되어 있습니다.
 - 카테고리를 참조하는 테이블을 새로 만들면 이 목록과 함수들에 추가합니다.
 
 - `transactions`(budget_category, sub_category, payment_method)

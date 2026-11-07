@@ -80,7 +80,7 @@
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
-| I-004 | ⏸ | - | 구조 | SettingsView·TransactionForm·dbManager 파일 분리 |
+| I-004 | ✅ | - | 구조 | SettingsView·TransactionForm·dbManager 파일 분리 |
 | I-005 | ✅ | - | 구조 | CSV 파서 중복, 따옴표 안 줄바꿈 미지원 |
 | I-006 | ✅ | - | 구조 | 로컬 날짜 포맷 함수 5벌 이상 중복 |
 | I-007 | ✅ | - | 정리 | README가 CRA 기본 문서, 0바이트 sqlite 파일이 커밋됨 |
@@ -665,12 +665,12 @@
 - 파일: src/services/dbManager.js
 
 ### I-004 SettingsView·TransactionForm·dbManager 파일 분리
-- 상태: ⏸ 보류(대규모 구조 변경이라 이번 버그 수정과 분리)
+- 상태: ✅ 해결 (2026-11-07)
 - 영역: 구조
 - 문제: SettingsView 1,573줄(useState 40여 개), TransactionForm 855줄, dbManager 2,724줄로 수정 범위를 파악하기 어렵다.
 - 원인: 기능이 늘면서 한 파일에 계속 추가했다.
-- 해결: (보류) 이번 수정으로 파일이 더 커졌으므로 다음 정리 작업 1순위로 둔다.
-- 파일: 해당 파일들
+- 해결: dbManager.js(2,865줄)는 기능별 모듈 src/services/db/*.js 14개로 나누고 재내보내기만 남겼다(export 136개 동일, 순환 import 없음). SettingsView(1,658→124줄)는 섹션 8개와 공용 파일로, TransactionForm(1,002→447줄)은 기본 칸·즐겨찾기·분할·여행 금액·자동할인 컴포넌트와 훅으로 나눴다. 분리 전후로 SettingsView 110단계 DOM·DB 비교와 TransactionForm 렌더링 테스트 16개가 일치했다. 남은 차이는 하나다: 설정에서 다른 섹션에 갔다 오면 입력 중이던 내용이 초기화된다.
+- 파일: src/services/dbManager.js, src/services/db/*.js(신규), src/components/SettingsView/**, src/components/TransactionForm/**(테스트 3개 포함)
 
 ### I-005 CSV 파서 중복, 따옴표 안 줄바꿈 미지원
 - 상태: ✅ 해결 (2026-11-07)
