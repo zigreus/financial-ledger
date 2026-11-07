@@ -13,13 +13,15 @@ export const PROVIDERS = {
     label: 'Gemini (Google)',
     keyHelp: 'Google AI Studio → aistudio.google.com/app/apikey 에서 무료 발급',
     keyPlaceholder: 'AIza…',
-    defaultModel: 'gemini-2.5-flash',
+    // 추천(기본) 모델. 공식 별칭이라 항상 최신 Flash를 가리켜 모델 지원 종료에 영향받지 않는다
+    // (가리키는 모델이 바뀌기 2주 전 Google이 이메일로 알림)
+    defaultModel: 'gemini-flash-latest',
   },
   claude: {
     label: 'Claude (Anthropic)',
     keyHelp: 'Anthropic Console → console.anthropic.com 의 API Keys 에서 발급 (사용량만큼 과금)',
     keyPlaceholder: 'sk-ant-…',
-    defaultModel: 'claude-sonnet-5-5',
+    defaultModel: 'claude-sonnet-5-5', // 추천(기본) 모델
   },
 };
 
@@ -115,8 +117,10 @@ export async function listModels(provider, apiKey, { signal } = {}) {
     .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
     .map(m => String(m.name).replace(/^models\//, ''))
     .filter(id => /^gemini/i.test(id) && !/embedding|tts|image|live|audio|native/i.test(id));
-  // 안정판 → flash → 높은 버전 순
-  const rank = id => (/preview|exp/i.test(id) ? 2 : 0) + (/flash/i.test(id) && !/lite/i.test(id) ? 0 : 1);
+  // 추천 모델 → 안정판 → flash(lite 제외) → 높은 버전 순
+  const rank = id => (id === PROVIDERS.gemini.defaultModel ? -10 : 0)
+    + (/preview|exp/i.test(id) ? 2 : 0)
+    + (/flash/i.test(id) && !/lite/i.test(id) ? 0 : 1);
   return ids.sort((a, b) => rank(a) - rank(b) || b.localeCompare(a, undefined, { numeric: true }));
 }
 

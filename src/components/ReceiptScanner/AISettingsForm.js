@@ -103,7 +103,9 @@ export default function AISettingsForm({ onSaved, onCancel, compact = false }) {
         <label>모델</label>
         <div className="ai-model-row">
           <select value={model} onChange={e => update({ models: { [provider]: e.target.value } })}>
-            {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            {modelOptions.map(m => (
+              <option key={m} value={m}>{m}{m === info.defaultModel ? ' (추천)' : ''}</option>
+            ))}
           </select>
           <button type="button" className="ai-btn-secondary" disabled={!apiKey.trim() || checking} onClick={checkConnection}>
             {checking ? '확인 중…' : '연결 확인'}
