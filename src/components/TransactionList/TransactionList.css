@@ -598,3 +598,140 @@
   color: var(--primary);
   cursor: pointer;
 }
+
+/* ── 필터 패널 (C-7, I-021) ─────────────────────────────── */
+/* 패널을 열면 필터바가 붙박이를 풀고(목록을 덮지 않게) 패널 아래 결과 줄만 화면 아래에 붙는다 */
+.filter-bar.panel-open { position: relative; }
+.filter-panel {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+.filter-panel-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.filter-result { flex: 1; font-size: 13px; font-weight: 600; }
+.filter-show-results { color: var(--primary-dark); border-color: var(--primary); }
+.filter-link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--primary-dark);
+  cursor: pointer;
+}
+.empty-state .empty-state-sub { font-size: 12px; color: var(--text-muted); margin-top: -8px; }
+.filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.filter-row input[type="date"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg);
+}
+.filter-group { display: flex; flex-direction: column; gap: 6px; }
+.filter-label { font-size: 12px; font-weight: 600; color: var(--text-muted); flex-shrink: 0; min-width: 40px; }
+.filter-label small { font-weight: 400; margin-left: 4px; }
+.filter-sep { color: var(--text-muted); font-size: 13px; }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.filter-chip.on { background: #EFF6FF; border-color: var(--primary); color: var(--primary-dark); font-weight: 600; }
+.filter-chip.hidden-item { color: var(--text-muted); }
+.filter-chip-add { border-style: dashed; color: var(--primary-dark); }
+.filter-amount-wrap { flex: 1; min-width: 0; }
+.filter-amount {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg);
+}
+.filter-error { font-size: 12px; color: var(--danger); line-height: 1.5; }
+.filter-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.saved-filter { display: inline-flex; align-items: center; }
+.saved-filter .filter-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.saved-filter-del {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 999px 999px 0;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.saved-filter-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+/* ── 걸러진 거래 요약 (C-7, I-021) ──────────────────────── */
+.fsum {
+  margin: 10px 16px 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fsum-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.fsum-totals { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fsum-totals strong { font-size: 16px; }
+.fsum-filter { font-size: 12px; color: var(--text-muted); line-height: 1.5; word-break: keep-all; }
+.fsum-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.fsum-ai-btn { color: var(--primary-dark); border-color: var(--primary); }
+.fsum-breakdown { display: flex; flex-direction: column; gap: 10px; }
+.fsum-col { display: flex; flex-direction: column; gap: 5px; }
+.fsum-col-title { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.fsum-bar-row { display: grid; grid-template-columns: minmax(56px, 30%) 1fr auto; align-items: center; gap: 8px; font-size: 12px; }
+.fsum-bar-label, .fsum-detail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fsum-bar-track { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.fsum-bar { display: block; height: 100%; border-radius: 4px; }
+.fsum-bar-value { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.fsum-detail-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.fsum-ai {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #F5F3FF;
+  border: 1px solid #DDD6FE;
+  font-size: 13px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.fsum-ai-loading { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+.fsum-ai-error { background: #FEF2F2; border-color: #FECACA; color: var(--danger); }
+.fsum-ai-headline { font-weight: 600; }
+.fsum-ai-points { padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.fsum-ai-tip { color: #92400E; }
+.fsum-ai-note { font-size: 11px; color: var(--text-muted); }

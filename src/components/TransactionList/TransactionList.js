@@ -1,11 +1,18 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, MEMBER_NONE, isBlankLedger, getAllSubCategories } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import BalanceAlertBanner from './BalanceAlertBanner';
 import FirstEntryGuide from './FirstEntryGuide';
+import FilterPanel from './FilterPanel';
+import FilterSummary from './FilterSummary';
+import {
+  EMPTY_FILTERS, toQuery, isFiltered, describeFilters,
+  loadSavedFilters, saveFilter, deleteSavedFilter, fitSavedFilters,
+  loadSessionFilters, storeSessionFilters, excludesToday, withoutPeriod,
+} from '../../services/txFilters';
 import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
@@ -13,10 +20,21 @@ import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
 import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
-const EMPTY_FILTERS = { month: '', payment_method: '', budget_category: '', member: '', search: '' };
 
 function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenOnboarding, onOpenSettings }) {
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  // 탭을 옮겼다 와도(설정 › AI에 다녀오는 등) 걸던 조건을 이어 쓴다 — 그사이 없어진 이름은 뺀다
+  const [filters, setFilters] = useState(() => fitSavedFilters(loadSessionFilters(), {
+    paymentMethods: getAllPaymentMethods(db).map(m => m.name),
+    categories: getAllBudgetCategories(db).map(c => c.name),
+    members: getMemberNames(db),
+  }).filters);
+  useEffect(() => { storeSessionFilters(filters); }, [filters]);
+  // 화면 필터 → 조회 조건 (잘못된 기간·금액은 errors에 이유, 그 조건은 걸지 않음) — I-021
+  const { query, errors: filterErrors } = useMemo(() => toQuery(filters), [filters]);
+  const queryRef = useRef(query); // 오늘로 가기(effect)가 그때의 조건을 읽는다
+  queryRef.current = query;
+  const [savedFilters, setSavedFilters] = useState(() => loadSavedFilters());
+  const [savedNote, setSavedNote] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
@@ -116,8 +134,8 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const validationCtx = useMemo(() => buildValidationContext(live.db), [live]);
 
   const allTransactions = useMemo(
-    () => getTransactions(live.db, filters),
-    [live, filters]
+    () => getTransactions(live.db, query),
+    [live, query]
   );
 
   const hasAnyIssue = useMemo(
@@ -180,10 +198,14 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   }, []);
 
   // 거래내역 탭 버튼 재클릭 시 오늘 날짜로 포커스
+  // goTodayKey는 App에서 늘기만 하므로, 다른 탭에 다녀와 새로 그려질 때도 0이 아니다 — 기간을 푸는 것은
+  // 이 화면이 열린 뒤 실제로 다시 눌렀을 때만 한다(탭을 옮겨도 이어 온 조건이 풀리지 않게)
+  const goTodayAtMountRef = useRef(goTodayKey);
   useEffect(() => {
     if (goTodayKey === 0) return;
     const todayStr = todayDateStr();
-    setFilters(f => ({ ...f, month: '' }));
+    // 기간 조건이 오늘을 빼고 있으면 기간만 푼다 — 다른 조건(결제수단·검색어 등)은 그대로
+    if (goTodayKey !== goTodayAtMountRef.current && excludesToday(queryRef.current, todayStr)) setFilters(withoutPeriod);
     setFocusedDate(todayStr);
     setExpandedMonths(prev => prev.has(currentMonth) ? prev : new Set([...prev, currentMonth]));
     setTimeout(() => {
@@ -207,12 +229,19 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
     return () => observer.disconnect();
   }, []);
 
-  // 월 필터 선택 시 해당 월 자동 펼침
+  // 기간 조건을 바꾸면 그 결과에 있는 달을 펼친다 — 지난달·작년·직접 입력을 골라도 하나씩 누르지 않게.
+  // 기간을 바꿀 때만 펼치고, 그 뒤 사용자가 접은 달은 그대로 둔다(결과가 바뀔 때·탭에 돌아올 때 다시 펼치지 않음)
+  const resultMonthsRef = useRef([]);
+  resultMonthsRef.current = Object.keys(groupedTransactions);
+  const periodKey = `${query.month || ''}|${query.dateFrom || ''}|${query.dateTo || ''}`;
+  const periodKeyAtMountRef = useRef(periodKey);
   useEffect(() => {
-    if (filters.month) {
-      setExpandedMonths(prev => new Set([...prev, filters.month]));
-    }
-  }, [filters.month]);
+    if (periodKey === '||' || periodKey === periodKeyAtMountRef.current) return;
+    periodKeyAtMountRef.current = null; // 한 번 바꾼 뒤로는 처음 값으로 돌아와도 펼친다
+    const monthsToOpen = query.month ? [query.month] : resultMonthsRef.current;
+    setExpandedMonths(prev => new Set([...prev, ...monthsToOpen]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodKey]);
 
   const toggleMonth = (month) => {
     const newExpanded = new Set(expandedMonths);
@@ -261,8 +290,22 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
 
   const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
 
-  const clearFilters = () => { setFilters(EMPTY_FILTERS); setShowIssueOnly(false); };
-  const hasFilters = Object.values(filters).some(v => v !== '') || showIssueOnly;
+  const clearFilters = () => { setFilters(EMPTY_FILTERS); setShowIssueOnly(false); setSavedNote(''); };
+  const hasFilters = isFiltered(filters) || showIssueOnly;
+  const filterText = `${describeFilters(filters, query)}${showIssueOnly ? ' · 이슈 거래만' : ''}`;
+  // 걸러진 거래의 순지출 합계 — 월 머리말·요약 카드와 같은 계산(금액 - 할인)
+  const filteredTotal = transactions.reduce((s, t) => s + (Number(t.amount) || 0) - (Number(t.discount_amount) || 0), 0);
+
+  // 저장한 필터 (이 기기) — 꺼낼 때 지금 가계부에 없는 결제수단·카테고리·구성원은 뺀다
+  const applySavedFilter = (s) => {
+    const { filters: fitted, dropped } = fitSavedFilters(s.filters, {
+      paymentMethods: paymentMethods.map(m => m.name),
+      categories: budgetCategories.map(c => c.name),
+      members,
+    });
+    setFilters(fitted);
+    setSavedNote(dropped.length ? `지금 가계부에 없는 ${dropped.map(n => `"${n}"`).join(', ')}은(는) 빼고 걸었어요` : '');
+  };
 
   const toggleSelectForDelete = (txId) => {
     const newSet = new Set(selectedForDelete);
@@ -314,7 +357,8 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   return (
     <div className="list-page">
       {/* 필터 바 + 요약 정보 통합 */}
-      <div className="filter-bar" ref={filterBarRef}>
+      {/* 필터 패널을 열면 붙박이(sticky)를 풀어 패널이 목록을 덮지 않게 한다 — 스크롤하면 결과가 보인다 */}
+      <div className={`filter-bar${showFilters && !deleteMode ? ' panel-open' : ''}`} ref={filterBarRef}>
         <div className="filter-top">
           {deleteMode ? (
             <>
@@ -376,32 +420,42 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
         </div>
 
         {showFilters && !deleteMode && (
-          <div className="filter-panel">
-            <select value={filters.month} onChange={e => setFilter('month', e.target.value)}>
-              <option value="">전체 월</option>
-              {months.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <select value={filters.payment_method} onChange={e => setFilter('payment_method', e.target.value)}>
-              <option value="">전체 결제수단</option>
-              {paymentMethods.map(m => <option key={m.id} value={m.name}>{m.name}{m.is_hidden ? ' (숨김)' : ''}</option>)}
-            </select>
-            <select value={filters.budget_category} onChange={e => setFilter('budget_category', e.target.value)}>
-              <option value="">전체 카테고리</option>
-              {budgetCategories.map(c => <option key={c.id} value={c.name}>{c.name}{c.is_hidden ? ' (숨김)' : ''}</option>)}
-            </select>
-            {(members.length > 0 || filters.member) && (
-              <select value={filters.member} onChange={e => setFilter('member', e.target.value)}>
-                <option value="">전체 구성원</option>
-                {members.map(m => <option key={m} value={m}>{m}</option>)}
-                <option value={MEMBER_NONE}>(누가 없음)</option>
-              </select>
-            )}
-            {hasFilters && (
-              <button className="btn-clear-filter" onClick={clearFilters}>초기화</button>
-            )}
-          </div>
+          <FilterPanel
+            filters={filters}
+            onChange={(next) => { setFilters(next); setSavedNote(''); }}
+            errors={filterErrors}
+            months={months}
+            paymentMethods={paymentMethods}
+            budgetCategories={budgetCategories}
+            members={members}
+            saved={savedFilters}
+            // 저장은 상태 갱신 함수 밖에서 계산한다 — saveFilter가 던지는 이유(이름 없음·개수 초과)를 패널이 받아 보이게.
+            // 갱신 함수 안에서 던지면 렌더 중 오류가 되어 화면 전체가 내려간다
+            onSave={(name) => setSavedFilters(saveFilter(savedFilters, name, filters))}
+            onApplySaved={applySavedFilter}
+            onDeleteSaved={(s) => setSavedFilters(deleteSavedFilter(savedFilters, s.name))}
+            savedNote={savedNote}
+            hasFilters={hasFilters}
+            canSave={isFiltered(filters)}
+            resultText={`${transactions.length}건 · ${formatAmount(filteredTotal)}원`}
+            onShowResults={() => {
+              setShowFilters(false);
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
+            onClear={clearFilters}
+          />
         )}
       </div>
+
+      {/* 걸러진 거래의 합계·구성·AI 요약 (I-021) */}
+      {!deleteMode && hasFilters && transactions.length > 0 && (
+        <FilterSummary
+          transactions={transactions}
+          filterText={filterText}
+          filterKey={`${JSON.stringify(query)}|${showIssueOnly}`}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
 
       {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
 
@@ -417,9 +471,11 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
           onAdd={onAdd}
         />
       ) : transactions.length === 0 ? (
+        // 조건에 맞는 거래가 없다 — "올해 ○○ 총 얼마"의 답이 0원인 경우도 여기
         <div className="empty-state">
-          <p>거래 내역이 없습니다.</p>
-          <button className="btn-primary" onClick={onAdd}>+ 첫 거래 추가하기</button>
+          <p>조건에 맞는 거래가 없습니다 (0건 · 0원)</p>
+          <p className="empty-state-sub">{filterText}</p>
+          <button className="btn-secondary" onClick={clearFilters}>조건 모두 풀기</button>
         </div>
       ) : (
         <div className="tx-list">
@@ -432,7 +488,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
               <div
                 className="month-header"
                 onClick={() => { if (editingGoalMonth !== month) toggleMonth(month); }}
-                style={{ top: `${filterBarHeight}px` }}
+                style={{ top: `${showFilters && !deleteMode ? 0 : filterBarHeight}px` }}
               >
                 <span className="month-toggle">
                   {expandedMonths.has(month) ? '▼' : '▶'}

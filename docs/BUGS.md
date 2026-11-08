@@ -127,7 +127,7 @@
 | I-018 | ✅ | - | 저장·동기화 | 저장소 추상화(StorageProvider) — 동기화가 OneDrive 함수를 직접 불러 다른 드라이브를 붙일 수 없음 (ROADMAP F-2) |
 | I-019 | ✅ | - | 첫 실행 | 새 가계부에 카테고리·결제수단이 없어 첫 거래를 입력할 수 없음 — 가구 유형별 기본값과 첫 거래 안내 (ROADMAP F-3) |
 | I-020 | ✅ | - | 입력 | 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음 |
-| I-021 | ⬜ | - | 검색 | 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약) |
+| I-021 | ✅ | - | 검색 | 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약) |
 
 
 ## 상세
@@ -1112,9 +1112,9 @@
 - 파일: src/services/clipboardImage.js(새), src/hooks/usePasteImages.js(새), src/components/AIEntry/AIEntry.js·AIEntry.css, src/components/CardStatement/CardStatementModal.js·CardStatementModal.css, src/services/__tests__/clipboardImage.test.js, src/components/AIEntry/__tests__/AIEntry.paste.test.js, src/components/CardStatement/__tests__/CardStatementModal.test.js
 
 ### I-021 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약)
-- 상태: ⬜ 대기 (다음 작업)
+- 상태: ✅ 해결 (2026-11-08)
 - 영역: 검색
 - 문제: 거래내역 필터가 월·결제수단·카테고리·구성원·검색어를 하나씩만 고를 수 있어 "올해 스타벅스 총 얼마"처럼 기간·금액·여러 항목으로 좁혀 보거나, 걸러진 거래가 어떤 모습인지 한눈에 볼 수 없다.
 - 원인: 필터가 단일 값 칸 몇 개뿐이고, 걸러진 결과의 합계나 요약을 보여 주는 기능이 없다.
-- 해결: (예정) ROADMAP C-7(금액 범위·기간 직접 지정·결제수단·카테고리 다중 선택·결과 합계·자주 쓰는 필터 저장)에 더해, 사용자 요청대로 걸러진 거래를 AI가 요약해 보여 준다.
-- 파일: src/components/TransactionList/TransactionList.js, src/services/db/transactions.js, src/services/aiClient.js (예정)
+- 해결: 기간(이번 달·지난달·최근 3개월·올해·작년·월·직접 입력), 결제수단·카테고리 여러 개, 순지출 금액 범위(음수 가능, 잘못된 칸은 걸지 않고 금액 칸이 이유 표시), 이 기기에 저장한 필터를 더하고(탭을 옮겨도 이어짐), 조건을 걸면 건수·합계·구성과 집계만 보내는 AI 요약(오늘·진행 중인 달 표시, 취소, 결과가 바뀌면 버림)을 보여 주며, 패널을 열면 필터바 붙박이를 풀고 결과 줄을 붙인다.
+- 파일: src/services/db/transactions.js, src/services/txFilters.js(새), src/services/txSummary.js(새), src/components/TransactionList/FilterPanel.js·FilterSummary.js(새), TransactionList.js·TransactionList.css, SETUP.md, AGENTS.md, src/services/__tests__/txFilters.test.js·txSummary.test.js, src/components/TransactionList/__tests__/FilterSearch.test.js

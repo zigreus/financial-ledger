@@ -7,9 +7,21 @@ export const MEMBER_NONE = '__none__';
 
 // ── 거래 내역 ─────────────────────────────────────────────────
 
+/**
+ * 거래 목록 — 날짜 내림차순.
+ * filters (모두 선택):
+ *   month 'YYYY-MM' · dateFrom·dateTo 'YYYY-MM-DD'(포함)
+ *   payment_method·budget_category 하나, 또는 payment_methods·budget_categories 여러 개(그중 하나면 된다, I-021)
+ *   amountMin·amountMax 순지출(amount - discount_amount, AGENTS §4) 범위 — 숫자일 때만 건다
+ *   member(MEMBER_NONE이면 '누가' 없음) · search(내용·세부카테고리·할인 메모)
+ */
 export function getTransactions(db, filters = {}) {
   let query = 'SELECT * FROM transactions WHERE 1=1';
   const params = [];
+  const inList = (column, values) => {
+    query += ` AND ${column} IN (${values.map(() => '?').join(', ')})`;
+    params.push(...values);
+  };
 
   if (filters.month) {
     query += " AND strftime('%Y-%m', date) = ?";
@@ -19,9 +31,23 @@ export function getTransactions(db, filters = {}) {
     query += ' AND payment_method = ?';
     params.push(filters.payment_method);
   }
+  if (Array.isArray(filters.payment_methods) && filters.payment_methods.length) {
+    inList('payment_method', filters.payment_methods);
+  }
   if (filters.budget_category) {
     query += ' AND budget_category = ?';
     params.push(filters.budget_category);
+  }
+  if (Array.isArray(filters.budget_categories) && filters.budget_categories.length) {
+    inList('budget_category', filters.budget_categories);
+  }
+  if (Number.isFinite(filters.amountMin)) {
+    query += ' AND (amount - COALESCE(discount_amount, 0)) >= ?';
+    params.push(filters.amountMin);
+  }
+  if (Number.isFinite(filters.amountMax)) {
+    query += ' AND (amount - COALESCE(discount_amount, 0)) <= ?';
+    params.push(filters.amountMax);
   }
   if (filters.dateFrom) {
     query += ' AND date >= ?';
