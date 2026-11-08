@@ -222,6 +222,19 @@ CREATE TABLE IF NOT EXISTS members (
   created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 카테고리별 예산 (I-025) — year_month가 ''이면 상시 기본값, 'YYYY-MM'이면 그 달만 덮어쓴다.
+--  since: 상시 줄에서, 이 값을 쓰기 시작한 달(그 전 달에는 이 상시 값을 쓰지 않는다)
+--  kept: 월별 줄에서 1이면 상시 값을 바꿀 때 지난 달에 남긴 '그때 예산'(사용자가 그 달만 정한 것과 구분)
+-- 카테고리는 이름으로 참조한다(masterData의 이름 변경·삭제가 함께 고친다)
+CREATE TABLE IF NOT EXISTS category_budgets (
+  budget_category TEXT NOT NULL,
+  year_month      TEXT NOT NULL DEFAULT '',
+  amount          INTEGER NOT NULL,
+  since           TEXT NOT NULL DEFAULT '',
+  kept            INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (budget_category, year_month)
+);
+
 CREATE TABLE IF NOT EXISTS event_cash_flows (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id   INTEGER NOT NULL,
@@ -253,7 +266,7 @@ export async function initSQL() {
 // ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
 // 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
 // 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4; // 4: category_budgets (I-025)
 
 const COLUMN_MIGRATIONS = [
   // [테이블, 컬럼, 정의]
@@ -274,6 +287,9 @@ const COLUMN_MIGRATIONS = [
   ['event_cash_flows', 'linked_tx_id', 'INTEGER DEFAULT NULL'],    // 재환전의 환차손익 거래
   // 누가 쓴 거래인지 — members.name을 이름으로 참조한다. 빈 문자열은 '지정 안 함' (I-013)
   ['transactions', 'member', "TEXT DEFAULT ''"],
+  // 카테고리 예산: 상시 값을 쓰기 시작한 달 / 상시를 바꿀 때 남긴 그때 예산 (I-025 — 처음 만든 표에는 없었다)
+  ['category_budgets', 'since', "TEXT NOT NULL DEFAULT ''"],
+  ['category_budgets', 'kept', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 /** 컬럼이 없을 때만 추가한다. 추가했으면 true. */

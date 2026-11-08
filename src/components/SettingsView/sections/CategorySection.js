@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   getAllBudgetCategories, getAllSubCategories, addBudgetCategory, addSubCategory,
   getSubCategoryUsage, deleteSubCategory, getBudgetCategoryUsage, deleteBudgetCategory,
-  renameBudgetCategory, renameSubCategory,
+  renameBudgetCategory, renameSubCategory, countCategoryBudgets,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import MasterItemList, { AddItemRow } from '../MasterItemList';
@@ -69,7 +69,9 @@ export default function CategorySection({ db, dataVersion, onChanged, setError, 
         setError(`"${item.name}"은(는) ${used}에서 사용 중이라 삭제할 수 없습니다. 이름을 바꾸거나, 목록에서 감추려면 숨기기(눈 아이콘)를 사용하세요.`);
         return;
       }
-      if (!window.confirm(`"${item.name}"과(와) 그 세부카테고리를 삭제하시겠습니까?`)) return;
+      // 예산을 정해 둔 카테고리면 그것도 지운다고 알린다 (확인창 문구는 실제 동작과 같게, AGENTS §3)
+      const budgetNote = countCategoryBudgets(db, item.name) ? '\n· 이 카테고리에 정해 둔 예산도 함께 지워집니다.' : '';
+      if (!window.confirm(`"${item.name}"과(와) 그 세부카테고리를 삭제하시겠습니까?${budgetNote}`)) return;
       deleteBudgetCategory(db, item.name);
       onChanged();
       setError('');

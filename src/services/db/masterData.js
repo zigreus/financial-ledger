@@ -274,7 +274,7 @@ function subCategoryNameUsedElsewhere(db, budgetCategory, name) {
 }
 
 /**
- * 대분류 이름 변경 — 거래·정기지출·즐겨찾기·할인규칙·여행 기본 카테고리 설정까지 한 번에 바꾼다 (B-019).
+ * 대분류 이름 변경 — 거래·정기지출·즐겨찾기·할인규칙·여행 기본 카테고리 설정·카테고리 예산까지 한 번에 바꾼다 (B-019, I-025).
  */
 export function renameBudgetCategory(db, oldName, newName) {
   if (!newName || !newName.trim()) throw new Error('이름을 입력하세요.');
@@ -284,12 +284,20 @@ export function renameBudgetCategory(db, oldName, newName) {
     throw new Error('이미 같은 이름의 카테고리가 있습니다.');
   }
   withTransaction(db, () => {
+    // 카테고리 예산 (I-025) — 새 이름의 카테고리가 없으면 그 이름으로 남은 예산은 목록에 없는 카테고리의 것이다.
+    // 먼저 지워야 키가 겹치지 않고 옛 예산을 엉뚱하게 넘겨받지 않는다. 이름을 바꾸기 전에, 그 이름의 카테고리가 없을 때만 지운다 —
+    // 병합으로 다시 실행될 때 다른 기기가 그 사이 만든 같은 이름 카테고리의 예산을 지우지 않게
+    db.run(
+      'DELETE FROM category_budgets WHERE budget_category = ? AND NOT EXISTS (SELECT 1 FROM budget_categories WHERE name = ?)',
+      [trimmed, trimmed],
+    );
     db.run('UPDATE budget_categories SET name = ? WHERE name = ?', [trimmed, oldName]);
     db.run('UPDATE sub_categories SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
     CATEGORY_REF_TABLES.forEach(table => {
       db.run(`UPDATE ${table} SET budget_category = ? WHERE budget_category = ?`, [trimmed, oldName]);
     });
     db.run("UPDATE settings SET value = ? WHERE key = 'trip_default_category' AND value = ?", [trimmed, oldName]);
+    db.run('UPDATE OR IGNORE category_budgets SET budget_category = ? WHERE budget_category = ?', [trimmed, oldName]);
   });
 }
 
@@ -384,6 +392,8 @@ export function deleteBudgetCategory(db, name) {
     db.run('DELETE FROM sub_categories WHERE budget_category = ?', [name]);
     db.run('DELETE FROM budget_categories WHERE name = ?', [name]);
     db.run("UPDATE settings SET value = '' WHERE key = 'trip_default_category' AND value = ?", [name]);
+    // 그 카테고리의 예산도 지운다 (I-025) — 쓰는 거래가 없어야 지울 수 있으니 비교할 지출도 없다
+    db.run('DELETE FROM category_budgets WHERE budget_category = ?', [name]);
   });
 }
 

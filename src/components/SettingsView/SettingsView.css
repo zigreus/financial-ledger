@@ -151,6 +151,21 @@
   transform: translateX(18px);
 }
 
+/* 카테고리별 예산 (I-025) */
+.cb-settings { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.cb-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.cb-settings-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cb-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
+.cb-settings-name { display: flex; align-items: center; gap: 2px; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.cb-settings-value { display: flex; align-items: center; gap: 6px; }
+.cb-settings-amount { font-size: 14px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+.cb-settings-unset { font-size: 13px; color: var(--text-muted); }
+.cb-settings-edit { display: flex; align-items: center; gap: 6px; flex: 1; max-width: 260px; }
+.cb-settings-note { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
+.cb-settings .cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
+.cb-settings-hidden { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #F3F4F6; color: #6B7280; font-size: 10px; font-weight: 700; }
+.cb-settings-orphans { margin-top: 12px; }
+
 .btn-drilldown {
   display: flex;
   align-items: center;

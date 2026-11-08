@@ -15,4 +15,5 @@ export * from './db/favorites';
 export * from './db/patterns';
 export * from './db/accounts';
 export * from './db/members';
+export * from './db/categoryBudgets';
 export { withTransaction } from './db/common';

@@ -6,7 +6,7 @@ import LoginPage from '../LoginPage/LoginPage';
 import Header from '../Header/Header';
 import TransactionList from '../TransactionList/TransactionList';
 import TransactionForm from '../TransactionForm/TransactionForm';
-import SummaryView from '../SummaryView/SummaryView';
+import SummaryView, { showSummaryMonth } from '../SummaryView/SummaryView';
 import SettingsView from '../SettingsView/SettingsView';
 import ImportModal from '../ImportModal/ImportModal';
 import CardStatementModal from '../CardStatement/CardStatementModal';
@@ -544,6 +544,12 @@ function App() {
             onOpenCardCheck={() => navigate({ showCardCheck: true })}
             onOpenAccount={(id) => {
               navigate({ activeTab: 'account', accountDrilldown: { id }, accountDetailTab: 'transactions' });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
+            onOpenBudget={(month) => {
+              // 예산 알림 → 요약 › 카테고리의 그 달 예산 대비 (I-025)
+              showSummaryMonth(month);
+              navigate({ activeTab: 'summary', summaryTab: 'category', summaryDrilldown: null });
               document.querySelector('.app-main')?.scrollTo(0, 0);
             }}
           />

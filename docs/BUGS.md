@@ -131,7 +131,7 @@
 | I-022 | ✅ | - | 입력 | 영수증·말로 입력·카드 문자 버튼이 따로 있어 매번 골라야 하고, 늘 넣던 거래도 하나하나 확인해야 함 |
 | I-023 | ✅ | - | 입력 | AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음 |
 | I-024 | ✅ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
-| I-025 | ⬜ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
+| I-025 | ✅ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
 | I-026 | ⬜ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
 
 
@@ -1149,12 +1149,12 @@
 - 파일: public/sw.js(새), public/manifest.json, vercel.json, src/index.js, src/services/serviceWorker.js(새), src/services/shareInbox.js(새), src/services/offlineCache.js(새), src/services/storage/provider.js·oneDrive.js, src/hooks/useLedgerSync.js, src/components/App/App.js, src/components/Header/Header.js·Header.css, src/components/TransactionForm/TransactionForm.js, src/components/AIEntry/AIEntry.js, src/hooks/__tests__/useLedgerSync.offline.test.js(새)·useLedgerSync.merge.test.js, src/services/__tests__/storage.test.js·shareInbox.test.js(새), src/components/App/__tests__/App.launch.test.js(새), src/components/AIEntry/__tests__/AIEntry.quick.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
 
 ### I-025 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5)
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-09)
 - 영역: 예산
 - 문제: 월 지출 목표는 전체 금액 하나뿐이라 카테고리별로 얼마나 썼는지 예산과 비교할 수 없다.
-- 원인: (예정) 카테고리별 예산을 담을 곳과 화면이 없다.
-- 해결: (예정) ROADMAP C-5 — 필요할 때만 켜는 선택 기능으로, 카테고리 예산(기본값·월별 덮어쓰기), 요약의 예산 대비 막대, 80%·100% 알림(사용자 요청: 켜고 끌 수 있게).
-- 파일: (예정)
+- 원인: 카테고리별 예산을 담을 곳과 화면이 없었다.
+- 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 category_budgets(정한 달부터 쓰는 상시 기본값·월별 덮어쓰기, 상시를 바꾸면 이번 달부터 새 값이고 옛 값을 쓰던 지난 달만 그때 예산으로 남김)를 더하고, 요약 › 카테고리(월)에 순지출 기준 예산 대비 막대(80% 주의·100% 초과, 그 달만 바꾸기)와 거래내역에 이번 달 80%·초과 알림을 보이며, 카테고리 이름 변경·삭제가 예산도 함께 고친다(사용자 요청: 켜고 끌 수 있게).
+- 파일: src/services/db/categoryBudgets.js(새), src/services/db/schema.js·masterData.js, src/services/dbManager.js, src/components/SettingsView/sections/CategoryBudgetSettings.js(새)·BudgetSection.js·CategorySection.js, src/components/SettingsView/SettingsView.css, src/components/SummaryView/CategoryBudgetPanel.js·CategoryBudgetPanel.css(새)·SummaryView.js, src/components/TransactionList/BudgetAlertBanner.js(새)·TransactionList.js, src/components/App/App.js, src/services/__tests__/categoryBudgets.test.js, src/components/__tests__/CategoryBudget.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
 
 ### I-026 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6)
 - 상태: ⬜ 대기

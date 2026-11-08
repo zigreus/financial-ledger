@@ -1,0 +1,36 @@
+/* 요약 › 카테고리 — 예산 대비 (I-025) */
+.cb-panel {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg, #fff);
+}
+.cb-panel--empty { font-size: 13px; color: var(--text-muted); }
+.cb-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; font-size: 14px; }
+.cb-head-total { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.cb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cb-row { border-radius: 8px; }
+.cb-row-main {
+  display: flex; flex-direction: column; gap: 4px;
+  width: 100%; padding: 6px 4px;
+  border: none; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit;
+}
+.cb-row-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
+.cb-name { display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.cb-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #E0E7FF; color: #3730A3; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.cb-tag--hidden { background: #F3F4F6; color: #6B7280; }
+.cb-amounts { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.cb-amounts b { color: var(--text); margin-left: 4px; }
+.cb-bar { display: block; height: 8px; border-radius: 999px; background: #E5E7EB; overflow: hidden; }
+.cb-bar-fill { display: block; height: 100%; border-radius: 999px; background: #10B981; transition: width .2s; }
+.cb-row--warn .cb-bar-fill { background: #F59E0B; }
+.cb-row--over .cb-bar-fill { background: #EF4444; }
+.cb-row-note { font-size: 11px; color: var(--text-muted); }
+.cb-row--warn .cb-level { color: #B45309; font-weight: 700; }
+.cb-row--over .cb-row-note { color: #B91C1C; font-weight: 700; }
+.cb-edit { display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 8px; }
+.cb-edit-label { font-size: 12px; color: var(--text-muted); }
+.cb-edit-input { width: 100%; }
+.cb-edit-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.cb-error { font-size: 12px; color: #B91C1C; }

@@ -14,6 +14,7 @@ import { categoryColor } from '../common/categoryColor';
 import './SummaryView.css';
 import { toDateStr, toYearMonth, currentYearMonth } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
+import CategoryBudgetPanel from './CategoryBudgetPanel';
 
 // 날짜 포맷 헬퍼
 const _fmt = toDateStr;
@@ -32,6 +33,12 @@ const _filterState = {
   eventTypeFilter: '',
   eventSortType: 'date_desc',
 };
+
+/** 다음에 요약을 열 때 그 달 보기로 연다 — 거래내역의 예산 알림에서 넘어올 때 (I-025) */
+export function showSummaryMonth(yearMonth) {
+  _filterState.filterType = 'month';
+  _filterState.selectedMonth = yearMonth;
+}
 
 // 막대 길이(%) — 환불로 0 이하가 된 값은 빈 막대로 (음수 너비는 CSS가 무시해 막대가 가득 차 보인다)
 function barPercent(value, maxValue) {
@@ -478,6 +485,11 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
       {/* 카테고리별 탭 */}
       {tab === 'category' && (
         <div className="summary-section">
+          {/* 예산 대비 (I-025) — 카테고리별 예산을 켰을 때, 달을 고른 월 보기에서만('전체 기간' 제외).
+              달이 바뀌면 새로 그린다 — 열려 있던 편집 칸이 다른 달에 남지 않게 */}
+          {filterType === 'month' && selectedMonth && !drilldownCategory && (
+            <CategoryBudgetPanel key={selectedMonth} db={db} dataVersion={dataVersion} month={selectedMonth} />
+          )}
           {filterType === 'event' ? (
             /* 일정별 모드 */
             selectedEventId ? (

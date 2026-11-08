@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import BalanceAlertBanner from './BalanceAlertBanner';
+import BudgetAlertBanner from './BudgetAlertBanner';
 import FirstEntryGuide from './FirstEntryGuide';
 import FilterPanel from './FilterPanel';
 import FilterSummary from './FilterSummary';
@@ -21,7 +22,7 @@ import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateU
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 
-function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenOnboarding, onOpenSettings }) {
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenOnboarding, onOpenSettings }) {
   // 탭을 옮겼다 와도(설정 › AI에 다녀오는 등) 걸던 조건을 이어 쓴다 — 그사이 없어진 이름은 뺀다
   const [filters, setFilters] = useState(() => fitSavedFilters(loadSessionFilters(), {
     paymentMethods: getAllPaymentMethods(db).map(m => m.name),
@@ -123,6 +124,10 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const members = useMemo(() => getMemberNames(live.db), [live]);
   // 계좌 잔액이 위험선 아래로 내려가는 날 (B-066)
   const balanceAlerts = useMemo(() => getBalanceAlerts(live.db), [live]);
+  // 이번 달 카테고리 예산 80% 이상·초과 (I-025) — 카테고리별 예산을 켰을 때만
+  const budgetAlerts = useMemo(() => (isCategoryBudgetEnabled(live.db)
+    ? getCategoryBudgetStatus(live.db, currentMonth).filter(r => r.level !== 'ok')
+    : []), [live, currentMonth]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
@@ -458,6 +463,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
       )}
 
       {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
+      {!deleteMode && <BudgetAlertBanner alerts={budgetAlerts} onOpenBudget={() => onOpenBudget && onOpenBudget(currentMonth)} />}
 
       {/* 거래 목록 */}
       {transactions.length === 0 && !hasFilters ? (

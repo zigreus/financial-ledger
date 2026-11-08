@@ -15,7 +15,7 @@
 | 위치 | 역할 |
 |---|---|
 | `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
-| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts. 내부 도우미는 common·recurringDates |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능). 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |
@@ -86,6 +86,7 @@
 - `auto_pattern_settings`(sub_category)
 - `settings`의 `trip_default_category`
 - `account_recurring_items.auto_payment_method`(결제수단)
+- `category_budgets`(budget_category) — 카테고리별 예산(I-025). 이름 변경은 따라가고, 카테고리를 지우면 함께 지운다
 
 가족 구성원도 이름으로 참조합니다: `transactions.member` → `members.name`. `db/members.js`의 `renameMember`·`deleteMember`가 거래 참조를 함께 고칩니다(삭제하면 '누가'를 비우고 거래는 남깁니다). 기기별 '이 기기 사용자'(localStorage)와 카드 문자→결제수단 기억은 DB 밖에 있으므로, 쓸 때마다 DB 목록과 대조해 없는 이름은 버립니다. (I-012, I-013)
 
@@ -123,6 +124,7 @@
 ## 6. 화면(React)
 
 - 모바일 우선입니다. UI 문구는 한국어로 쓰고 존댓말 안내체를 씁니다.
+- **모든 가족이 쓰지 않을 기능은 선택 기능으로 만듭니다.** 설정에서 켜고 끄고(기본은 꺼짐), 꺼 두면 그 기능의 화면이 보이지 않습니다. 끄면 화면만 감추고 정해 둔 값은 남깁니다. 가족 공통이면 가계부 DB의 `settings`, 기기별 취향이면 localStorage에 둡니다. (사용자 요청, I-025)
 - 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
 - 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)
 - `dangerouslySetInnerHTML`은 쓰지 않습니다. AI 응답과 사용자 입력은 텍스트로만 렌더링합니다.
