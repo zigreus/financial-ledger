@@ -11,6 +11,7 @@ import { loadCardMap } from '../../../services/cardSms';
 import { todayStr, addDays, parseDateStr } from '../../../services/dateUtils';
 import AIEntry from '../AIEntry';
 import { parseTextEntry } from '../../../services/textEntry';
+import { loadAIDraft, saveAIDraft } from '../../../services/aiDraft';
 
 vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
 vi.mock('../AISettingsForm', () => ({
@@ -321,6 +322,120 @@ test('카드 문자: 화면 위 알림에서 되돌려도 확인 화면이 알�
   expect(starbucks[0].textContent).toContain('되돌린 거래예요');
   expect(starbucks[0].textContent).not.toContain('이미 있는 것 같아요');
   expect(isChecked('스타벅스')).toBe(false);
+});
+
+describe('정리하던 글 이어서 하기 (I-023)', () => {
+  const remount = () => act(async () => {
+    root.unmount();
+    root = createRoot(container);
+    root.render(<AIEntry db={db} onApply={() => {}} onBulkAdd={onBulkAdd} onQuickAdd={onQuickAdd} resetKey={0} />);
+  });
+
+  test('정리하는 사이 앱이 닫혀도 다시 열면 이어서 정리한다 — 이번에는 바로 넣지 않고, 그새 넣은 거래는 체크 없이', async () => {
+    const said = '스타벅스 5천원 신한카드, 처음가본식당 2만원 현금';
+    parseTextEntry.mockReturnValueOnce(new Promise(() => {}));         // 분석하는 중에
+    await render();
+    await submit(said);
+    expect(loadAIDraft()).toBe(said);
+    await remount();                                                     // 휴대폰이 앱을 닫았다가 다시 열었다
+    expect(container.querySelector('.ai-entry-draft').textContent).toContain('정리하다 만 글이 있어요');
+
+    // 앱이 닫히기 전에 스타벅스는 이미 들어갔다(바로 넣기)
+    addTransaction(db, { payment_method: '신한카드', date: TODAY, budget_category: '식비', sub_category: '카페', detail: '스타벅스', amount: 5000 });
+    await click(button('이어서 정리'));
+    expect(quickBox().value).toBe(said);
+    expect(container.querySelector('.quick-box').textContent).toContain('이번에는 바로 넣지 않고 모두 확인을 받아요');
+    parseTextEntry.mockResolvedValueOnce([spokenStarbucks(), spokenNewPlace()]);
+    await click(button('정리하기'));
+    expect(onQuickAdd).not.toHaveBeenCalled();
+    expect(row('스타벅스').textContent).toContain('같은 날 같은 금액 거래가 이미 있어요');
+    expect(isChecked('스타벅스')).toBe(false);
+    expect(isChecked('처음가본식당')).toBe(true);
+
+    // 추가하면 남은 글을 지운다
+    await click([...container.querySelectorAll('button')].find(b => b.textContent.includes('1건 추가')));
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+    expect(loadAIDraft()).toBe('');
+  });
+
+  test('버리기를 누르거나 닫으면 남은 글을 지운다', async () => {
+    saveAIDraft('점심 김치찌개 9천원');
+    await render();
+    await click(button('버리기'));
+    expect(container.querySelector('.ai-entry-draft')).toBeNull();
+    expect(loadAIDraft()).toBe('');
+
+    parseTextEntry.mockResolvedValueOnce([spokenNewPlace()]);
+    await submit('처음가본식당 2만원 현금');
+    expect(loadAIDraft()).toBe('처음가본식당 2만원 현금');
+    await click(button('취소'));
+    expect(loadAIDraft()).toBe('');
+    expect(container.querySelector('.ai-entry-draft')).toBeNull();
+  });
+
+  test('이어서 정리하면 아직 넣지 않은 늘 넣던 거래도 바로 넣지 않고, 체크된 채 확인받는다', async () => {
+    saveAIDraft('스타벅스 5천원 신한카드');
+    await render();
+    await click(button('이어서 정리'));
+    parseTextEntry.mockResolvedValueOnce([spokenStarbucks()]);
+    await click(button('정리하기'));
+    expect(onQuickAdd).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('이렇게 입력하시겠습니까?');   // 한 건 확인 화면
+    expect(container.textContent).not.toContain('같은 날 같은 금액');
+  });
+
+  test('남은 글이 카드 문자여도 이어서 정리하면 바로 넣지 않는다 (안내와 같게)', async () => {
+    saveAIDraft(STARBUCKS_SMS);
+    await render();
+    await click(button('이어서 정리'));
+    await click(button('정리하기'));
+    expect(onQuickAdd).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('카드 문자 1건');
+    expect(isChecked('스타벅스')).toBe(true);
+    // 카드 문자 화면에서 추가하면 남은 글도 끝났다 (창은 App이 닫아 막대로 돌아오지 않아도)
+    await click([...container.querySelectorAll('button')].find(b => b.textContent.includes('1건 추가')));
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+    expect(loadAIDraft()).toBe('');
+  });
+
+  test('관련 없는 닫기로는 남은 글을 지우지 않는다 — AI 입력을 열었다 닫거나, 꺼내기만 하고 닫아도', async () => {
+    saveAIDraft('점심 김치찌개 9천원');
+    await render();
+    await click(container.querySelector('.ai-entry-main'));
+    await click(button('닫기'));
+    expect(loadAIDraft()).toBe('점심 김치찌개 9천원');
+    expect(container.querySelector('.ai-entry-draft')).not.toBeNull();
+
+    await click(button('이어서 정리'));
+    await click(button('닫기'));
+    expect(loadAIDraft()).toBe('점심 김치찌개 9천원');
+    expect(container.querySelector('.ai-entry-draft')).not.toBeNull();
+  });
+
+  test('새 글을 정리하면 막대의 옛 남은 글을 대신하고, 다음 거래로 넘어가면(resetKey) 그 글을 지운다', async () => {
+    saveAIDraft('옛 글');
+    await render();
+    expect(container.querySelector('.ai-entry-draft').textContent).toContain('옛 글');
+    parseTextEntry.mockReturnValueOnce(new Promise(() => {}));
+    await submit('새 글 점심 9천원');
+    expect(loadAIDraft()).toBe('새 글 점심 9천원');
+    await act(async () => {                                                // 폼에서 직접 '추가하고 계속'
+      root.render(<AIEntry db={db} onApply={() => {}} onBulkAdd={onBulkAdd} onQuickAdd={onQuickAdd} resetKey={1} />);
+    });
+    expect(loadAIDraft()).toBe('');
+    expect(container.querySelector('.ai-entry-draft')).toBeNull();
+  });
+
+  test('남은 글을 고쳐 쓰면 새 글로 보아 늘 넣던 것은 바로 넣는다', async () => {
+    saveAIDraft('스타벅스 5천원');
+    await render();
+    await click(button('이어서 정리'));
+    await setValue(quickBox(), '스타벅스 5천원 신한카드');
+    expect(container.querySelector('.quick-box').textContent).not.toContain('바로 넣지 않고');
+    parseTextEntry.mockResolvedValueOnce([spokenStarbucks()]);
+    await click(button('정리하기'));
+    expect(onQuickAdd).toHaveBeenCalledTimes(1);
+  });
 });
 
 test('승인 거절·청구 안내 문자만 있으면 AI로 넘기지 않고 넣을 것이 없다고 알린다', async () => {

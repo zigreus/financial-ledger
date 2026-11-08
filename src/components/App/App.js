@@ -22,6 +22,8 @@ import { createOneDriveStorage } from '../../services/storage/oneDrive';
 import { resolveDeviceMember } from '../../services/deviceMember';
 import { isOnboardingPostponed, postponeOnboarding } from '../../services/onboardingPrefs';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
+import { useTopToast } from '../../hooks/useTopToast';
+import { clearAIDraft, setAIDraftAccount } from '../../services/aiDraft';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
@@ -58,8 +60,6 @@ function App() {
   const [defaultFormDate, setDefaultFormDate] = useState(null);
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
-  const [topToast, setTopToast] = useState(null); // { text, action } — 바로 넣은 거래의 되돌리기 (I-022)
-  const topToastTimer = React.useRef(null);
 
   // SummaryView 내비게이션 state
   const [summaryTab, setSummaryTab] = useState('monthly');
@@ -93,17 +93,8 @@ function App() {
     toastTimer.current = setTimeout(() => setToast(''), 2500);
   }, []);
 
-  // 화면 위에 띄우는 알림(I-022) — 입력 창(모달) 위에도 보이고, 일반 알림이 덮지 않는다.
-  // action: { label, onClick } — '되돌리기'처럼 누를 수 있으면 조금 더 오래 둔다
-  const showTopToast = useCallback((text, action = null) => {
-    setTopToast({ text, action });
-    clearTimeout(topToastTimer.current);
-    topToastTimer.current = setTimeout(() => setTopToast(null), action ? 10000 : 3000);
-  }, []);
-  const hideTopToast = useCallback(() => {
-    clearTimeout(topToastTimer.current);
-    setTopToast(null);
-  }, []);
+  // 화면 위 알림(되돌리기) — 일반 알림이 덮지 않고, 다른 앱에 가 있는 동안에는 시간을 세지 않는다 (I-022, I-023)
+  const { topToast, showTopToast, hideTopToast } = useTopToast();
 
   const applyNavState = useCallback((s) => {
     if ('activeTab' in s) setActiveTab(s.activeTab);
@@ -156,6 +147,7 @@ function App() {
   // 다른 기기에서 지운 키는 열어 둔 앱에서도 지워진다. 실패하면 다음 기회에 다시 한다.
   useEffect(() => {
     setAISyncAccount(isAuthenticated ? storage : null);
+    setAIDraftAccount(isAuthenticated ? storage?.accountKey : ''); // AI 입력의 남은 글도 이 계정에 묶는다 (I-023)
     if (!isAuthenticated) aiSyncedRef.current = false;
   }, [isAuthenticated, storage]);
 
@@ -406,6 +398,7 @@ function App() {
           : '지금 OneDrive와 맞추지 못했습니다. 지우면 이 기기에만 있던 키나 바꾼 설정은 사라질 수 있습니다. 다시 로그인하면 OneDrive에 있는 설정을 불러옵니다';
         if (window.confirm(`이 기기에 저장된 AI API 키도 지울까요?\n(${note})`)) clearAIKeys();
       }
+      clearAIDraft(); // AI 입력에 쓰다 남은 글은 이 계정의 것 — 다음에 로그인하는 사람에게 보이지 않게
       resetForLogout();
       await instance.logoutRedirect({ account: accounts[0] });
     } catch (e) {

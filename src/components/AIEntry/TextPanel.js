@@ -4,6 +4,7 @@ import { parseTextEntry, UNCLEAR } from '../../services/textEntry';
 import { isSuggestionComplete, normalizeName, suggestionToTransaction } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
 import { QUICK_REASONS, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
+import { findExistingTransaction } from '../../services/cardSms';
 import SuggestionDetails from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import { FollowUpBox, SaidSoFar, describeGaps, gapQuestion, recordPick, carryChoices } from './TextFollowUp';
@@ -32,7 +33,10 @@ const mark = (s, kind) => ({ ...s, quickMark: kind, reviewReason: QUICK_REASONS[
  * 취소·예약 같은 말이 있으면 바로 넣지 않는다. 바로 넣은 건은 다시 정리하면 체크를 끈 채 보여 주고, 확인 화면에서 되돌릴 수 있다.
  * AI 응답은 오래 걸릴 수 있어 그 사이 바뀐 db·onAutoAdd(App이 다시 받은 DB, 폼에서 고른 '누가')는 ref로 최신 것을 쓴다.
  */
-export default function TextPanel({ db, title = '말로 입력', initialText = '', autoRun = false, onAutoAdd, onApply, onBulkAdd, onClose, onSetup }) {
+export default function TextPanel({
+  db, title = '말로 입력', initialText = '', autoRun = false, onAutoAdd, onAnalyze, checkExisting = false,
+  onApply, onBulkAdd, onClose, onSetup,
+}) {
   const [phase, setPhase] = useState(autoRun && initialText ? 'analyzing' : 'compose'); // compose | analyzing | review | ask | error
   const [text, setText] = useState(initialText);
   const autoAddedRef = useRef([]);               // 바로 넣은 건 [{ key, date, name }] (같은 건이 둘이면 둘)
@@ -41,6 +45,8 @@ export default function TextPanel({ db, title = '말로 입력', initialText = '
   dbRef.current = db;
   const onAutoAddRef = useRef(onAutoAdd);
   onAutoAddRef.current = onAutoAdd;
+  const onAnalyzeRef = useRef(onAnalyze);
+  onAnalyzeRef.current = onAnalyze;
   const [followUps, setFollowUps] = useState([]); // 덧붙인 말 [{ asked, said }]
   const [addition, setAddition] = useState('');   // 덧붙여 말하는 중인 글
   const [boxOpen, setBoxOpen] = useState(false);  // 빠진 정보가 없어도 덧붙이기 상자를 열었는지
@@ -108,6 +114,8 @@ export default function TextPanel({ db, title = '말로 입력', initialText = '
   const run = async (rounds, back) => {
     const ai = activeAI();
     if (!ai) { openSetup(); return; }
+    // 정리하는 글을 알린다 — AI 입력이 기기에 적어 두어, 그 사이 앱이 닫혀도 다시 열면 이어서 한다 (I-023)
+    if (onAnalyzeRef.current) onAnalyzeRef.current([text, ...rounds.map(r => r.said)].join('\n'));
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -148,6 +156,8 @@ export default function TextPanel({ db, title = '말로 입력', initialText = '
         if (near(autoAddedRef.current, sug)) return mark(sug, 'similar');
         if (take(undone, sug)) return mark(sug, 'undone');
         if (near(undoneRef.current, sug)) return mark(sug, 'fixed');
+        // 앱이 닫히기 전에 정리하던 글을 이어서 하면, 그때 이미 넣은 거래가 있을 수 있다
+        if (checkExisting && findExistingTransaction(curDb, sug)) return mark(sug, 'existing');
         return sug;
       });
       const autoAdd = onAutoAddRef.current;

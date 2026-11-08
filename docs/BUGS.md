@@ -129,7 +129,7 @@
 | I-020 | ✅ | - | 입력 | 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음 |
 | I-021 | ✅ | - | 검색 | 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약) |
 | I-022 | ✅ | - | 입력 | 영수증·말로 입력·카드 문자 버튼이 따로 있어 매번 골라야 하고, 늘 넣던 거래도 하나하나 확인해야 함 |
-| I-023 | ⬜ | - | 입력 | AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음 |
+| I-023 | ✅ | - | 입력 | AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음 |
 | I-024 | ⬜ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
 | I-025 | ⬜ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
 | I-026 | ⬜ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
@@ -1133,12 +1133,12 @@
 - 파일: src/services/quickEntry.js(새), src/services/cardSms.js, src/services/textEntry.js, src/services/db/transactions.js, src/components/AIEntry/AIEntry.js·AIEntry.css·ReceiptPanel.js·SmsPanel.js·TextPanel.js·TextFollowUp.js·QuickAutoNote.js(새)·useQuickBatches.js(새), src/components/TransactionForm/TransactionForm.js, src/components/App/App.js·App.css, src/services/__tests__/quickEntry.test.js·textEntry.test.js, src/components/AIEntry/__tests__/AIEntry.quick.test.js·AIEntry.test.js·AIEntry.paste.test.js·ReceiptPanel.test.js, src/components/App/__tests__/App.quickAdd.test.js, SETUP.md, AGENTS.md
 
 ### I-023 AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-09)
 - 영역: 입력
-- 문제: 휴대폰에서 홈 화면에 추가해 앱처럼 쓰는 중에 AI가 영수증·말·카드 명세서를 읽는 동안 화면이 꺼지거나 다른 앱을 잠깐 보고 오면, 분석이 실패로 끝나거나 처음부터 다시 해야 할 수 있다.
-- 원인: (조사 예정) 모바일 브라우저는 백그라운드로 간 페이지의 실행·네트워크를 멈추거나 끊고, 진행 중인 분석은 화면(메모리)에만 있다.
-- 해결: (예정) 가능한 범위 확인 후 — 돌아오면 끊긴 요청을 저절로 다시 보내기, 분석 중에는 화면 꺼짐 막기(Wake Lock), 늦게 온 결과 보존 등(사용자 요청).
-- 파일: (예정)
+- 문제: 휴대폰에서 홈 화면에 추가해 앱처럼 쓰는 중에 AI가 영수증·말·카드 명세서를 읽는 동안 화면이 꺼지거나 다른 앱을 잠깐 보고 오면, 분석이 네트워크 오류로 끝나 다시 눌러야 하고, 앱이 아예 닫히면 쓰던 글도 잃는다.
+- 원인: 모바일 브라우저는 가려진 페이지를 멈추며 보내던 요청을 끊는데 AI 요청은 이를 일반 네트워크 오류로 끝냈고, 화면 꺼짐을 막지 않았으며, 정리하던 글은 메모리에만 있었다.
+- 해결: 요청하는 동안 화면이 가려졌다 끊기면(돌아와 다시 보낸 것이 곧바로 또 끊겨도) 돌아온 뒤 연결을 잠깐 기다려 같은 요청을 다시 보내고(2번까지, 모든 AI 기능, 오래 걸리는 정상 요청은 끊지 않음), 분석 중에는 Wake Lock으로 화면 꺼짐을 막으며, 되돌리기 알림은 가려진 동안 시간을 세지 않고, AI 입력에서 정리하던 글은 그날 같은 계정으로 다시 열면 이어서 정리하게(바로 넣지 않고, 그새 넣은 거래는 체크 없이) 했다.
+- 파일: src/services/aiClient.js, src/services/pageVisibility.js(새), src/services/wakeLock.js(새), src/services/aiDraft.js(새), src/services/quickEntry.js, src/hooks/useTopToast.js(새), src/components/App/App.js, src/components/AIEntry/AIEntry.js·AIEntry.css·TextPanel.js, src/services/__tests__/aiResume.test.js·aiDraft.test.js, src/hooks/__tests__/useTopToast.test.js, src/components/AIEntry/__tests__/AIEntry.quick.test.js, SETUP.md, AGENTS.md
 
 ### I-024 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4)
 - 상태: ⬜ 대기

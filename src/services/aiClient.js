@@ -5,7 +5,12 @@
  * (claude.ai·Gemini 앱 구독 로그인으로 다른 웹앱이 호출하는 방법은 제공되지 않는다)
  * 키는 이 기기의 localStorage에 두고, 같은 계정의 다른 기기와는 aiSettingsSync가
  * OneDrive의 별도 설정 파일로 맞춘다. 가계부 DB(ledger.db)에는 절대 넣지 않는다.
+ *
+ * 휴대폰에서 분석하는 동안 화면이 꺼지거나 다른 앱으로 가서 요청이 끊기면, 돌아온 뒤 같은 요청을 다시 보낸다.
+ * 분석하는 동안에는 화면이 저절로 꺼지지 않게 한다 (I-023).
  */
+import { waitForOnline, waitUntilVisible, watchHidden } from './pageVisibility';
+import { keepScreenOn } from './wakeLock';
 
 const CONFIG_KEY = 'ai_receipt_config';
 
@@ -145,6 +150,14 @@ const OVERLOADED = new Set([503, 529]);
 const SERVER_ERROR = new Set([500, 502, 504]);
 // 사용 한도(429)에 서버가 이보다 오래 기다리라고 하면 기다리지 않고 바로 알린다
 const MAX_QUOTA_WAIT_SECONDS = 30;
+/**
+ * 화면이 가려진 동안 끊긴 요청 다시 보내기 (I-023) — 테스트가 시간을 줄일 수 있게 내보낸다.
+ *  tries: 다시 보내는 횟수, onlineWaitMs: 돌아온 뒤 망에 다시 붙기를 기다리는 시간,
+ *  settleMs: 돌아와 다시 보낸 요청이 곧바로 또 끊겼을 때(화면을 켠 직후 망이 아직 안 붙음) 기다렸다 보내는 시간
+ * 돌아온 뒤 오류 없이 오래 걸리는 요청은 끊지 않는다 — Claude·카드 명세서는 정상이어도 수십 초~수 분 걸려,
+ * 끊고 다시 보내면 두 번 과금되고 더 늦어진다. 정말 멈췄으면 사용자가 화면의 취소로 끊는다.
+ */
+export const RESUME = { tries: 2, onlineWaitMs: 5000, settleMs: 1500 };
 
 const serverName = url => (url.includes('anthropic') ? 'Claude' : 'Gemini');
 const overloadedText = server => `${server} 서버가 지금 붐빕니다 (사용량 문제는 아니에요)`;
@@ -218,7 +231,11 @@ function quotaError(server, { daily, noFreeTier, spendLimit, wait }) {
  * fetch + 오류 해석 + 일시적인 문제면 다시 시도. 기본값은 다시 시도하지 않는 것(모델 목록·연결 확인).
  * overloadDelays: 붐빔(503·529) 때 기다릴 간격들, serverDelays: 서버 오류(500·502·504) 때 간격들 — 횟수는 따로 센다.
  * quotaWait: 분당 한도(429)에 서버가 짧게 기다리라고 하면 한 번 기다렸다 다시 한다 (처음 고른 모델의 분석에만).
- * onRetry({ reason: 'overloaded' | 'server' | 'quota', attempt, max, status, waitSeconds }) — 화면에 진행 상황을 보여 줄 때.
+ * onRetry({ reason: 'overloaded' | 'server' | 'quota' | 'resumed', attempt, max, status, waitSeconds }) — 화면에 진행 상황을 보여 줄 때.
+ *
+ * 요청하는 동안 화면이 가려졌다가(꺼짐·다른 앱) 연결이 끊겼으면 오류 대신 화면이 다시 보일 때까지 기다렸다
+ * 같은 요청을 다시 보낸다(RESUME.tries번까지, 'resumed'). 계속 보이던 중에 끊긴 것은 지금처럼 네트워크 오류다.
+ * 다만 돌아와 다시 보낸 요청이 곧바로 또 끊기면(화면을 켠 직후 망이 아직 안 붙음 — onLine은 true인 채) 잠깐 기다렸다 한 번 더.
  */
 async function request(url, init, {
   overloadDelays = [], serverDelays = [], quotaWait = false, onRetry,
@@ -230,24 +247,48 @@ async function request(url, init, {
   let overloadTries = 0;
   let serverTries = 0;
   let quotaWaited = false;
+  let resumeTries = 0;
+  let resent = false; // 이번 시도가 돌아와서 다시 보낸 것인지
+
+  /** 가려진 동안 끊긴 것(또는 돌아와 다시 보낸 것이 또 끊긴 것)이면 기다렸다 true(다시 보낸다), 아니면 false */
+  const resumeAfterHidden = async (watch) => {
+    const hidden = watch.wasHidden();
+    if ((!hidden && !resent) || resumeTries >= RESUME.tries) return false;
+    resumeTries += 1;
+    notify({ reason: 'resumed', attempt: resumeTries, max: RESUME.tries });
+    await waitUntilVisible(signal);
+    if (!hidden) await sleep(RESUME.settleMs, signal); // 보이는 채로 또 끊겼다 — 망이 붙기를 잠깐 기다린다
+    await waitForOnline(RESUME.onlineWaitMs, signal);
+    resent = true;
+    return true;
+  };
 
   for (;;) {
+    const watch = watchHidden();
     let res;
     try {
       res = await fetch(url, init);
     } catch (e) {
+      watch.stop();
       if (e.name === 'AbortError' || aborted()) throw abortError();
+      if (await resumeAfterHidden(watch)) continue;
       throw new AIError('네트워크 오류 — 인터넷 연결을 확인하세요', 'network');
     }
     let body = null;
+    let bodyFailed = false;
     try {
       body = await res.json();
     } catch (e) {
       // 응답 본문을 읽는 도중 취소되면 '해석 실패'가 아니라 취소로 돌려준다
-      if (e.name === 'AbortError' || aborted()) throw abortError();
+      if (e.name === 'AbortError' || aborted()) { watch.stop(); throw abortError(); }
       body = null;
+      bodyFailed = true;
     }
+    watch.stop();
     if (aborted()) throw abortError();
+    // 본문을 받는 도중 가려져 끊겼다 — 다시 보낸다
+    if (bodyFailed && res.ok && await resumeAfterHidden(watch)) continue;
+    resent = false;
     if (res.ok) return body;
     const { status } = res;
 
@@ -680,10 +721,23 @@ async function alternateModels(ai, signal) {
  *   (영수증·말로 입력 화면이 "붐벼서 ○○로 읽었습니다"를 보여 준다. 문구만 쓰는 호출부는 무시해도 된다).
  */
 export async function analyzeWithAI(opts) {
+  // 분석하는 동안에는 화면이 저절로 꺼지지 않게 한다 (I-023) — 끝나거나 실패·취소하면 놓는다
+  const release = keepScreenOn();
+  try {
+    return await analyze(opts);
+  } finally {
+    release();
+  }
+}
+
+async function analyze(opts) {
   const { ai, signal, onProgress } = opts;
   const say = (msg, info) => { if (onProgress) onProgress(msg, info); };
   const retryNotice = model => ({ reason, attempt, max, status, waitSeconds }) => {
-    if (reason === 'quota') {
+    if (reason === 'resumed') {
+      say(`화면이 꺼지거나 다른 앱에 간 사이 끊긴 요청을 다시 보내는 중… (${attempt}/${max})`);
+      // (돌아와 다시 보낸 요청이 또 끊긴 경우도 같은 문구 — 사용자에게는 같은 일이다)
+    } else if (reason === 'quota') {
       const wait = waitSeconds != null && waitSeconds > 0 ? `${waitSeconds}초` : '잠깐';
       say(`분당 사용 한도에 걸려 ${wait} 기다렸다 다시 보냅니다…`);
     } else if (reason === 'server') {

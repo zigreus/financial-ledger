@@ -140,6 +140,7 @@
 - **AI 호출 규칙 (aiClient.js):**
   - Claude 요청에는 `tool_choice: {type:'auto', disable_parallel_tool_use:true}`만 씁니다. 강제 도구 호출(`tool`/`any`)과 temperature·top_p는 보내지 않습니다. Sonnet·Opus 5.5는 400을 냅니다. (B-072)
   - AI 결과는 `usableResult`로 스키마 모양을 검사한 뒤에만 씁니다. (B-077)
+  - AI 요청은 `analyzeWithAI`(안의 `request`)로만 보냅니다. 휴대폰에서 화면이 가려진 사이 끊긴 요청은 돌아와서 다시 보내고, 분석하는 동안 화면 꺼짐을 막습니다(`pageVisibility`·`wakeLock`). 직접 `fetch`하면 이 처리가 빠집니다. (I-023)
   - 혼잡(503·529) 때만 다른 모델로 바꾸고, 더 비싼 모델로는 바꾸지 않습니다. (B-073, B-075, B-076)
 - AI에게 보내는 가계부 정보는 결제수단·카테고리 목록과 입력 습관처럼 필요한 범위로 제한합니다.
 

@@ -379,4 +379,13 @@
 }
 .quick-auto-note { display: block; font-size: 12px; color: #047857; line-height: 1.5; }
 .quick-auto-note .quick-undo { margin-left: 8px; font-weight: 700; text-decoration: underline; }
+
+/* 앱이 닫히기 전에 정리하던 글 (I-023) */
+.ai-entry-draft {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  margin-top: 6px; padding: 6px 10px;
+  border-radius: 8px; background: #FFFBEB; color: #92400E; font-size: 12px;
+}
+.ai-entry-draft-text { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+.ai-entry-draft .rs-btn-link { font-weight: 700; }
 .quick-reason { display: block; font-size: 12px; color: #B45309; line-height: 1.5; }

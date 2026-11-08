@@ -4,6 +4,7 @@ import { buildSmsSuggestions, describeSkipped, looksLikeCardMessage, smsKeyOf } 
 import { suggestionToTransaction } from '../../services/receiptAssistant';
 import { QUICK_REASONS, splitFamiliar } from '../../services/quickEntry';
 import { useQuickBatches, fullyUndone } from './useQuickBatches';
+import { clearAIDraft, loadAIDraft, saveAIDraft } from '../../services/aiDraft';
 import AISettingsForm from './AISettingsForm';
 import ReceiptPanel from './ReceiptPanel';
 import TextPanel from './TextPanel';
@@ -44,6 +45,13 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
   const [textInit, setTextInit] = useState('');     // 말로 입력으로 넘긴 글 — 그 화면이 열리자마자 정리한다
   const [textKey, setTextKey] = useState(0);        // 새 글을 넘길 때마다 말로 입력 화면을 새로 연다
   const [textAuto, setTextAuto] = useState(true);   // 말로 입력이 늘 넣던 건을 바로 넣어도 되는지(카드 문자처럼 보인 글은 아님)
+  // 앱이 닫히기 전에 정리하던 글(I-023) — 막대에서 이어서 하거나 버린다. 이어서 정리할 때는 바로 넣지 않고,
+  // 그때 이미 넣은 거래가 있을 수 있어 같은 날 같은 금액 거래는 체크 없이 보인다
+  const [draft, setDraft] = useState(() => loadAIDraft());
+  const [restored, setRestored] = useState('');     // 이어서 정리하려고 상자에 채운 글
+  const [fromDraft, setFromDraft] = useState(false); // 지금 말로 입력 화면이 이어서 정리하는 글인지
+  // 기기에 적어 둔 글이 이 창에서 시작한 정리의 것인지 — 그 정리를 끝낼 때만 지운다(관련 없는 닫기로 남은 글을 잃지 않게)
+  const ownsDraftRef = useRef(false);
   const [smsInit, setSmsInit] = useState(null);     // 카드 문자로 읽고 남은 확인거리
   // 카드 문자에서 바로 넣은 묶음 — '다시 붙여넣기'로 오가도 되돌릴 수 있게 입력 창을 닫을 때까지 지킨다
   const { batches: smsBatches, add: addSmsBatch, undoAll: undoSmsBatches, reset: resetSmsBatches } = useQuickBatches();
@@ -71,6 +79,10 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     setQuickError('');
     setSmsInit(null);
     resetSmsBatches();
+    // 다음 거래로 넘어갔다 — 이 창에서 정리하던 글은 끝난 것으로 보고 지운다. 막대는 기기 기록과 맞춘다
+    if (ownsDraftRef.current) { clearAIDraft(); ownsDraftRef.current = false; }
+    setRestored('');
+    setDraft(loadAIDraft());
     waitingFileRef.current = null;
   }, [resetKey, resetSmsBatches]);
 
@@ -87,7 +99,26 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
 
   const startReceipt = () => (activeAI() ? openPicker() : needSetup('receipt'));
   const openText = () => { setTextAlive(true); setMode('text'); };
-  /** 막대로 돌아간다 — 다음에 열면 처음부터(쓰던 글·말로 입력 대화를 버린다) */
+  /** 남은 글 버리기 (막대의 '버리기') */
+  const dropDraft = () => {
+    clearAIDraft();
+    ownsDraftRef.current = false;
+    setDraft('');
+    setRestored('');
+  };
+  /** 이 창에서 시작한 정리를 끝냈다 — 그 글만 지우고, 막대는 기기 기록과 맞춘다(다른 남은 글은 그대로 보인다) */
+  const finishDraft = () => {
+    if (ownsDraftRef.current) { clearAIDraft(); ownsDraftRef.current = false; }
+    setRestored('');
+    setDraft(loadAIDraft());
+  };
+  /** 정리를 시작했다 — 그 글을 기기에 적어 두고, 막대의 옛 남은 글을 대신한다 */
+  const noteAnalyzing = (t) => {
+    saveAIDraft(t);
+    ownsDraftRef.current = true;
+    setDraft('');
+  };
+  /** 막대로 돌아간다 — 다음에 열면 처음부터(쓰던 글·말로 입력 대화를 버리고, 이 창에서 정리하던 글 기록도 지운다) */
   const closeAll = () => {
     setMode('idle');
     setTextAlive(false);
@@ -95,8 +126,15 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     setQuickError('');
     setSmsInit(null);
     resetSmsBatches();
+    finishDraft();
   };
   const openQuick = () => { setNotice(''); setQuickError(''); setMode('quick'); };
+  const resumeDraft = () => {
+    setQuickText(draft);
+    setRestored(draft);
+    setDraft('');
+    openQuick();
+  };
 
   /**
    * 자주 넣던 거래를 바로 넣는다 — remaining: 아직 확인받을 것의 수. 남은 것이 없으면 입력 창이 닫힌다(App).
@@ -147,6 +185,10 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     const text = quickText.trim();
     if (!text) return;
     setQuickError('');
+    // 앱이 닫히기 전에 정리하던 글을 그대로 이어서 하면, 어느 갈래로 읽든 바로 넣지 않고 모두 확인받는다
+    const resuming = !!restored && text === restored.trim();
+    // 남은 글을 꺼내 정리를 시작했다(고쳐 썼어도) — 이제 이 창의 정리다. 끝내면 기기 기록도 지운다
+    if (restored) ownsDraftRef.current = true;
     let cardLike = false;
     if (looksLikeCardMessage(text)) {
       cardLike = true;
@@ -164,7 +206,10 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
           undoneKeys.splice(i, 1);
           return true;
         });
-        const { familiar, review } = splitFamiliar(db, approvals.filter(s => !held.includes(s)), 'sms');
+        const rest = approvals.filter(s => !held.includes(s));
+        const { familiar, review } = resuming
+          ? { familiar: [], review: rest.map(s => ({ s, reason: '' })) }
+          : splitFamiliar(db, rest, 'sms');
         // 금액을 읽지 못해 건너뛴 문자도 알려야 한다 — 바로 넣고 창을 닫으면 그 결제를 놓친다
         const unread = skipped.filter(x => x.reason === 'unread').length;
         const remaining = review.length + held.length + cancels.length + unread;
@@ -188,7 +233,8 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
       // 카드 문자처럼 보였지만 읽을 결제가 없다 — 말로 입력으로 넘겨 AI가 읽게 한다(바로 넣지 않고 확인받는다)
     }
     setTextInit(text);
-    setTextAuto(!cardLike);
+    setTextAuto(!cardLike && !resuming);
+    setFromDraft(resuming);
     setTextKey(k => k + 1);
     if (!activeAI()) { needSetup('quick-text'); return; }
     openText();
@@ -251,6 +297,9 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
           말하듯 적거나 카드 문자를 붙여넣거나 영수증 사진을 올리세요. 늘 넣던 가게는 바로 추가하고, 처음 보는 건 확인을 받아요.
           카드 문자는 AI 키 없이도 읽어요.
         </div>
+        {restored && quickText.trim() === restored.trim() && (
+          <div className="quick-reason">앱이 닫히기 전에 정리하던 글이에요 — 이번에는 바로 넣지 않고 모두 확인을 받아요</div>
+        )}
         {quickError && <div className="rs-error-text">{quickError}</div>}
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={closeAll}>닫기</button>
@@ -279,7 +328,11 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
         batches={smsBatches}
         onUndoAuto={undoSmsBatches}
         onApply={s => apply(s, '카드 문자 내용을 채웠습니다')}
-        onBulkAdd={(rows, opts) => onBulkAdd(rows, opts)}
+        onBulkAdd={(rows, opts) => {
+          // 남은 글을 이어서 정리해 카드 문자 화면에서 추가했으면 그 글도 끝났다 (창은 App이 닫는다)
+          if (ownsDraftRef.current) { clearAIDraft(); ownsDraftRef.current = false; }
+          onBulkAdd(rows, opts);
+        }}
         onBack={() => setMode('quick')}
         onClose={closeAll}
       />
@@ -300,6 +353,13 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
           <button type="button" className="rs-gear" onClick={() => needSetup(null)} title="AI 설정">⚙</button>
         </div>
         {notice && <div className="ai-entry-notice">✓ {notice} — 확인 후 추가하세요</div>}
+        {draft && (
+          <div className="ai-entry-draft">
+            <span className="ai-entry-draft-text">정리하다 만 글이 있어요: “{draft.length > 30 ? `${draft.slice(0, 30)}…` : draft}”</span>
+            <button type="button" className="rs-btn-link" onClick={resumeDraft}>이어서 정리</button>
+            <button type="button" className="rs-btn-link" onClick={dropDraft}>버리기</button>
+          </div>
+        )}
         {(canPasteButton || showShortcut) && (
           <div className="ai-entry-paste-row">
             {canPasteButton && (
@@ -326,8 +386,13 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
         initialText={textInit}
         autoRun={!!textInit}
         onAutoAdd={textAuto ? autoAdd : undefined}
+        onAnalyze={noteAnalyzing}
+        checkExisting={fromDraft}
         onApply={s => apply(s, '말한 내용을 채웠습니다')}
-        onBulkAdd={rows => onBulkAdd(rows)}
+        onBulkAdd={rows => {
+          if (ownsDraftRef.current) { clearAIDraft(); ownsDraftRef.current = false; }
+          onBulkAdd(rows);
+        }}
         onClose={closeAll}
         onSetup={() => needSetup('text')}
       />
