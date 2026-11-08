@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-092, I-021
+다음 번호: B-092, I-022
 
 ## 요약표
 
@@ -126,7 +126,8 @@
 | I-017 | ✅ | - | AI | 말로 입력에서 정보가 모자라면 실패만 뜨고, 무엇이 빠졌는지 알려 주거나 덧붙여 말할 수 없음 |
 | I-018 | ✅ | - | 저장·동기화 | 저장소 추상화(StorageProvider) — 동기화가 OneDrive 함수를 직접 불러 다른 드라이브를 붙일 수 없음 (ROADMAP F-2) |
 | I-019 | ✅ | - | 첫 실행 | 새 가계부에 카테고리·결제수단이 없어 첫 거래를 입력할 수 없음 — 가구 유형별 기본값과 첫 거래 안내 (ROADMAP F-3) |
-| I-020 | ⬜ | - | 입력 | 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음 |
+| I-020 | ✅ | - | 입력 | 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음 |
+| I-021 | ⬜ | - | 검색 | 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약) |
 
 
 ## 상세
@@ -1103,9 +1104,17 @@
 - 파일: src/data/starterTemplates.js(새), src/services/db/masterData.js, src/services/onboardingPrefs.js(새), src/components/Onboarding/Onboarding.js·Onboarding.css(새), src/components/TransactionList/FirstEntryGuide.js(새), TransactionList.js·TransactionList.css, src/components/common/categoryColor.js, src/components/App/App.js, src/services/__tests__/onboarding.test.js, src/components/Onboarding/__tests__/Onboarding.test.js, src/components/App/__tests__/App.onboarding.test.js, AGENTS.md, SETUP.md
 
 ### I-020 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음
-- 상태: ⬜ 대기 (I-019 다음 작업)
+- 상태: ✅ 해결 (2026-11-08)
 - 영역: 입력
 - 문제: 영수증 사진(AI 빠른 입력)과 카드 명세서 대조는 파일 고르기로만 이미지를 받아, 화면을 캡처한 뒤 파일로 저장했다가 다시 골라야 한다.
-- 원인: 이미지 입력이 <input type="file">뿐이고 클립보드 붙여넣기(paste 이벤트)를 받지 않는다.
-- 해결: (예정) 캡처 직후 Ctrl+V·길게 눌러 붙여넣기로 클립보드 이미지를 받아 파일을 고른 것과 같은 흐름으로 올린다.
-- 파일: src/components/AIEntry/AIEntry.js, src/components/CardStatement/CardStatementModal.js
+- 원인: 이미지 입력이 `<input type="file">`뿐이고 클립보드 붙여넣기(paste 이벤트)를 받지 않는다.
+- 해결: 영수증 빠른 입력·카드 명세서 대조 화면이 열려 있는 동안 단축키(Ctrl+V·⌘V)로 붙여넣은 이미지(글이 함께 오면 글 붙여넣기로 둠)와 '캡처 붙여넣기' 버튼(클립보드를 읽을 수 있는 브라우저)으로 받은 캡처를 파일을 고른 것과 같은 흐름으로 읽고, 명세서는 붙여넣을 때마다 차례로 이어 붙이되(PDF도, 대조를 마친 뒤에는 새 목록) 늦게 온 결과가 바뀐 화면을 바꾸지 않게 한다.
+- 파일: src/services/clipboardImage.js(새), src/hooks/usePasteImages.js(새), src/components/AIEntry/AIEntry.js·AIEntry.css, src/components/CardStatement/CardStatementModal.js·CardStatementModal.css, src/services/__tests__/clipboardImage.test.js, src/components/AIEntry/__tests__/AIEntry.paste.test.js, src/components/CardStatement/__tests__/CardStatementModal.test.js
+
+### I-021 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약)
+- 상태: ⬜ 대기 (다음 작업)
+- 영역: 검색
+- 문제: 거래내역 필터가 월·결제수단·카테고리·구성원·검색어를 하나씩만 고를 수 있어 "올해 스타벅스 총 얼마"처럼 기간·금액·여러 항목으로 좁혀 보거나, 걸러진 거래가 어떤 모습인지 한눈에 볼 수 없다.
+- 원인: 필터가 단일 값 칸 몇 개뿐이고, 걸러진 결과의 합계나 요약을 보여 주는 기능이 없다.
+- 해결: (예정) ROADMAP C-7(금액 범위·기간 직접 지정·결제수단·카테고리 다중 선택·결과 합계·자주 쓰는 필터 저장)에 더해, 사용자 요청대로 걸러진 거래를 AI가 요약해 보여 준다.
+- 파일: src/components/TransactionList/TransactionList.js, src/services/db/transactions.js, src/services/aiClient.js (예정)

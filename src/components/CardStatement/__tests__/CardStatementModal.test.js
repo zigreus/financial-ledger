@@ -302,3 +302,193 @@ test('해외결제 취소가 거의 전액이면 "부분취소" 대신 "취소"�
   expect(checkboxes()).toEqual([true, true]);
   expect(container.textContent).toContain('카드의 11/3 결제(135,200원)의 취소예요. 결제와 함께 추가하면 합계가 맞습니다.');
 });
+
+describe('캡처 붙여넣기 (I-020)', () => {
+  const png = () => new File([new Uint8Array([1])], 'image.png', { type: 'image/png' });
+  async function paste(images, target = container) {
+    const e = new Event('paste', { bubbles: true, cancelable: true });
+    const items = images.map(f => ({ kind: 'file', type: f.type, getAsFile: () => f }));
+    Object.defineProperty(e, 'clipboardData', { value: { items, files: images, getData: () => '' } });
+    await act(async () => { target.dispatchEvent(e); });
+    await flush();
+    return e.defaultPrevented;
+  }
+  const lastFiles = () => prepareDocuments.mock.lastCall[0].map(f => f.name);
+  afterEach(() => { delete navigator.clipboard; });
+
+  test('캡처를 붙여넣으면 고른 것 뒤에 이어 붙이고, 파일을 고르면 바꾸며, 모두 지울 수 있다', async () => {
+    await act(async () => { root.render(<Host />); });
+    await chooseCard(CARD);
+    expect(await paste([png()])).toBe(true);
+    expect(lastFiles()).toEqual([expect.stringMatching(/^캡처-\d{8}-\d{6}\.png$/)]);
+    await paste([png()]);
+    expect(lastFiles()).toHaveLength(2);                      // 하나씩 캡처해 이어 붙인다
+
+    await pickFile();
+    expect(lastFiles()).toEqual(['a.png']);                    // 파일을 고르면 바꾼다
+    await paste([png()]);
+    expect(lastFiles()).toEqual(['a.png', expect.stringMatching(/^캡처-/)]);
+    expect(button('대조하기').disabled).toBe(false);
+
+    await click(button('고른 파일 모두 지우기'));
+    expect(button('파일을 올려 주세요').disabled).toBe(true);
+    await paste([png()]);
+    expect(lastFiles()).toHaveLength(1);
+  });
+
+  test('붙여넣은 것을 준비하지 못하면 이유를 보여 주고, 이전에 고른 것은 그대로 둔다', async () => {
+    await start();                                              // a.png
+    prepareDocuments.mockRejectedValueOnce(new Error('한 번에 보내기엔 너무 깁니다'));
+    await paste([png()]);
+    expect(container.textContent).toContain('한 번에 보내기엔 너무 깁니다');
+    expect(button('대조하기').disabled).toBe(false);            // a.png로는 여전히 대조할 수 있다
+    await paste([png()]);
+    expect(lastFiles()).toEqual(['a.png', expect.stringMatching(/^캡처-/)]); // 실패한 것은 붙지 않았다
+  });
+
+  test('파일을 준비하는 동안 붙여넣은 캡처도 버리지 않고 이어서 붙인다', async () => {
+    await act(async () => { root.render(<Host />); });
+    await chooseCard(CARD);
+    let release;
+    prepareDocuments.mockImplementationOnce(() => new Promise(r => { release = () => r({ parts: [{ base64: 'AA', mediaType: 'image/png' }], previews: [] }); }));
+    await paste([png()]);                                       // 첫 캡처 준비 중
+    expect(await paste([new File([new Uint8Array(2)], 'image.png', { type: 'image/png' })])).toBe(true); // 준비 중에 또 붙여넣기
+    await act(async () => { release(); });
+    await flush();
+    expect(lastFiles()).toHaveLength(2);
+  });
+
+  test('대조를 마친 뒤 붙여넣으면 새 명세서로 보고 새 목록으로 시작한다 — 다른 카드 내역과 섞이지 않게', async () => {
+    await start();                                              // 신한카드 a.png
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);
+    await click(button('다른 내역 대조'));
+    await chooseCard('삼성카드');
+    await paste([png()]);
+    expect(lastFiles()).toEqual([expect.stringMatching(/^캡처-/)]);
+    await paste([png()]);
+    expect(lastFiles()).toHaveLength(2);                       // 새 목록에는 다시 이어 붙인다
+  });
+
+  test('대조하는 중이나 AI 설정 화면에서는 붙여넣기를 가로채지 않는다', async () => {
+    await start();
+    analyzeStatement.mockImplementationOnce(() => new Promise(() => {})); // 끝나지 않는 대조
+    await click(button('대조하기'));
+    const calls = prepareDocuments.mock.calls.length;
+    expect(await paste([png()])).toBe(false);
+    expect(prepareDocuments.mock.calls.length).toBe(calls);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    window.localStorage.removeItem('ai_receipt_config');
+    await start();
+    await click(button('대조하기'));                            // AI 키가 없어 설정 화면
+    expect(await paste([png()])).toBe(false);
+  });
+
+  test('탐색기에서 복사한 PDF 명세서도 붙여넣을 수 있다 — 원래 이름 그대로', async () => {
+    await act(async () => { root.render(<Host />); });
+    await chooseCard(CARD);
+    expect(await paste([new File(['%PDF'], '11월 명세서.pdf', { type: 'application/pdf' })])).toBe(true);
+    expect(lastFiles()).toEqual(['11월 명세서.pdf']);
+  });
+
+  test('클립보드를 읽는 동안 파일을 골랐으면, 늦게 온 캡처는 새로 고른 파일 뒤에 붙는다', async () => {
+    let resolve;
+    navigator.clipboard = { read: vi.fn(() => new Promise(r => { resolve = r; })) };
+    await start();                                              // a.png
+    await click(button('캡처 붙여넣기'));
+    const input = container.querySelector('input[type=file]');
+    Object.defineProperty(input, 'files', { configurable: true, value: [new File(['y'], 'b.png', { type: 'image/png' })] });
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    await flush();
+    await act(async () => { resolve([{ types: ['image/png'], getType: async () => new Blob([new Uint8Array(1)], { type: 'image/png' }) }]); });
+    await flush();
+    expect(lastFiles()).toEqual(['b.png', expect.stringMatching(/^캡처-/)]);
+  });
+
+  test('차례를 기다리던 다음 준비가 앞 준비의 실패 안내를 지우지 않는다', async () => {
+    await start();                                              // a.png
+    let fail;
+    prepareDocuments.mockImplementationOnce(() => new Promise((_, rej) => { fail = () => rej(new Error('한 번에 보내기엔 너무 깁니다')); }));
+    await paste([png()]);                                       // 캡처 A 준비 중
+    await paste([new File([new Uint8Array(2)], 'image.png', { type: 'image/png' })]); // 캡처 B는 차례를 기다림
+    await act(async () => { fail(); });
+    await flush();
+    expect(container.textContent).toContain('한 번에 보내기엔 너무 깁니다'); // B가 성공해도 A가 빠진 이유가 남는다
+    expect(lastFiles()).toEqual(['a.png', expect.stringMatching(/^캡처-/)]);
+  });
+
+  test('대조를 마친 뒤 새 목록으로 시작하면 그렇다고 알리고, 대조가 실패했으면 그 목록에 이어 붙인다', async () => {
+    await start();
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);
+    await click(button('다른 내역 대조'));
+    prepareDocuments.mockRejectedValueOnce(new Error('이미지를 읽지 못했습니다'));
+    await paste([png()]);                                       // 새 목록 준비 실패 — 이전 목록 그대로라 안내하지 않는다
+    expect(container.querySelector('.cs-note')).toBeNull();
+    await paste([png()]);
+    expect(container.querySelector('.cs-note').textContent).toContain('새 목록으로 시작했습니다');
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);
+    await click(button('다른 내역 대조'));
+    expect(container.querySelector('.cs-note')).toBeNull();    // 다음 대조를 마치고 돌아오면 지난 안내는 없다
+    await pickFile();
+    expect(container.querySelector('.cs-note')).toBeNull();
+
+    // 같은 파일로 다시 대조 → 성공 → 다른 내역 대조 → 같은 파일로 또 대조했는데 실패: 이 목록에 이어 붙인다
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);
+    await click(button('다른 내역 대조'));
+    analyzeStatement.mockRejectedValueOnce(new Error('AI가 붐빕니다'));
+    await click(button('대조하기'));
+    expect(container.textContent).toContain('AI가 붐빕니다');
+    await paste([png()]);
+    expect(lastFiles()).toEqual(['a.png', expect.stringMatching(/^캡처-/)]);
+  });
+
+  test('클립보드를 읽는 동안 대조를 시작했으면 늦게 온 캡처·오류는 버린다', async () => {
+    let resolve;
+    let reject;
+    navigator.clipboard = { read: vi.fn(() => new Promise((res, rej) => { resolve = res; reject = rej; })) };
+    await start();
+    await click(button('캡처 붙여넣기'));
+    analyzeStatement.mockImplementationOnce(() => new Promise(() => {}));
+    await click(button('대조하기'));
+    const calls = prepareDocuments.mock.calls.length;
+    await act(async () => { resolve([{ types: ['image/png'], getType: async () => new Blob([new Uint8Array(1)], { type: 'image/png' }) }]); });
+    await flush();
+    expect(prepareDocuments.mock.calls.length).toBe(calls);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await start();
+    await click(button('캡처 붙여넣기'));
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);   // 결과 화면
+    await act(async () => { const e = new Error('denied'); e.name = 'NotAllowedError'; reject(e); });
+    await flush();
+    expect(container.textContent).not.toContain('클립보드를 읽지 못했습니다');
+  });
+
+  test('결과 화면에서는 붙여넣기를 가로채지 않는다', async () => {
+    await start();
+    await openAndAnalyze([row('2026-11-04', '스타벅스', 4500)]);
+    const calls = prepareDocuments.mock.calls.length;
+    expect(await paste([png()])).toBe(false);
+    expect(prepareDocuments.mock.calls.length).toBe(calls);
+  });
+
+  test('캡처 붙여넣기 버튼은 클립보드를 읽을 수 있을 때만 보이고, 누르면 클립보드의 캡처를 이어 붙인다', async () => {
+    await act(async () => { root.render(<Host />); });
+    expect(button('캡처 붙여넣기')).toBeUndefined();
+    act(() => root.unmount());
+    root = createRoot(container);
+
+    navigator.clipboard = { read: vi.fn(async () => [{ types: ['image/png'], getType: async () => new Blob([new Uint8Array([1])], { type: 'image/png' }) }]) };
+    await act(async () => { root.render(<Host />); });
+    await chooseCard(CARD);
+    await pickFile();
+    await click(button('캡처 붙여넣기'));
+    expect(lastFiles()).toEqual(['a.png', expect.stringMatching(/^캡처-/)]);
+
+    navigator.clipboard.read = vi.fn(async () => []);
+    await click(button('캡처 붙여넣기'));
+    expect(container.textContent).toContain('클립보드에 이미지가 없습니다');
+  });
+});

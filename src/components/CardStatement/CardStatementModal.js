@@ -4,6 +4,8 @@ import {
 } from '../../services/dbManager';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { prepareDocuments } from '../../services/imageUtils';
+import { usePasteImages } from '../../hooks/usePasteImages';
+import { canReadClipboardImages, readClipboardImages, pasteShortcut } from '../../services/clipboardImage';
 import {
   analyzeStatement, reconcileStatement, addMissingRows, txWithAmount, TOLERANCE_DAYS,
 } from '../../services/cardStatement';
@@ -14,6 +16,12 @@ import AISettingsForm from '../AIEntry/AISettingsForm';
 import { SourceBadge, CategoryPathSelect, splitCategoryPath, categoryText, fmtForeign } from '../AIEntry/SuggestionCard';
 import '../AIEntry/AIEntry.css';
 import './CardStatementModal.css';
+
+// 카드 명세서는 캡처뿐 아니라 탐색기에서 복사한 PDF도 붙여넣을 수 있다 (I-020)
+const PASTE_ACCEPT = { accept: /^(image\/|application\/pdf$)/ };
+const hasFinePointer = () => {
+  try { return !!window.matchMedia && window.matchMedia('(pointer: fine)').matches; } catch (e) { return false; }
+};
 
 const METHOD_KEY = 'card_statement_method';
 
@@ -61,6 +69,14 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
   });
   const [step, setStep] = useState('pick'); // pick | setup | analyzing | result | error
   const [docs, setDocs] = useState(null);   // { parts, previews }
+  // 고르거나 붙여넣은 파일 그대로(준비가 끝난 최신 목록) — 붙여넣기는 이어 붙인다 (I-020).
+  // 상태가 아니라 ref라, 기다리는 사이의 붙여넣기·고르기가 서로 지우지 않는다
+  const sourcesRef = useRef([]);
+  const prepareQueueRef = useRef(Promise.resolve()); // 파일 준비를 차례로 — 준비하는 동안의 붙여넣기도 버리지 않는다
+  const analyzedRef = useRef(false);  // 지금 목록으로 대조를 마쳤다 — 다음 붙여넣기는 새 목록으로 시작한다
+  const [sourceNote, setSourceNote] = useState(''); // 대조를 마친 목록 대신 새 목록으로 시작했다는 안내
+  const stepRef = useRef('pick');
+  stepRef.current = step;
   const [preparing, setPreparing] = useState(false);
   const [statement, setStatement] = useState(null); // { ...카드 내역, method: 대조한 결제수단, modelNote }
   const [error, setError] = useState('');
@@ -93,19 +109,70 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
     setKept(prev => new Set(prev).add(c.cancel.id));
   };
 
-  const onFiles = async (e) => {
+  /**
+   * 보낼 파일 목록을 바꾸고 AI 전송용으로 준비한다. makeList(지금 목록) → 새 목록, 또는 { list, note }.
+   * note는 준비에 성공했을 때만 안내로 보인다(실패하면 이전 목록이 그대로이므로).
+   * 차례로 처리해, 앞 파일을 준비하는 동안 붙여넣거나 고른 것도 그 결과 위에서 이어 처리한다.
+   * 준비하지 못하면 이유를 보여 주고 이전 목록을 그대로 둔다.
+   */
+  const prepareSources = (makeList) => {
+    prepareQueueRef.current = prepareQueueRef.current.then(async () => {
+      const made = makeList(sourcesRef.current);
+      const list = (Array.isArray(made) ? made : made?.list) || [];
+      if (!list.length) { // 모두 지우기
+        sourcesRef.current = [];
+        analyzedRef.current = false;
+        setDocs(null);
+        return;
+      }
+      setPreparing(true);
+      try {
+        const prepared = await prepareDocuments(list);
+        sourcesRef.current = list;
+        analyzedRef.current = false;
+        setDocs(prepared);
+        if (made?.note) setSourceNote(made.note);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setPreparing(false);
+      }
+    });
+    return prepareQueueRef.current;
+  };
+
+  // 오류는 사용자가 무언가를 할 때 지운다 — 차례를 기다리던 다음 준비가 앞 준비의 실패를 지우지 않게
+  const onFiles = (e) => {
     const list = Array.from(e.target.files || []);
     if (!list.length) return;
     setError('');
-    setPreparing(true);
+    setSourceNote('');
+    prepareSources(() => list); // 파일을 고르면 새로 고른 것으로 바꾼다
+  };
+
+  // 캡처를 붙여넣으면 지금까지 고른 것 뒤에 이어 붙인다 — 여러 장을 하나씩 캡처해 붙여넣을 수 있게.
+  // 그 목록으로 대조를 마친 뒤에 붙여넣으면 새 명세서로 보고 새 목록으로 시작한다(다른 카드 내역과 섞이지 않게)
+  const addPasted = (files) => {
+    if (stepRef.current !== 'pick' && stepRef.current !== 'error') return; // 기다리는 사이 대조를 시작했으면 버린다
+    setError('');
+    prepareSources((current) => {
+      if (!analyzedRef.current || !current.length) return [...current, ...files];
+      return { list: files, note: '대조를 마친 파일 대신 새 목록으로 시작했습니다 — 앞 파일도 함께 보내려면 파일을 다시 고르세요' };
+    });
+  };
+  usePasteImages(addPasted, step === 'pick' || step === 'error', PASTE_ACCEPT);
+  const pasteFromClipboard = async () => {
+    setError('');
     try {
-      setDocs(await prepareDocuments(list));
+      addPasted(await readClipboardImages());
     } catch (err) {
-      setDocs(null);
-      setError(err.message);
-    } finally {
-      setPreparing(false);
+      if (stepRef.current === 'pick' || stepRef.current === 'error') setError(err.message);
     }
+  };
+  const clearSources = () => { // 앞선 준비가 끝난 뒤 비운다
+    setError('');
+    setSourceNote('');
+    prepareSources(() => []);
   };
 
   const pickFiles = () => {
@@ -124,6 +191,8 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
     setProgress('');
     setConfirmDelete(null);   // 새 명세서의 행 id가 이전 것과 같아도 확인 단계가 열린 채로 시작하지 않게
     setKept(new Set());
+    analyzedRef.current = false; // 실패하면 이 목록에 이어 붙일 수 있게 — 성공하면 아래에서 다시 표시한다
+    setSourceNote('');
     setStep('analyzing');
     let modelNote = ''; // 고른 모델이 붐벼 다른 모델이 대신 읽었을 때 — 이 결과에만 붙는다
     try {
@@ -139,6 +208,7 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
         },
       });
       setStatement({ ...st, method, modelNote });
+      analyzedRef.current = true;
       setEdits({});
       setStep('result');
     } catch (err) {
@@ -656,9 +726,16 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
 
         <div className="cs-field">
           <label>카드 내역 파일</label>
-          <button type="button" className="cs-drop" onClick={pickFiles} disabled={preparing}>
-            {preparing ? '파일 준비 중…' : docs ? '다른 파일로 바꾸기' : '📎 캡처·PDF 선택 (여러 장 가능)'}
-          </button>
+          <div className="cs-source-buttons">
+            <button type="button" className="cs-drop" onClick={pickFiles} disabled={preparing}>
+              {preparing ? '파일 준비 중…' : docs ? '다른 파일로 바꾸기' : '📎 캡처·PDF 선택 (여러 장 가능)'}
+            </button>
+            {canReadClipboardImages() && (
+              <button type="button" className="cs-drop cs-paste" onClick={pasteFromClipboard} disabled={preparing}>
+                🖼️ 캡처 붙여넣기
+              </button>
+            )}
+          </div>
           {docs && (
             <div className="cs-previews">
               {docs.previews.map((p, i) => (
@@ -669,7 +746,19 @@ export default function CardStatementModal({ db, dataVersion, onChanged, onClose
               ))}
             </div>
           )}
-          <span className="cs-help">긴 캡처는 글자가 뭉개지지 않게 나눠서 보냅니다. 카드 번호·이름 같은 개인정보는 가려도 됩니다.</span>
+          {sourceNote && <span className="cs-help cs-note">{sourceNote}</span>}
+          {docs && !preparing && (
+            <button type="button" className="cs-clear" onClick={clearSources}>고른 파일 모두 지우기</button>
+          )}
+          <span className="cs-help">
+            {(canReadClipboardImages() || hasFinePointer()) && (
+              <>
+                캡처한 이용내역은 {[canReadClipboardImages() && '캡처 붙여넣기', hasFinePointer() && pasteShortcut()].filter(Boolean).join(' 또는 ')}로
+                바로 넣을 수 있고, 여러 장이면 하나씩 이어 붙이면 됩니다.{' '}
+              </>
+            )}
+            긴 캡처는 글자가 뭉개지지 않게 나눠서 보냅니다. 카드 번호·이름 같은 개인정보는 가려도 됩니다.
+          </span>
         </div>
 
         {error && <div className="rs-box rs-error"><div className="rs-error-text">{error}</div></div>}

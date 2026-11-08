@@ -27,6 +27,33 @@
   font-size: 12px;
   color: #047857;
 }
+.ai-entry-error {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+}
+.ai-entry-paste-row {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.ai-entry-paste {
+  background: none;
+  border: none;
+  min-height: 40px; /* 휴대폰에서는 이 버튼이 유일한 붙여넣기 방법 — 누를 곳을 넉넉하게 */
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary-dark);
+  cursor: pointer;
+}
+.ai-entry-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 .rs-gear {
   flex-shrink: 0;
