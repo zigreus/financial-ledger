@@ -214,6 +214,31 @@ label.cs-row-head { cursor: pointer; }
   font-weight: 600;
   vertical-align: middle;
 }
+.cs-row-main small.cs-wrap { white-space: normal; }
+/* 가계부에 없음 — 이미 적었을 수도 있어 미리 체크하지 않은 이유 */
+.cs-row-cautions {
+  margin: 0;
+  padding: 7px 9px 7px 22px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #92400E;
+  background: #FFFBEB;
+  border-radius: 8px;
+  word-break: keep-all;
+}
+.cs-row-cautions li + li { margin-top: 2px; }
+/* 가계부에 없음 — 환불 행의 원래 결제 안내 (추가해도 되는 건) */
+.cs-row-info {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #065F46;
+  background: #ECFDF5;
+  border-radius: 8px;
+  padding: 7px 9px;
+  word-break: keep-all;
+}
+/* 일치 — 가게 이름이 다른 같은 금액 짝 */
+.cs-tag-differs { background: #F3F4F6; color: #4B5563; }
 .cs-group-note {
   font-size: 11px;
   color: #92400E;

@@ -131,6 +131,10 @@
   - 이 기기 설정은 로그인 계정(homeAccountId)에 묶습니다. 다른 계정으로 로그인하면 올리지 않고 버립니다.
   - 로그아웃 때 이 기기에서만 지우는 것(`clearAIKeys`)은 올리지 않아, 다시 로그인하면 OneDrive 값이 돌아옵니다.
 - AI가 고른 결제수단·카테고리는 DB 목록과 대조해 검증합니다. 목록에 없으면 버립니다.
+- **AI 호출 규칙 (aiClient.js):**
+  - Claude 요청에는 `tool_choice: {type:'auto', disable_parallel_tool_use:true}`만 씁니다. 강제 도구 호출(`tool`/`any`)과 temperature·top_p는 보내지 않습니다. Sonnet·Opus 5.5는 400을 냅니다. (B-072)
+  - AI 결과는 `usableResult`로 스키마 모양을 검사한 뒤에만 씁니다. (B-077)
+  - 혼잡(503·529) 때만 다른 모델로 바꾸고, 더 비싼 모델로는 바꾸지 않습니다. (B-073, B-075, B-076)
 - AI에게 보내는 가계부 정보는 결제수단·카테고리 목록과 입력 습관처럼 필요한 범위로 제한합니다.
 
 ## 8. 버그 기록 — docs/BUGS.md
@@ -146,6 +150,9 @@
   - 테스트는 Vitest입니다. `describe/test/expect/vi`는 전역으로 씁니다.
   - sql.js는 Node에서 바로 돌아갑니다(기본 환경 node).
   - 화면 테스트는 파일 맨 위에 `@vitest-environment jsdom`을 두고 `react`의 `act`를 씁니다. 예: `src/components/TransactionForm/__tests__/`
+  - 카드 대조(cardStatement.js)를 고치면 무작위 테스트를 큰 표본으로도 돌려 봅니다. 예: `CARD_PROPERTY_N=1000`, `CARD_REFUND_N=1000`
+    - 확인할 것: 조용한 오류(합계가 틀린데 화면에 확인거리 없음) 0, 해로운 권장 0, 평범한 달 "모두 맞습니다" 비율 유지
+    - 본질적으로 모호한 경우는 테스트 머리말의 제외 목록에 이유를 적습니다. (B-079~B-087)
 - 커밋 전에 아래를 확인합니다.
   - `npm test`: 전부 통과 (반복 실행은 `npm run test:watch`)
   - `npm run lint`: 경고 0

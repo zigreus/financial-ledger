@@ -19,6 +19,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   const [items, setItems] = useState([]);       // [{ s, checked }]
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
+  const [modelNote, setModelNote] = useState(''); // 고른 모델이 붐벼 다른 모델이 대신 정리했을 때
   const abortRef = useRef(null);
   const textRef = useRef(null);
 
@@ -35,11 +36,19 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
     abortRef.current = controller;
     setError('');
     setProgress('');
+    setModelNote('');
     setPhase('analyzing');
     try {
       const list = await parseTextEntry({
         db, ai, text, signal: controller.signal,
-        onProgress: msg => { if (!controller.signal.aborted) setProgress(msg); },
+        onProgress: (msg, info) => {
+          if (controller.signal.aborted) return;
+          if (info?.modelUsed) {
+            if (info.modelUsed !== ai.model) setModelNote(`${ai.model}이(가) 붐벼서 ${info.modelUsed}(으)로 정리했습니다`);
+          } else {
+            setProgress(msg);
+          }
+        },
       });
       if (controller.signal.aborted) return;
       setItems(list.map(s => ({ s, checked: isSuggestionComplete(s) })));
@@ -115,6 +124,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
           <b>이렇게 입력하시겠습니까?</b>
           <span className="tp-quote">“{text.trim()}”</span>
         </div>
+        {modelNote && <div className="rs-model-note">{modelNote}</div>}
         <SuggestionDetails suggestion={s} amountSource="text" />
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
@@ -136,6 +146,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
         <b>{items.length}건으로 정리했어요</b>
         <span className="tp-quote">“{text.trim()}”</span>
       </div>
+      {modelNote && <div className="rs-model-note">{modelNote}</div>}
 
       <div className="tp-list">
         {items.map((it, idx) => (

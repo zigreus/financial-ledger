@@ -303,6 +303,8 @@
 /* 분석 중 진행 상황 ("서버가 붐벼서 다시 시도하는 중…") */
 .rs-analyzing-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rs-progress { font-size: 11px; color: #B45309; line-height: 1.4; }
+/* 고른 모델이 붐벼 다른 모델이 대신 읽었다는 안내 (결과 화면) */
+.rs-model-note { font-size: 11px; color: #B45309; line-height: 1.4; word-break: break-word; }
 
 /* 빠른 입력 버튼이 3개라 좁은 화면에서는 아이콘 위·글자 아래로 (I-012) */
 @media (max-width: 480px) {

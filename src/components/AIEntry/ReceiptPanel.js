@@ -18,6 +18,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
   const [suggestion, setSuggestion] = useState(null);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
+  const [modelNote, setModelNote] = useState(''); // 고른 모델이 붐벼 다른 모델이 대신 읽었을 때
   const abortRef = useRef(null);
   const dbRef = useRef(db);
   dbRef.current = db;
@@ -32,12 +33,20 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
     if (controller.signal.aborted) return;
     setError('');
     setProgress('');
+    setModelNote('');
     setSuggestion(null);
     setPhase('analyzing');
     try {
       const s = await analyzeReceipt({
         db: dbRef.current, ai, image: img, signal: controller.signal,
-        onProgress: msg => { if (!controller.signal.aborted) setProgress(msg); },
+        onProgress: (msg, info) => {
+          if (controller.signal.aborted) return;
+          if (info?.modelUsed) {
+            if (info.modelUsed !== ai.model) setModelNote(`${ai.model}이(가) 붐벼서 ${info.modelUsed}(으)로 읽었습니다`);
+          } else {
+            setProgress(msg);
+          }
+        },
       });
       if (controller.signal.aborted) return;
       setSuggestion(s);
@@ -61,6 +70,8 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
     setImage(null);
     setSuggestion(null);
     setError('');
+    setProgress(''); // 이전 사진의 "붐벼서 다시 시도하는 중…"이 새 사진을 준비하는 동안 남지 않게
+    setModelNote('');
     setPhase('analyzing');
     (async () => {
       try {
@@ -122,6 +133,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
           <span>{s.merchant || '가맹점 미확인'} · {CONFIDENCE_LABEL[s.confidence]}</span>
         </div>
       </div>
+      {modelNote && <div className="rs-model-note">{modelNote}</div>}
       <SuggestionDetails suggestion={s} amountSource="receipt" />
       <div className="rs-actions">
         <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
