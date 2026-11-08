@@ -438,6 +438,25 @@ describe('Claude', () => {
     expect(JSON.parse(fetch.mock.calls[1][1].body).max_tokens).toBe(20000);
   });
 
+  test('JSON 없이 글로만 답하면 그 글 전체를 reply로 붙인다 (말로 입력의 되묻기, I-017). JSON 모양만 틀린 답에는 붙이지 않는다', async () => {
+    global.fetch = vi.fn(() => reply(200, { stop_reason: 'end_turn', content: [
+      { type: 'text', text: '김치찌개는\n얼마였나요?' },
+    ] }));
+    let err = await analyzeWithAI({ ...BASE, ai: CLAUDE }).catch(e => e);
+    expect(err.kind).toBe('content');
+    expect(err.reply).toBe('김치찌개는 얼마였나요?');
+
+    global.fetch = vi.fn(() => reply(200, { stop_reason: 'end_turn', content: [{ type: 'text', text: '가'.repeat(2500) }] }));
+    err = await analyzeWithAI({ ...BASE, ai: CLAUDE }).catch(e => e);
+    expect(err.reply).toBe(`${'가'.repeat(2000)}…`);
+
+    global.fetch = vi.fn(() => reply(200, { stop_reason: 'end_turn', content: [{ type: 'text', text: '{"wrong": 1}' }] }));
+    const schema = { type: 'object', properties: { total: { type: 'number' } }, required: ['total'] };
+    err = await analyzeWithAI({ ...BASE, schema, ai: CLAUDE }).catch(e => e);
+    expect(err.message).toBe('AI 답의 형식이 맞지 않아 읽지 못했습니다 — 다시 시도하세요');
+    expect(err.reply).toBeUndefined();
+  });
+
   test('생각(thinking) 블록이 섞여도 도구 호출 결과를 읽는다', async () => {
     global.fetch = vi.fn(() => reply(200, { stop_reason: 'tool_use', content: [
       { type: 'thinking', thinking: '영수증을 보면…', signature: 'x' },

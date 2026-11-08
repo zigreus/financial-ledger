@@ -550,6 +550,12 @@ const excerpt = (text) => {
   const s = String(text).replace(/```(?:json)?/gi, ' ').replace(/\s+/g, ' ').trim();
   return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 };
+// 글로 온 답 원문을 오류에 붙일 때의 길이 상한 (말로 입력은 이 글을 되묻는 말로 보여 준다, I-017)
+const MAX_REPLY = 2000;
+const replyText = (text) => {
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > MAX_REPLY ? `${s.slice(0, MAX_REPLY)}…` : s;
+};
 
 /** 보낸 내용 때문에 난 오류 — 너무 길어 끊김·안전 기준 차단·거절. 다른 모델로 해도 대개 같다 */
 const contentError = message => new AIError(message, 'content');
@@ -786,7 +792,10 @@ async function callModel({
     if (out) return out;
     // JSON은 썼지만 모양이 틀렸으면 형식 문제로, JSON이 없으면 AI가 쓴 글(대개 기록하지 않은 이유)을 그대로 보여 준다
     if (sawJson) throw contentError('AI 답의 형식이 맞지 않아 읽지 못했습니다 — 다시 시도하세요');
-    throw contentError(`AI가 결과를 기록하지 않고 이렇게 답했습니다 — "${excerpt(text)}"`);
+    // JSON 없이 글로만 답했으면 그 글(대개 되묻는 말)을 reply로 붙인다 — 말로 입력이 되묻기로 보여 준다
+    const err = contentError(`AI가 결과를 기록하지 않고 이렇게 답했습니다 — "${excerpt(text)}"`);
+    err.reply = replyText(text);
+    throw err;
   }
 
   const body = await request(

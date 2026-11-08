@@ -8,8 +8,10 @@ import { createRoot } from 'react-dom/client';
 import TextPanel from '../TextPanel';
 import { parseTextEntry } from '../../../services/textEntry';
 
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn() }));
-vi.mock('../../../services/receiptAssistant', () => ({ isSuggestionComplete: () => true, suggestionToTransaction: (db, s) => s }));
+vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+vi.mock('../../../services/receiptAssistant', async importOriginal => ({
+  ...(await importOriginal()), isSuggestionComplete: () => true, suggestionToTransaction: (db, s) => s,
+}));
 vi.mock('../../../services/dbManager', () => ({ getPaymentMethods: () => [] }));
 vi.mock('../SuggestionCard', () => ({ default: () => null }));
 vi.mock('../SuggestionItem', () => ({ default: () => null, patchListItem: (it, patch) => ({ ...it, ...patch }) }));

@@ -13,12 +13,14 @@ import './AIEntry.css';
  * 입력 요소가 다시 만들어지면 고른 사진이 사라지므로 항상 같은 자리에 둔다.
  * 폼을 채우기만 하고(onApply), 여러 건을 한 번에 반영할 때만 onBulkAdd(rows, { deleteIds })로 저장한다.
  * resetKey가 바뀌면(연속 입력으로 다음 거래로 넘어가면) 처음 상태로 돌아간다.
+ * 말로 입력 중에 AI 설정을 열면 말로 입력 화면을 숨겨 둔 채 살려 두어, 설정을 마치거나 취소하면 하던 대화로 돌아간다.
  */
 export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
   const [mode, setMode] = useState('idle'); // idle | setup | receipt | text | sms
   const [pending, setPending] = useState(null); // 설정을 마치면 이어서 할 일
   const [file, setFile] = useState(null);
   const [notice, setNotice] = useState('');
+  const [textAlive, setTextAlive] = useState(false); // 말로 입력 화면을 (설정 화면 뒤에) 살려 둘지
   const fileRef = useRef(null);
   const firstRef = useRef(true);
 
@@ -27,6 +29,7 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
     setMode('idle');
     setFile(null);
     setNotice('');
+    setTextAlive(false);
   }, [resetKey]);
 
   const openPicker = () => {
@@ -41,7 +44,9 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
   };
 
   const startReceipt = () => (activeAI() ? openPicker() : needSetup('receipt'));
-  const startText = () => (activeAI() ? setMode('text') : needSetup('text'));
+  const openText = () => { setTextAlive(true); setMode('text'); };
+  const closeText = () => { setTextAlive(false); setMode('idle'); };
+  const startText = () => (activeAI() ? openText() : needSetup('text'));
 
   const onFile = (e) => {
     const f = e.target.files && e.target.files[0];
@@ -55,13 +60,21 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
     const next = pending;
     setPending(null);
     if (next === 'receipt') { setMode('idle'); openPicker(); }
-    else if (next === 'text') setMode('text');
+    else if (next === 'text') openText();
     else setMode('idle');
+  };
+
+  const cancelSetup = () => {
+    const next = pending;
+    setPending(null);
+    // 말로 입력 중에 연 설정이면 하던 대화로 돌아간다
+    setMode(next === 'text' && textAlive ? 'text' : 'idle');
   };
 
   const apply = (s, label) => {
     onApply(s);
     setMode('idle');
+    setTextAlive(false);
     setNotice(label);
   };
 
@@ -73,7 +86,7 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
         <div className="rs-setup-desc">
           한 번만 설정하면 됩니다. 영수증 사진이나 말로 적은 내용을 읽고, 예전 입력 습관에 맞춰 분류를 추천합니다.
         </div>
-        <AISettingsForm compact onSaved={afterSetup} onCancel={() => { setPending(null); setMode('idle'); }} />
+        <AISettingsForm compact onSaved={afterSetup} onCancel={cancelSetup} />
       </div>
     );
   } else if (mode === 'receipt') {
@@ -97,15 +110,7 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
       />
     );
   } else if (mode === 'text') {
-    body = (
-      <TextPanel
-        db={db}
-        onApply={s => apply(s, '말한 내용을 채웠습니다')}
-        onBulkAdd={rows => onBulkAdd(rows)}
-        onClose={() => setMode('idle')}
-        onSetup={() => needSetup('text')}
-      />
-    );
+    body = null; // 아래 textPanel이 보인다
   } else {
     body = (
       <>
@@ -126,10 +131,23 @@ export default function AIEntry({ db, onApply, onBulkAdd, resetKey }) {
     );
   }
 
+  const textPanel = textAlive && (
+    <div hidden={mode !== 'text'}>
+      <TextPanel
+        db={db}
+        onApply={s => apply(s, '말한 내용을 채웠습니다')}
+        onBulkAdd={rows => onBulkAdd(rows)}
+        onClose={closeText}
+        onSetup={() => needSetup('text')}
+      />
+    </div>
+  );
+
   return (
     <>
       <input ref={fileRef} type="file" accept="image/*" onChange={onFile} style={{ display: 'none' }} />
       {body}
+      {textPanel}
     </>
   );
 }

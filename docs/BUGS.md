@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-088, I-017
+다음 번호: B-088, I-018
 
 ## 요약표
 
@@ -119,6 +119,7 @@
 | I-014 | ✅ | - | 저장·동기화 | 거래 CSV 내보내기, DB 파일 받기, 매일 자동 백업과 되돌리기 (ROADMAP F-1) |
 | I-015 | ✅ | - | AI | PC에서 넣은 AI API 키를 휴대폰에서 다시 입력해야 함 |
 | I-016 | ✅ | - | 계좌 | 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임 |
+| I-017 | ✅ | - | AI | 말로 입력에서 정보가 모자라면 실패만 뜨고, 무엇이 빠졌는지 알려 주거나 덧붙여 말할 수 없음 |
 
 
 ## 상세
@@ -1033,3 +1034,11 @@
 - 원인: 할인을 빼지 않는 결정과 그 근거(카드 할인은 대부분 캐시백이라 결제일 출금액은 할인 전 금액)가 어디에도 적혀 있지 않았다.
 - 해결: 동작은 그대로 두기로 정하고(사용자 결정), 근거를 getCardPaymentTotal 주석, AGENTS.md §4 예외, 설계 문서 '현재 상태'·§7-2에 적은 뒤, 할인을 빼지 않는 것을 테스트로 고정했다.
 - 파일: src/services/db/accounts.js(주석), AGENTS.md, docs/account-management-design.md, src/services/__tests__/dbManager.test.js
+
+### I-017 말로 입력에서 정보가 모자라면 실패만 뜨고, 무엇이 빠졌는지 알려 주거나 덧붙여 말할 수 없음
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: AI
+- 문제: 금액·가게를 빠뜨리고 말하면 빨간 오류("거래 내용을 찾지 못했습니다")만 뜨고, 일부만 정리된 건도 빈 칸을 직접 골라야 해 다시 말로 보충할 방법이 없었다.
+- 원인: 결제 건을 못 찾은 응답을 실패로 처리했고, AI 지시문이 금액 모르는 건을 빼도 되게 열려 있었으며, 덧붙인 말을 처음 말과 합쳐 다시 정리하는 흐름이 없었다.
+- 해결: 못 찾거나 AI가 글로만 되물으면 그 질문을 되묻기('unclear')로 보여 주고, 정리한 건의 빠진 정보(금액·결제수단·카테고리·내용)를 알려 주며, 덧붙인 말을 앱이 물은 것과 함께 보내 다시 정리하고 목록에서 고른 값·빠진 건 되돌리기·AI 설정을 다녀와도 대화를 남긴다.
+- 파일: src/services/textEntry.js, src/services/aiClient.js(글 답 원문 reply), src/components/AIEntry/TextPanel.js, src/components/AIEntry/TextFollowUp.js(새), src/components/AIEntry/AIEntry.js, src/components/AIEntry/AIEntry.css, src/services/__tests__/textEntry.test.js, src/components/AIEntry/__tests__/TextFollowUp.test.js, src/components/AIEntry/__tests__/TextPanel.followup.test.js, src/components/AIEntry/__tests__/AIEntry.test.js, src/services/__tests__/aiClient.test.js
