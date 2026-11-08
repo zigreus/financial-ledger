@@ -8,13 +8,7 @@ import { createRoot } from 'react-dom/client';
 import AISettingsForm from '../AISettingsForm';
 import { getAIConfig, updateAIConfig } from '../../../services/aiClient';
 import { syncAISettings, setAISyncAccount } from '../../../services/aiSettingsSync';
-import * as OneDrive from '../../../services/oneDriveService';
-
-vi.mock('../../../services/oneDriveService', async (importOriginal) => ({
-  ...(await importOriginal()),
-  readSettingsFile: vi.fn(),
-  writeSettingsFile: vi.fn(),
-}));
+import { ConflictError } from '../../../services/storage/provider';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,15 +28,18 @@ beforeEach(() => {
   cloud = null;
   rev = 0;
   hold = null;
-  OneDrive.readSettingsFile.mockImplementation(async () => {
-    if (hold) await hold;
-    return { data: cloud ? JSON.parse(JSON.stringify(cloud)) : null, eTag: cloud ? `e${rev}` : null };
+  // 로그인한 계정의 저장소 — AI 설정 파일만 흉내 낸다 (storage/provider.js의 readSettings·writeSettings)
+  setAISyncAccount({
+    accountKey: 'me',
+    readSettings: async () => {
+      if (hold) await hold;
+      return { data: cloud ? JSON.parse(JSON.stringify(cloud)) : null, version: cloud ? `e${rev}` : null };
+    },
+    writeSettings: async (_name, data, version) => {
+      if (version !== (cloud ? `e${rev}` : null)) throw new ConflictError();
+      setCloud(data);
+    },
   });
-  OneDrive.writeSettingsFile.mockImplementation(async (_i, _a, _n, data, eTag) => {
-    if (eTag !== (cloud ? `e${rev}` : null)) throw new OneDrive.ConflictError();
-    setCloud(data);
-  });
-  setAISyncAccount({}, [{ homeAccountId: 'me' }]);
 });
 afterEach(() => { document.body.innerHTML = ''; setAISyncAccount(null); });
 

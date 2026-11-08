@@ -17,11 +17,18 @@ import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTran
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
+import { createOneDriveStorage } from '../../services/storage/oneDrive';
 import { resolveDeviceMember } from '../../services/deviceMember';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
   const { instance, accounts } = useMsal();
+
+  // 가계부·백업·AI 설정 파일을 두는 저장소 (F-2) — 지금은 로그인한 Microsoft 계정의 OneDrive. 로그인 전에는 null
+  const storage = useMemo(
+    () => (accounts.length ? createOneDriveStorage(instance, accounts) : null),
+    [instance, accounts],
+  );
 
   // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
   // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
@@ -29,7 +36,7 @@ function App() {
     db, dataVersion, loading, saving, error, setError, notice,
     dirty, pendingCount, loadDb, saveNow, resetForLogout,
     listBackups, createBackup, restoreBackup,
-  } = useLedgerSync({ instance, accounts });
+  } = useLedgerSync({ storage });
   // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
   const backupApi = useMemo(
     () => ({ list: listBackups, create: createBackup, restore: restoreBackup }),
@@ -126,9 +133,9 @@ function App() {
   // 다시 온라인이 될 때. 다른 기기에서 넣은 키가 있으면 이 기기에서 다시 입력하지 않아도 되고,
   // 다른 기기에서 지운 키는 열어 둔 앱에서도 지워진다. 실패하면 다음 기회에 다시 한다.
   useEffect(() => {
-    setAISyncAccount(isAuthenticated ? instance : null, accounts);
+    setAISyncAccount(isAuthenticated ? storage : null);
     if (!isAuthenticated) aiSyncedRef.current = false;
-  }, [isAuthenticated, instance, accounts]);
+  }, [isAuthenticated, storage]);
 
   const lastAISyncRef = React.useRef(0);
   const runAISync = useCallback(() => {

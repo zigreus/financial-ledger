@@ -1,7 +1,7 @@
 /**
  * AI 설정(공급자·API 키·모델)을 같은 Microsoft 계정의 기기끼리 맞춘다 (I-015, B-071).
  *
- * - 저장 위치: OneDrive의 Apps/financial-ledger/ai-settings.json (가계부 DB와 별도 파일)
+ * - 저장 위치: 저장소의 계정 설정 파일 ai-settings.json (가계부 DB와 별도 파일, OneDrive는 Apps/financial-ledger/ai-settings.json)
  * - 기기 시계로 어느 쪽이 최신인지 가리지 않는다. 대신 이 기기에서 사용자가 바꾼 항목(pending)만 기억해 두고,
  *   동기화할 때 OneDrive 파일을 먼저 읽어 그 위에 그 항목만 덮어쓴다. 나머지는 OneDrive 값을 받는다.
  *     · 공급자마다 따로 맞춘다 — PC에서 Gemini 키를 저장해도 휴대폰에서 넣은 Claude 키는 그대로다
@@ -10,29 +10,28 @@
  * - 설정은 마지막으로 맞춘 계정(owner)에 묶인다. 다른 계정으로 로그인하면 이 기기 설정을 올리지 않고 버린다
  * - 동기화는 한 번에 하나씩(줄 세움). 기다리는 사이 사용자가 저장한 것은 덮어쓰지 않고 다음 차례에 올린다.
  *   기다리는 사이 이 기기에서만 키를 지웠으면(로그아웃·계정 바꿈, epoch) 받아 온 값으로 되살리지 않는다
- * - OneDrive에는 읽을 때의 eTag로만 저장한다 — 그 사이 다른 기기가 저장했으면 다시 읽어 합친다
+ * - OneDrive에는 읽을 때의 버전(eTag)으로만 저장한다 — 그 사이 다른 기기가 저장했으면 다시 읽어 합친다
  * - 로그인 화면으로 넘어가지 않고 응답이 없으면 포기한다 — 실패하면 올릴 것을 남겨 두고 다음에 다시 한다
  *
  * 같은 계정으로 로그인하는 사람(가족)은 모두 이 키를 쓰게 된다 — 가계부 파일과 같은 범위다.
  */
 import { PROVIDERS, AI_FIELDS, getAIConfig, storeAIConfig, normalizeAIConfig } from './aiClient';
-import { readSettingsFile, writeSettingsFile, ConflictError } from './oneDriveService';
+import { ConflictError } from './storage/provider';
 
 const FILE = 'ai-settings.json';
 const PROVIDER_NAMES = Object.keys(PROVIDERS);
-let account = null;
+let storage = null;
 let queue = Promise.resolve();
 const listeners = new Set();
 
 /**
- * App이 로그인 정보를 알려 준다 (로그아웃하면 null).
- * 이 기기 설정을 이 계정에 묶는다 — 다른 계정이 쓰던 설정이 남아 있으면 바로 버려,
+ * App이 로그인한 계정의 저장소(storage/provider.js)를 알려 준다 (로그아웃하면 null).
+ * 이 기기 설정을 그 계정(storage.accountKey)에 묶는다 — 다른 계정이 쓰던 설정이 남아 있으면 바로 버려,
  * 그 계정의 키를 이 계정에서 쓰거나 이 계정 OneDrive에 올리지 않는다.
  */
-export function setAISyncAccount(instance, accounts) {
-  const id = accounts && accounts.length ? accounts[0].homeAccountId || '' : '';
-  account = instance && id ? { instance, accounts, id } : null;
-  if (account) bindToAccount(account.id);
+export function setAISyncAccount(nextStorage) {
+  storage = nextStorage && nextStorage.accountKey ? nextStorage : null;
+  if (storage) bindToAccount(storage.accountKey);
 }
 
 /** 동기화로 이 기기 설정이 바뀌면 알려 준다 — 열려 있는 설정 화면이 새 값을 보이게. 반환: 구독 해제 */
@@ -42,12 +41,12 @@ export function onAISettingsPulled(listener) {
 }
 
 function defaultIO() {
-  if (!account) return null;
-  const { instance, accounts, id } = account;
+  if (!storage) return null;
+  const s = storage;
   return {
-    account: id,
-    read: () => readSettingsFile(instance, accounts, FILE),                         // → { data, eTag }
-    write: (data, eTag) => writeSettingsFile(instance, accounts, FILE, data, eTag), // eTag가 다르면 ConflictError
+    account: s.accountKey,
+    read: () => s.readSettings(FILE),                                  // → { data, version }
+    write: (data, version) => s.writeSettings(FILE, data, version),    // 버전이 다르면 ConflictError
   };
 }
 
@@ -112,7 +111,7 @@ async function runSync(io, epoch) {
 }
 
 async function syncOnce(io, epoch) {
-  const { data, eTag } = await io.read();
+  const { data, version } = await io.read();
   const cloud = fromFile(data);
   // 읽는 동안 사용자가 저장했을 수 있으니 이 기기 설정은 읽은 뒤에 가져온다.
   // 그 사이 키를 지웠거나 다른 계정으로 바뀌었으면 이 동기화는 버린다(계정은 부를 때 이미 묶었다)
@@ -142,7 +141,7 @@ async function syncOnce(io, epoch) {
   }
 
   const write = cloud ? !sameFile(merged, cloud) : hasKey(merged) || Object.keys(local.pending).length > 0;
-  if (write) await io.write(toFile(merged), eTag);
+  if (write) await io.write(toFile(merged), version);
 
   const latest = getAIConfig();
   // 그 사이 로그아웃하며 키를 지웠거나 다른 계정으로 바뀌었으면 받아 온 값을 이 기기에 넣지 않는다

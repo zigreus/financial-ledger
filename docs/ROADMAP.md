@@ -9,7 +9,7 @@
 | 단계 | 목표 | 항목 |
 |---|---|---|
 | **1단계** | 우리 가족이 바로 체감 (서버·인증 변경 없음) | B-065, ~~B-066(=C-1)~~ ✅, ~~C-2 카드 문자 붙여넣기~~ ✅ I-012, ~~C-3 입력자 기록~~ ✅ I-013, ~~F-1 내보내기·백업~~ ✅ I-014, C-7 검색 강화 |
-| **2단계** | 다른 가족도 쓸 수 있게 (출시 기반) | F-2 저장소 추상화 → M-1 Google 로그인·Drive, F-3 첫 실행 온보딩, C-4 PWA, M-7 엑셀에서 옮겨오기, M-5 출시 문서·심사, F-4 익명 지표 |
+| **2단계** | 다른 가족도 쓸 수 있게 (출시 기반) | ~~F-2 저장소 추상화~~ ✅ I-018 → M-1 Google 로그인·Drive, F-3 첫 실행 온보딩, C-4 PWA, M-7 엑셀에서 옮겨오기, M-5 출시 문서·심사, F-4 익명 지표 |
 | **3단계** | 돈을 낼 이유 만들기 | C-5 카테고리 예산, C-6 월 수지, C-9 월간 리포트, C-10 연말정산 도우미, C-8 구독 모아보기, M-2 다른 계정 공유, M-3 키 없이 쓰는 AI, M-4 요금제 |
 | **4단계** | 확장 | C-11 여행 정산, M-6 Play 스토어 |
 
@@ -34,7 +34,7 @@
 | 빈틈 | 근거 |
 |---|---|
 | 가족이 **같은 MS 계정**을 함께 씁니다. 누가 입력했는지 알 수 없습니다 | SETUP.md, `transactions`에 입력자 컬럼 없음 |
-| 다른 계정끼리 공유할 수 없습니다 | `oneDriveService.js`가 `/me/drive` 고정 경로만 씀. 설계는 [login-system-design.md](login-system-design.md)에만 있음 |
+| 다른 계정끼리 공유할 수 없습니다 | `storage/oneDrive.js`가 `/me/drive` 고정 경로만 씀. 설계는 [login-system-design.md](login-system-design.md)에만 있음 |
 | **지출만 기록합니다.** 수입·월 수지·저축률이 없습니다 | `transactions`에 수입 유형 없음. 수입은 `account_transactions`에만 있음 |
 | 예산이 **월 총액 목표 하나**뿐입니다 | `monthly_goals(year_month, goal_amount)` |
 | AI는 본인 키(Gemini/Claude)가 있어야 합니다. 말로 입력도 AI 전용입니다 | `aiClient.js`, `textEntry.js` |
@@ -69,8 +69,9 @@
   - 되돌리기도 "전체 업로드"이므로 다른 기기의 미저장 변경을 덮어씁니다. 확인창 문구는 실제 동작과 정확히 맞춥니다(§3).
   - 되돌리기는 sync 경로를 바꿉니다. `changeLog.test.js`를 먼저 읽습니다(CLAUDE.md).
 
-### F-2 저장소 추상화 (StorageProvider)
+### F-2 저장소 추상화 (StorageProvider) — ✅ I-018
 - 편의 ★ · 상업 ★★★ · 노력 M
+- **구현하며 바꾼 점:** 계약은 `src/services/storage/provider.js`에 있습니다. 가계부 파일 외에 백업 폴더(목록·만들기·읽기·지우기)와 계정 설정 파일(AI 키 공유)도 같은 저장소로 묶어, M-1은 같은 모양의 Google Drive 구현 하나와 로그인만 더하면 됩니다. 이 작업 중 가짜 저장소 테스트로 기존 버그 B-088(응답 유실 뒤 재시도 시 중복 입력)·B-089(오프라인 재시도 과다)를 찾았습니다.
 - **왜:** M-1(Google Drive)과 M-2(공유)의 전제 조건입니다. 지금은 `useLedgerSync`가 OneDrive 함수를 직접 부릅니다.
 - **무엇:**
   - `read() → { bytes, version }`과 `write(bytes, version)`를 정의합니다. 버전이 다르면 `write`가 `ConflictError`를 던집니다.

@@ -11,7 +11,7 @@ function LoginPage() {
   const busy = inProgress !== InteractionStatus.None;
 
   // 모바일 홈 화면 앱에서는 팝업이 막힐 수 있어 리다이렉트로 로그인한다 (B-016).
-  // 토큰 재인증(oneDriveService)도 리다이렉트라 방식이 하나로 통일된다.
+  // 토큰 재인증(services/storage/oneDrive.js)도 리다이렉트라 방식이 하나로 통일된다.
   const handleLogin = async () => {
     if (busy) return;
     setError('');

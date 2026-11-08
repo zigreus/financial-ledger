@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-088, I-018
+다음 번호: B-090, I-019
 
 ## 요약표
 
@@ -103,6 +103,8 @@
 | B-085 | ✅ | 중간 | 카드 대조 | 금액이 다른 취소(부분취소·수수료·환율 차이)에서 승인만 미리 체크 |
 | B-086 | ✅ | 중간 | 카드 대조 | 미리 체크된 "가계부에 없음"에 안전장치가 없어 중복 추가 |
 | B-087 | ✅ | 낮음 | 카드 대조 | 카드 대조 화면 상태가 이전 결과·오류를 끌고 감 |
+| B-088 | ⬜ | 높음 | 저장·동기화 | 업로드 응답을 못 받은 뒤 다시 저장하면 같은 입력이 두 번 들어감 |
+| B-089 | ⬜ | 낮음 | 저장·동기화 | 연결이 끊긴 동안 0.4초마다 저장을 끝없이 다시 시도 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -120,6 +122,7 @@
 | I-015 | ✅ | - | AI | PC에서 넣은 AI API 키를 휴대폰에서 다시 입력해야 함 |
 | I-016 | ✅ | - | 계좌 | 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임 |
 | I-017 | ✅ | - | AI | 말로 입력에서 정보가 모자라면 실패만 뜨고, 무엇이 빠졌는지 알려 주거나 덧붙여 말할 수 없음 |
+| I-018 | ✅ | - | 저장·동기화 | 저장소 추상화(StorageProvider) — 동기화가 OneDrive 함수를 직접 불러 다른 드라이브를 붙일 수 없음 (ROADMAP F-2) |
 
 
 ## 상세
@@ -907,6 +910,24 @@
 - 해결: 결과에 결제수단을 함께 저장하고 상태를 초기화하며, 0건·행 없음을 따로 안내하고 분할 결제 묶음은 함께 지운다.
 - 파일: src/components/CardStatement/CardStatementModal.js, src/services/cardStatement.js, src/components/CardStatement/__tests__/CardStatementModal.test.js
 
+### B-088 업로드 응답을 못 받은 뒤 다시 저장하면 같은 입력이 두 번 들어감
+- 상태: ⬜ 대기
+- 심각도: 높음
+- 영역: 저장·동기화
+- 문제: 저장이 OneDrive에 닿았지만 응답을 못 받은 뒤(약한 신호) 자동으로 다시 저장하면, 412로 최신 파일을 받아 합칠 때 이미 올라간 입력을 또 실행해 같은 거래가 두 건이 된다.
+- 원인: saveNow가 시도마다 inFlight(결과를 모르는 업로드의 동기화 표식)를 새 표식으로 덮어써, 병합·다시 열기 때 실제로 올라간 첫 업로드를 알아보지 못한다.
+- 해결: 수정 예정 (I-018 작업 중 가짜 저장소로 재현: 응답 유실 1번 + 재시도 → 같은 거래 2건)
+- 파일: src/hooks/useLedgerSync.js
+
+### B-089 연결이 끊긴 동안 0.4초마다 저장을 끝없이 다시 시도
+- 상태: ⬜ 대기
+- 심각도: 낮음
+- 영역: 저장·동기화
+- 문제: 오프라인에서 입력하면 저장 실패 직후 0.4초마다 토큰 요청·업로드를 다시 시도해(2.5초에 6번) 배터리·데이터를 쓴다.
+- 원인: 저장 루프가 끝날 때 남은 변경이 있으면 실패 여부와 관계없이 저장 디바운스(400ms)로 다시 예약한다.
+- 해결: 수정 예정 (I-018 작업 중 가짜 저장소로 확인: 2.5초에 6번 시도)
+- 파일: src/hooks/useLedgerSync.js
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -1042,3 +1063,11 @@
 - 원인: 결제 건을 못 찾은 응답을 실패로 처리했고, AI 지시문이 금액 모르는 건을 빼도 되게 열려 있었으며, 덧붙인 말을 처음 말과 합쳐 다시 정리하는 흐름이 없었다.
 - 해결: 못 찾거나 AI가 글로만 되물으면 그 질문을 되묻기('unclear')로 보여 주고, 정리한 건의 빠진 정보(금액·결제수단·카테고리·내용)를 알려 주며, 덧붙인 말을 앱이 물은 것과 함께 보내 다시 정리하고 목록에서 고른 값·빠진 건 되돌리기·AI 설정을 다녀와도 대화를 남긴다.
 - 파일: src/services/textEntry.js, src/services/aiClient.js(글 답 원문 reply), src/components/AIEntry/TextPanel.js, src/components/AIEntry/TextFollowUp.js(새), src/components/AIEntry/AIEntry.js, src/components/AIEntry/AIEntry.css, src/services/__tests__/textEntry.test.js, src/components/AIEntry/__tests__/TextFollowUp.test.js, src/components/AIEntry/__tests__/TextPanel.followup.test.js, src/components/AIEntry/__tests__/AIEntry.test.js, src/services/__tests__/aiClient.test.js
+
+### I-018 저장소 추상화(StorageProvider) — 동기화가 OneDrive 함수를 직접 불러 다른 드라이브를 붙일 수 없음
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 저장·동기화
+- 문제: useLedgerSync·백업·AI 설정 동기화가 OneDrive(Graph) 함수를 직접 불러, Google Drive(M-1)·공유(M-2)를 붙이려면 동기화 코드를 고쳐야 하고 병합 시나리오를 네트워크 없이 시험할 수 없다.
+- 원인: 저장소의 읽기·조건부 저장·백업·설정 파일 동작을 묶은 경계(계약)가 없었다.
+- 해결: services/storage/provider.js에 read→{bytes,version}·write(bytes,version)(버전이 다르면 ConflictError)·백업·설정 파일 계약을 정하고, OneDrive 구현(storage/oneDrive.js)은 기존 eTag 코드를 옮기기만 했으며, 백업 이름·정리 규칙은 backups.js로 나누고, useLedgerSync·aiSettingsSync는 App이 만든 저장소만 받게 했다. 메모리 가짜(storage/memory.js)로 병합 시나리오 테스트를, 가짜 Graph 서버로 두 구현의 계약 테스트를 돌린다(동작 변경 없음).
+- 파일: src/services/storage/provider.js(새), src/services/storage/oneDrive.js(oneDriveService.js에서 옮김), src/services/storage/memory.js(새), src/services/backups.js(oneDriveBackup.js에서 옮김), src/hooks/useLedgerSync.js, src/services/aiSettingsSync.js, src/components/App/App.js, src/services/__tests__/storage.test.js(새), src/services/__tests__/backups.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js(새), src/hooks/__tests__/useLedgerSync.backup.test.js, src/services/__tests__/aiSettingsSync.test.js, src/components/AIEntry/__tests__/AISettingsForm.test.js, AGENTS.md, CLAUDE.md

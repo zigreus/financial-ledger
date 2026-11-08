@@ -1,13 +1,14 @@
 /**
  * @vitest-environment jsdom
  */
-// OneDrive 백업 폴더 (I-014) — Graph 호출은 가짜 fetch로 확인한다
+// 백업 규칙 (I-014) — 저장소는 OneDrive 구현을 쓰고 Graph 호출은 가짜 fetch로 확인한다 (F-2 뒤에도 요청이 그대로인지)
 import {
-  backupName, parseBackupName, listBackups, uploadBackup, uploadNewBackup, downloadBackup, pruneBackups, BACKUP_DIR,
-} from '../oneDriveBackup';
+  backupName, parseBackupName, listBackups, uploadBackup, uploadNewBackup, downloadBackup, pruneBackups,
+} from '../backups';
+import { createOneDriveStorage, BACKUP_DIR } from '../storage/oneDrive';
 
 const instance = { acquireTokenSilent: async () => ({ accessToken: 'T' }) };
-const accounts = [{ homeAccountId: 'me' }];
+const storage = createOneDriveStorage(instance, [{ homeAccountId: 'me' }]);
 const json = (status, body) => ({ ok: status >= 200 && status < 300, status, statusText: String(status), json: async () => body });
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -35,28 +36,28 @@ test('목록은 이름 규칙에 맞는 파일만, 최근 것부터 — 폴더�
     ],
   }));
   vi.stubGlobal('fetch', fetch);
-  const list = await listBackups(instance, accounts);
+  const list = await listBackups(storage);
   expect(list.map(b => b.id)).toEqual(['2', '1']);
   expect(list[0]).toMatchObject({ name: 'ledger-2026-11-08-090507.db', size: 4096, daily: false, time: '09:05:07' });
   expect(fetch.mock.calls[0][0]).toContain('/me/drive/root:/Apps/financial-ledger/backups:/children');
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer T');
 
   vi.stubGlobal('fetch', vi.fn(async () => json(404, {})));
-  expect(await listBackups(instance, accounts)).toEqual([]);
+  expect(await listBackups(storage)).toEqual([]);
 });
 
 test('같은 이름이 있으면 덮어쓰지 않는다 (conflictBehavior=fail → 409면 false)', async () => {
   const fetch = vi.fn(async () => json(201, {}));
   vi.stubGlobal('fetch', fetch);
-  expect(await uploadBackup(instance, accounts, 'ledger-2026-11-08.db', new Uint8Array([1]))).toBe(true);
+  expect(await uploadBackup(storage, 'ledger-2026-11-08.db', new Uint8Array([1]))).toBe(true);
   const [url, init] = fetch.mock.calls[0];
   expect(url).toContain('/backups/ledger-2026-11-08.db:/content?@microsoft.graph.conflictBehavior=fail');
   expect(init.method).toBe('PUT');
 
   vi.stubGlobal('fetch', vi.fn(async () => json(409, {})));
-  expect(await uploadBackup(instance, accounts, 'ledger-2026-11-08.db', new Uint8Array([1]))).toBe(false);
+  expect(await uploadBackup(storage, 'ledger-2026-11-08.db', new Uint8Array([1]))).toBe(false);
 
-  await expect(uploadBackup(instance, accounts, 'ledger.db', new Uint8Array([1]))).rejects.toThrow(/이름 규칙/);
+  await expect(uploadBackup(storage, 'ledger.db', new Uint8Array([1]))).rejects.toThrow(/이름 규칙/);
 });
 
 test('같은 초에 이미 백업이 있으면 번호를 붙여 새로 만든다', async () => {
@@ -64,7 +65,7 @@ test('같은 초에 이미 백업이 있으면 번호를 붙여 새로 만든다
     .mockResolvedValueOnce(json(409, {}))
     .mockResolvedValueOnce(json(201, {}));
   vi.stubGlobal('fetch', fetch);
-  const name = await uploadNewBackup(instance, accounts, new Uint8Array([1]), new Date(2026, 10, 8, 9, 5, 7));
+  const name = await uploadNewBackup(storage, new Uint8Array([1]), new Date(2026, 10, 8, 9, 5, 7));
   expect(name).toBe('ledger-2026-11-08-090507-2.db');
   expect(fetch.mock.calls[1][0]).toContain('/backups/ledger-2026-11-08-090507-2.db:/content');
 });
@@ -74,10 +75,12 @@ test('내려받기는 백업 파일만 — 다른 파일 id면 거절한다', as
   vi.stubGlobal('fetch', vi.fn(async (url) => (url === 'https://dl/1'
     ? { ok: true, status: 200, arrayBuffer: async () => bytes.buffer }
     : json(200, { name: 'ledger-2026-11-08.db', '@microsoft.graph.downloadUrl': 'https://dl/1' }))));
-  expect(Array.from(await downloadBackup(instance, accounts, 'abc'))).toEqual([7, 8, 9]);
+  expect(Array.from(await downloadBackup(storage, 'abc'))).toEqual([7, 8, 9]);
 
-  vi.stubGlobal('fetch', vi.fn(async () => json(200, { name: 'ledger.db', '@microsoft.graph.downloadUrl': 'https://dl/2' })));
-  await expect(downloadBackup(instance, accounts, 'main')).rejects.toThrow(/백업 파일이 아닙니다/);
+  const fetch = vi.fn(async () => json(200, { name: 'ledger.db', '@microsoft.graph.downloadUrl': 'https://dl/2' }));
+  vi.stubGlobal('fetch', fetch);
+  await expect(downloadBackup(storage, 'main')).rejects.toThrow(/백업 파일이 아닙니다/);
+  expect(fetch.mock.calls.map(([url]) => url)).not.toContain('https://dl/2'); // 이름을 보고 내용은 받지 않는다
 });
 
 test('정리는 최근 keep개를 남기고 나머지 백업만 지운다', async () => {
@@ -86,7 +89,7 @@ test('정리는 최근 keep개를 남기고 나머지 백업만 지운다', asyn
   }));
   const fetch = vi.fn(async (url, init = {}) => (init.method === 'DELETE' ? json(204, {}) : json(200, { value })));
   vi.stubGlobal('fetch', fetch);
-  expect(await pruneBackups(instance, accounts, 3)).toBe(2);
+  expect(await pruneBackups(storage, 3)).toBe(2);
   const deleted = fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE').map(([url]) => url.split('/').pop());
   expect(deleted.sort()).toEqual(['b0', 'b1']); // 가장 오래된 둘
 });

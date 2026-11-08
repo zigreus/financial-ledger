@@ -10,7 +10,7 @@
 본문과 다른 점:
 - Supabase·Google Drive·react-router는 도입하지 않았습니다. 로그인은 MSAL **리디렉션** 방식, 저장소는 로그인한 계정의 OneDrive 파일 하나입니다(가족은 같은 계정으로 로그인).
 - 본문의 '현재 흐름'(받기 → 고치기 → 올리기)은 바뀌었습니다. 지금은 자동 저장이고, eTag 조건부 PUT으로 올리며, 다른 기기와 충돌하면 최신 파일에 내 변경을 다시 실행해 합칩니다(B-001). 다른 저장소를 붙일 때도 같은 충돌 처리(`ConflictError`)가 필요합니다.
-- OneDrive 호출은 App.js가 아니라 `src/hooks/useLedgerSync.js`·`src/services/oneDriveService.js`에 있습니다.
+- OneDrive 호출은 `src/services/storage/oneDrive.js`에만 있고, 동기화(`src/hooks/useLedgerSync.js`)는 저장소 계약(`src/services/storage/provider.js`, I-018)만 압니다. 다른 드라이브는 같은 계약의 구현을 하나 더 만들면 됩니다. 본문의 `oneDriveService.js`는 지금의 `storage/oneDrive.js`입니다.
 - 헤더에는 고정 [저장] 버튼이 없습니다. 저장 안 된 변경이 있을 때만 '저장 안 됨 N'이 보이고, 그 뒤로 🔄·⚙️·사용자(로그아웃)가 있습니다. 하단 탭은 `거래내역 | 요약 | + | 캘린더 | 계좌`입니다.
 - 본문 중 리디렉션 로그인, pushState 뒤로가기 설명은 지금도 맞습니다.
 

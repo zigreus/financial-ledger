@@ -5,27 +5,29 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { getAIConfig, updateAIConfig, clearAIKeys, activeAI } from '../aiClient';
 import { syncAISettings, setAISyncAccount, onAISettingsPulled } from '../aiSettingsSync';
-import { ConflictError } from '../oneDriveService';
+import { ConflictError } from '../storage/provider';
+import { createOneDriveStorage } from '../storage/oneDrive';
+import { createMemoryStorage } from '../storage/memory';
 
 const KEY = 'ai_receipt_config';
 
 const clone = d => JSON.parse(JSON.stringify(d));
 
-/** OneDrive 설정 파일 대신 쓰는 메모리 파일 — 실제처럼 eTag가 다르면 저장을 거절한다 */
+/** OneDrive 설정 파일 대신 쓰는 메모리 파일 — 실제처럼 버전(eTag)이 다르면 저장을 거절한다 */
 function cloudFile(initial = null) {
   return {
     data: initial,
     rev: initial ? 1 : 0,
     writes: 0,
-    eTag() { return this.rev ? `e${this.rev}` : null; },
+    version() { return this.rev ? `e${this.rev}` : null; },
     /** 다른 기기가 직접 저장한 것처럼 바꾼다 */
     replace(d) { this.data = clone(d); this.rev += 1; },
     as(accountId) {
       return {
         account: accountId,
-        read: async () => ({ data: this.data ? clone(this.data) : null, eTag: this.eTag() }),
-        write: async (d, eTag) => {
-          if (eTag !== this.eTag()) throw new ConflictError();
+        read: async () => ({ data: this.data ? clone(this.data) : null, version: this.version() }),
+        write: async (d, version) => {
+          if (version !== this.version()) throw new ConflictError();
           this.writes += 1;
           this.replace(d);
         },
@@ -212,7 +214,7 @@ describe('다른 계정으로 로그인한 기기', () => {
   test('로그인하는 순간(동기화 전) 다른 계정의 키를 쓰지 않는다', async () => {
     updateAIConfig({ keys: { gemini: 'A-KEY' } });
     await syncAISettings(cloudFile().as('A'));
-    setAISyncAccount({}, [{ homeAccountId: 'B' }]);
+    setAISyncAccount(createMemoryStorage({ accountKey: 'B' }));
     expect(activeAI()).toBe(null);
   });
 });
@@ -236,7 +238,7 @@ describe('동기화와 저장이 겹칠 때', () => {
     updateAIConfig({ keys: { gemini: 'FIRST' } });
     const writing = {
       ...io,
-      write: async (d, eTag) => { updateAIConfig({ keys: { gemini: 'SECOND' } }); await io.write(d, eTag); },
+      write: async (d, version) => { updateAIConfig({ keys: { gemini: 'SECOND' } }); await io.write(d, version); },
     };
     await syncAISettings(writing);
     expect(file.data.keys.gemini).toBe('FIRST');
@@ -267,12 +269,12 @@ describe('동기화와 저장이 겹칠 때', () => {
     let phoneWroteFirst = false;
     const racing = {
       ...io,
-      write: async (d, eTag) => {
+      write: async (d, version) => {
         if (!phoneWroteFirst) {                // PC가 읽은 뒤, 쓰기 전에 휴대폰이 Claude 키를 저장
           phoneWroteFirst = true;
           file.replace({ ...file.data, keys: { ...file.data.keys, claude: 'C' }, changedAt: { claude: 5 } });
         }
-        return io.write(d, eTag);
+        return io.write(d, version);
       },
     };
     await syncAISettings(racing);
@@ -358,7 +360,7 @@ describe('실제 OneDrive 호출', () => {
   test('가계부 파일과 별도인 Apps/financial-ledger/ai-settings.json만 읽고 쓴다', async () => {
     legacyKey('gemini', 'AIza-PC');
     const instance = { acquireTokenSilent: async () => ({ accessToken: 'TOKEN' }) };
-    setAISyncAccount(instance, [{ homeAccountId: 'me' }]);
+    setAISyncAccount(createOneDriveStorage(instance, [{ homeAccountId: 'me' }]));
     let stored = null;
     global.fetch = vi.fn(async (url, init = {}) => {
       if (url === 'https://download/ai') return reply(200, stored);
@@ -389,7 +391,7 @@ describe('실제 OneDrive 호출', () => {
 
   test('다른 기기가 먼저 저장해 412가 오면 충돌로 보고 다시 읽는다', async () => {
     updateAIConfig({ keys: { gemini: 'G' } });
-    setAISyncAccount({ acquireTokenSilent: async () => ({ accessToken: 'T' }) }, [{ homeAccountId: 'me' }]);
+    setAISyncAccount(createOneDriveStorage({ acquireTokenSilent: async () => ({ accessToken: 'T' }) }, [{ homeAccountId: 'me' }]));
     let puts = 0;
     global.fetch = vi.fn(async (url, init = {}) => {
       if (url === 'https://download/ai') return reply(200, { provider: 'gemini', keys: { gemini: 'OLD' }, models: {} });
@@ -406,7 +408,7 @@ describe('실제 OneDrive 호출', () => {
       acquireTokenSilent: async () => { throw new InteractionRequiredAuthError('interaction_required'); },
       acquireTokenRedirect: vi.fn(async () => {}),
     };
-    setAISyncAccount(instance, [{ homeAccountId: 'me' }]);
+    setAISyncAccount(createOneDriveStorage(instance, [{ homeAccountId: 'me' }]));
     global.fetch = vi.fn();
     await expect(syncAISettings()).rejects.toThrow('다시 로그인');
     expect(instance.acquireTokenRedirect).not.toHaveBeenCalled();
@@ -420,7 +422,7 @@ test('올리는 중에 로그아웃하며 키를 지워도, 올린 것은 OneDri
   await syncAISettings(file.as('me'));
   updateAIConfig({ keys: { gemini: 'G2' } });
   const io = file.as('me');
-  const clearing = { ...io, write: async (d, eTag) => { clearAIKeys(); return io.write(d, eTag); } };
+  const clearing = { ...io, write: async (d, version) => { clearAIKeys(); return io.write(d, version); } };
   expect(await syncAISettings(clearing)).toBe('cancelled');
   expect(file.data.keys.gemini).toBe('G2');
   expect(activeAI()).toBe(null);
@@ -434,12 +436,12 @@ test('두 기기가 동시에 처음 만들면 늦은 쪽은 덮어쓰지 않고
   let otherCreated = false;
   const racing = {
     ...io,
-    write: async (d, eTag) => {
+    write: async (d, version) => {
       if (!otherCreated) {                    // 읽을 때는 없었는데, 쓰기 직전에 다른 기기가 만듦
         otherCreated = true;
         file.replace({ provider: 'claude', keys: { claude: 'C' }, models: {}, changedAt: { claude: 3 } });
       }
-      return io.write(d, eTag);
+      return io.write(d, version);
     },
   };
   await syncAISettings(racing);
