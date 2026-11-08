@@ -6,7 +6,7 @@ import LoginPage from '../LoginPage/LoginPage';
 import Header from '../Header/Header';
 import TransactionList from '../TransactionList/TransactionList';
 import TransactionForm from '../TransactionForm/TransactionForm';
-import SummaryView, { showSummaryMonth } from '../SummaryView/SummaryView';
+import SummaryView, { showSummaryMonth, showSummaryReportMonth } from '../SummaryView/SummaryView';
 import SettingsView from '../SettingsView/SettingsView';
 import ImportModal from '../ImportModal/ImportModal';
 import CardStatementModal from '../CardStatement/CardStatementModal';
@@ -552,6 +552,12 @@ function App() {
               navigate({ activeTab: 'summary', summaryTab: 'category', summaryDrilldown: null });
               document.querySelector('.app-main')?.scrollTo(0, 0);
             }}
+            onOpenReport={(month) => {
+              // 지난달 리포트 알림 → 요약 › 리포트의 그 달 (I-028)
+              showSummaryReportMonth(month);
+              navigate({ activeTab: 'summary', summaryTab: 'report', summaryDrilldown: null });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
           />
         )}
         {activeTab === 'summary' && (
@@ -562,6 +568,13 @@ function App() {
             drilldownCategory={summaryDrilldown}
             onTabChange={(t) => navigate({ summaryTab: t, summaryDrilldown: null })}
             onDrilldownChange={(d) => navigate({ summaryDrilldown: d })}
+            onOpenSettings={(section) => {
+              navigate({
+                activeTab: 'settings', settingsSection: section,
+                settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+              });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
           />
         )}
         {activeTab === 'calendar' && (

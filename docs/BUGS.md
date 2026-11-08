@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-028
+다음 번호: B-093, I-029
 
 ## 요약표
 
@@ -135,6 +135,7 @@
 | I-025 | ✅ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
 | I-026 | ✅ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
 | I-027 | ✅ | - | 정기지출 | 구독이 정기지출에 섞여 한 달·한 해에 구독으로 얼마 나가는지, 값이 오른 구독이 무엇인지 알 수 없음 (ROADMAP C-8) |
+| I-028 | ✅ | - | 요약 | 한 달이 끝나도 평소보다 무엇에 더 썼는지·큰 지출·무지출일·예산 결과를 한눈에 돌아볼 곳이 없음 (ROADMAP C-9) |
 
 
 ## 상세
@@ -1182,3 +1183,11 @@
 - 원인: 정기지출에 구독인지 표시가 없고, 등록 금액과 실제로 결제된 금액을 견주는 곳이 없다.
 - 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 정기지출에 구독 표시·해지 메모·금액 확인일(recurring_transactions.is_subscription·cancel_note·amount_checked_on)을 두고 월·연 환산 합계(할인 뺀 금액)와, 금액을 확인한 뒤의 최근 결제(분할은 몫의 합)가 등록 금액과 3% 넘게 다른 구독을 보이며 '바꾸기'·'이대로 두기'를 고르게 한다(앞으로의 거래 따라 바꾸기는 B-092, ROADMAP C-8, 사용자 요청).
 - 파일: src/services/db/subscriptions.js(새), src/services/db/recurring.js·schema.js, src/services/dbManager.js, src/components/SettingsView/sections/SubscriptionPanel.js(새)·RecurringSection.js, src/components/SettingsView/SettingsView.css, src/services/__tests__/subscriptions.test.js, src/components/__tests__/Subscriptions.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-028 한 달이 끝나도 평소보다 무엇에 더 썼는지·큰 지출·무지출일·예산 결과를 한눈에 돌아볼 곳이 없음 (ROADMAP C-9)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 요약
+- 문제: 요약은 달마다 합계와 카테고리 막대만 보여 주어, 지난달이 평소(앞 몇 달)와 무엇이 달랐는지·가장 큰 지출·무지출일·목표와 예산을 지켰는지를 따로 찾아봐야 한다.
+- 원인: 한 달을 앞 달들과 견주어 정리하는 화면과 계산이 없다.
+- 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 요약에 '리포트' 탭을 두어, 앞 3개월(거래가 있는 달만, 달 중간에 시작한 첫 달 제외) 평균 대비 크게 늘거나 준 카테고리(3만 원 이상·30% 이상, 준 것은 두 달 이상 쓴 카테고리만), 가장 큰 지출 3건(분할은 합침), 무지출일, 월 목표·카테고리 예산·수지(진행 중인 달은 지금까지)를 규칙으로 계산해 보이고, 매달 1~7일 거래내역 첫 화면에 지난달 리포트를 알리며, '✨ AI 한마디'는 합계 수준의 숫자만 보내 문장으로 다듬는다(ROADMAP C-9, 사용자 요청).
+- 파일: src/services/db/monthlyReport.js(새), src/services/monthlyReportAI.js(새), src/services/dbManager.js, src/components/SummaryView/MonthlyReport.js·MonthlyReport.css(새)·SummaryView.js·SummaryView.css, src/components/TransactionList/MonthlyReportBanner.js(새)·TransactionList.js, src/components/App/App.js, src/components/SettingsView/sections/MonthlyReportSettings.js(새)·BudgetSection.js, src/services/__tests__/monthlyReport.test.js, src/components/__tests__/MonthlyReport.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

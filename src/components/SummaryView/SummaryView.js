@@ -8,15 +8,16 @@ import {
   getAvailableYears, getEventSummary, getEventDetailSummary, getEventPaymentMethodSummary,
   getMemberSummary, getMemberNames,
   getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
-  isMonthlyBalanceEnabled, getMonthlyIncome,
+  isMonthlyBalanceEnabled, getMonthlyIncome, isMonthlyReportEnabled, getReportMonths,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
 import './SummaryView.css';
-import { toDateStr, toYearMonth, currentYearMonth } from '../../services/dateUtils';
+import { toDateStr, toYearMonth, currentYearMonth, addMonths } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import CategoryBudgetPanel from './CategoryBudgetPanel';
 import MonthlyBalanceCard from './MonthlyBalanceCard';
+import MonthlyReport from './MonthlyReport';
 
 // 날짜 포맷 헬퍼
 const _fmt = toDateStr;
@@ -34,12 +35,18 @@ const _filterState = {
   selectedEventId: '',
   eventTypeFilter: '',
   eventSortType: 'date_desc',
+  reportMonth: '',
 };
 
 /** 다음에 요약을 열 때 그 달 보기로 연다 — 거래내역의 예산 알림에서 넘어올 때 (I-025) */
 export function showSummaryMonth(yearMonth) {
   _filterState.filterType = 'month';
   _filterState.selectedMonth = yearMonth;
+}
+
+/** 다음에 요약 › 리포트를 열 때 그 달 리포트로 연다 — 거래내역의 지난달 리포트 알림에서 넘어올 때 (I-028) */
+export function showSummaryReportMonth(yearMonth) {
+  _filterState.reportMonth = yearMonth;
 }
 
 // 막대 길이(%) — 환불로 0 이하가 된 값은 빈 막대로 (음수 너비는 CSS가 무시해 막대가 가득 차 보인다)
@@ -106,7 +113,7 @@ function aggregateForeign(rows) {
 
 // dataVersion: DB에 쓰기가 있을 때마다 App이 올리는 숫자. sql.js는 같은 db 객체를 제자리에서 바꾸므로
 // db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
-function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange, onDrilldownChange }) {
+function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onTabChange, onDrilldownChange, onOpenSettings }) {
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
   const [filterType, setFilterType] = useState(() => _filterState.filterType);
@@ -135,6 +142,18 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
 
   // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
   const live = useDbSnapshot(db, dataVersion);
+  // 월간 리포트 (I-028) — 켰을 때만 '리포트' 탭이 있다. 끈 채로 리포트 탭이 열리면 월별 추이를 보인다
+  const reportEnabled = useMemo(() => isMonthlyReportEnabled(live.db), [live]);
+  const tab = tabProp === 'report' && !reportEnabled ? 'monthly' : tabProp;
+  // 보는 달: 사용자가 고른 달(알림에서 연 달 포함). 고르지 않았으면 지난달(거래가 없으면 가장 최근 달)
+  const [pickedReportMonth, setPickedReportMonth] = useState(() => _filterState.reportMonth);
+  const reportMonths = useMemo(() => (reportEnabled ? getReportMonths(live.db) : []), [live, reportEnabled]);
+  const lastMonth = addMonths(currentMonth, -1);
+  const reportMonth = pickedReportMonth || (reportMonths.includes(lastMonth) || !reportMonths.length ? lastMonth : reportMonths[0]);
+  const pickReportMonth = (ym) => {
+    _filterState.reportMonth = ym;
+    setPickedReportMonth(ym);
+  };
   const months = useMemo(() => getAvailableMonths(live.db), [live]);
   const years = useMemo(() => getAvailableYears(live.db), [live]);
   const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(live.db, monthlyLimit), [live, monthlyLimit]);
@@ -301,11 +320,28 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
   return (
     <div className="summary-page">
       {/* 메인 탭 */}
-      <div className="summary-tabs">
+      <div className={`summary-tabs${reportEnabled ? ' summary-tabs--many' : ''}`}>
         <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => onTabChange('monthly')}>월별 추이</button>
         <button className={tab === 'category' ? 'tab active' : 'tab'} onClick={() => onTabChange('category')}>카테고리</button>
         <button className={tab === 'payment' ? 'tab active' : 'tab'} onClick={() => onTabChange('payment')}>결제수단</button>
+        {reportEnabled && (
+          <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => onTabChange('report')}>리포트</button>
+        )}
       </div>
+
+      {tab === 'report' && (
+        <div className="summary-section" style={{ paddingTop: 12 }}>
+          <MonthlyReport
+            db={db}
+            dataVersion={dataVersion}
+            month={reportMonth}
+            months={reportMonths}
+            onMonthChange={pickReportMonth}
+            showGoal={showGoal}
+            onOpenSettings={onOpenSettings}
+          />
+        </div>
+      )}
 
       {/* 필터 (카테고리/결제수단 탭에서만) */}
       {showFilter && (

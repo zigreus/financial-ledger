@@ -22,6 +22,11 @@
   border-bottom-color: var(--primary);
   font-weight: 600;
 }
+/* 선택 기능 탭(리포트 등)이 늘면 좁은 화면에서 줄바꿈하지 않게 — 선택 기능을 켰을 때만 (I-028) */
+.summary-tabs--many .tab { min-width: 0; white-space: nowrap; }
+@media (max-width: 480px) {
+  .summary-tabs--many .tab { padding: 14px 4px; font-size: 13px; }
+}
 
 .summary-filter {
   padding: 12px 16px;

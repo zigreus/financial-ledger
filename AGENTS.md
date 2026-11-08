@@ -15,7 +15,7 @@
 | 위치 | 역할 |
 |---|---|
 | `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
-| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것). 내부 도우미는 common·recurringDates |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것), monthlyReport(월간 리포트, 선택 기능 — 규칙으로 계산, 문장 다듬기는 services/monthlyReportAI). 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |

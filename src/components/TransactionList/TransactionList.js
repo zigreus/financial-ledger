@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus, isMonthlyReportEnabled, getMonthlyReportHeadline } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import BalanceAlertBanner from './BalanceAlertBanner';
 import BudgetAlertBanner from './BudgetAlertBanner';
+import MonthlyReportBanner, { REPORT_BANNER_DAYS, isReportSeen } from './MonthlyReportBanner';
 import FirstEntryGuide from './FirstEntryGuide';
 import FilterPanel from './FilterPanel';
 import FilterSummary from './FilterSummary';
@@ -18,11 +19,11 @@ import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
-import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateUtils';
+import { currentYearMonth, todayStr as todayDateStr, addMonths } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 
-function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenOnboarding, onOpenSettings }) {
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenReport, onOpenOnboarding, onOpenSettings }) {
   // 탭을 옮겼다 와도(설정 › AI에 다녀오는 등) 걸던 조건을 이어 쓴다 — 그사이 없어진 이름은 뺀다
   const [filters, setFilters] = useState(() => fitSavedFilters(loadSessionFilters(), {
     paymentMethods: getAllPaymentMethods(db).map(m => m.name),
@@ -128,6 +129,17 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const budgetAlerts = useMemo(() => (isCategoryBudgetEnabled(live.db)
     ? getCategoryBudgetStatus(live.db, currentMonth).filter(r => r.level !== 'ok')
     : []), [live, currentMonth]);
+  // 지난달 리포트 알림 (I-028) — 월간 리포트를 켰을 때, 매달 1~7일에만. 이 기기에서 이미 본 달이면 계산하지 않는다.
+  // 날짜가 바뀌면(앱을 켜 둔 채 8일·다음 달이 되면) 다음 그리기에서 다시 판단한다
+  const reportDay = todayDateStr();
+  const lastMonthReport = useMemo(() => {
+    if (Number(reportDay.slice(8, 10)) > REPORT_BANNER_DAYS) return null;
+    if (!isMonthlyReportEnabled(live.db)) return null;
+    const ym = addMonths(reportDay.slice(0, 7), -1);
+    if (isReportSeen(ym)) return null;
+    const headline = getMonthlyReportHeadline(live.db, ym);
+    return headline.count ? headline : null;
+  }, [live, reportDay]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
@@ -464,6 +476,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
 
       {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
       {!deleteMode && <BudgetAlertBanner alerts={budgetAlerts} onOpenBudget={() => onOpenBudget && onOpenBudget(currentMonth)} />}
+      {!deleteMode && <MonthlyReportBanner report={lastMonthReport} onOpen={ym => onOpenReport && onOpenReport(ym)} />}
 
       {/* 거래 목록 */}
       {transactions.length === 0 && !hasFilters ? (
