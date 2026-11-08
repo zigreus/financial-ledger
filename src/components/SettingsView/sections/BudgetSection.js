@@ -5,6 +5,7 @@ import { evaluateFormula } from '../../../services/formulaEvaluator';
 import AmountInput from '../../common/AmountInput';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
 import CategoryBudgetSettings from './CategoryBudgetSettings';
+import MonthlyBalanceSettings from './MonthlyBalanceSettings';
 
 /** 지출계획 › 예산 — 목표금액 표시 여부와 상시 월 목표금액 */
 export default function BudgetSection({ db, dataVersion, onChanged, setError }) {
@@ -111,6 +112,8 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
 
       {/* 카테고리별 예산 (I-025) — 선택 기능 */}
       <CategoryBudgetSettings db={db} dataVersion={dataVersion} onChanged={onChanged} setError={setError} />
+      {/* 수입·월 수지 (I-026) — 선택 기능 */}
+      <MonthlyBalanceSettings db={db} dataVersion={dataVersion} onChanged={onChanged} />
     </div>
   );
 }

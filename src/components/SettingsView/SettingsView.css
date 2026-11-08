@@ -166,6 +166,15 @@
 .cb-settings-hidden { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #F3F4F6; color: #6B7280; font-size: 10px; font-weight: 700; }
 .cb-settings-orphans { margin-top: 12px; }
 
+/* 수입·월 수지 (I-026) */
+.mb-account-name { flex-direction: column; align-items: flex-start; gap: 0; }
+.mb-account-hint { font-size: 11px; color: var(--text-muted); }
+.mb-account-reset {
+  margin-left: 4px; padding: 4px 6px; min-height: 28px; border: none; background: none;
+  color: var(--primary); font-size: 12px; text-decoration: underline; cursor: pointer;
+}
+.mb-transfer-hint { color: #B45309; }
+
 .btn-drilldown {
   display: flex;
   align-items: center;

@@ -8,6 +8,7 @@ import {
   getAvailableYears, getEventSummary, getEventDetailSummary, getEventPaymentMethodSummary,
   getMemberSummary, getMemberNames,
   getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
+  isMonthlyBalanceEnabled, getMonthlyIncome,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
@@ -15,6 +16,7 @@ import './SummaryView.css';
 import { toDateStr, toYearMonth, currentYearMonth } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import CategoryBudgetPanel from './CategoryBudgetPanel';
+import MonthlyBalanceCard from './MonthlyBalanceCard';
 
 // 날짜 포맷 헬퍼
 const _fmt = toDateStr;
@@ -136,6 +138,12 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
   const months = useMemo(() => getAvailableMonths(live.db), [live]);
   const years = useMemo(() => getAvailableYears(live.db), [live]);
   const monthlyTotals = useMemo(() => getMonthlyTotalsWithGoals(live.db, monthlyLimit), [live, monthlyLimit]);
+  // 수입·월 수지 (I-026) — 켰을 때만 월별 목록에 수입·남은 돈을 보인다
+  const balanceEnabled = useMemo(() => isMonthlyBalanceEnabled(live.db), [live]);
+  const incomeByMonth = useMemo(
+    () => (balanceEnabled ? getMonthlyIncome(live.db, monthlyTotals.map(r => r.month)) : {}),
+    [live, balanceEnabled, monthlyTotals],
+  );
   const isMobile = useIsMobile();
   const showGoal = useMemo(
     () => getSetting(live.db, isMobile ? 'show_goal_display_mobile' : 'show_goal_display_pc', '1') !== '0',
@@ -414,6 +422,8 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
       {/* 월별 추이 탭 */}
       {tab === 'monthly' && (
         <div className="summary-section">
+          {/* 이번 달 수지 (I-026) — 수입·월 수지를 켰을 때만 */}
+          <MonthlyBalanceCard db={db} dataVersion={dataVersion} month={currentMonth} />
           <div className="summary-sub-tabs">
             <button className={monthlySubTab === 'list' ? 'sub-tab active' : 'sub-tab'} onClick={() => setMonthlySubTab('list')}>목록</button>
             <button className={monthlySubTab === 'chart' ? 'sub-tab active' : 'sub-tab'} onClick={() => setMonthlySubTab('chart')}>그래프</button>
@@ -437,13 +447,15 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
               currentMonth={currentMonth}
             />
           ) : (
-            <table className="summary-table">
+            <>
+            <table className={`summary-table${balanceEnabled ? ' with-balance' : ''}`}>
               <thead>
                 <tr>
                   <th>월</th>
-                  <th>건수</th>
+                  <th className="mb-col-cnt">건수</th>
                   <th>지출/할인</th>
                   <th>{showGoal ? '총액/목표' : '총액'}</th>
+                  {balanceEnabled && <th>수입/남은 돈</th>}
                 </tr>
               </thead>
               <tbody>
@@ -452,10 +464,12 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
                   const net = r.total - (r.discount || 0);
                   const diff = r.goal !== null && r.goal !== undefined ? r.goal - net : null;
                   const isSaved = diff !== null && diff >= 0;
+                  const inc = incomeByMonth[r.month];
+                  const left = inc ? inc.income - net : null;
                   return (
                     <tr key={r.month} className={isCurrent ? 'current-month-row' : ''}>
                       <td>{r.month}</td>
-                      <td>{r.cnt}</td>
+                      <td className="mb-col-cnt">{r.cnt}</td>
                       <td className="amount-cell">
                         {formatAmount(r.total)}원
                         {r.discount > 0 && (
@@ -473,11 +487,27 @@ function SummaryView({ db, dataVersion = 0, tab, drilldownCategory, onTabChange,
                           </>
                         )}
                       </td>
+                      {balanceEnabled && (
+                        <td className="income-cell">
+                          {inc ? (
+                            <>
+                              {formatAmount(inc.income)}원{(inc.upcoming > 0 || inc.unconfirmed > 0) && ' *'}
+                              <div className={`cell-sub-line ${left >= 0 ? 'cell-sub-left-plus' : 'cell-sub-left-minus'}`}>
+                                {left >= 0 ? '+' : '-'}{formatAmount(Math.abs(left))}원
+                              </div>
+                            </>
+                          ) : '-'}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            {balanceEnabled && Object.values(incomeByMonth).some(v => v.upcoming > 0 || v.unconfirmed > 0) && (
+              <p className="mb-table-note">* 예정 금액이 포함된 수입(아직 들어오지 않았거나 금액을 고치지 않음)</p>
+            )}
+            </>
           )}
         </div>
       )}

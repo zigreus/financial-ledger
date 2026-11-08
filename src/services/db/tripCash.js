@@ -35,7 +35,8 @@ function uniqueRowId(db, sql, params) {
   return rows.length === 1 ? rows[0][0] : null;
 }
 
-const CASH_FLOW_ACCOUNT_CATEGORY = '여행 현금';
+// 여행 현금 흐름과 함께 만든 계좌 내역의 분류 — 월 수지(I-026)는 이 입금(재환전·남은 현금)을 수입으로 세지 않는다
+export const CASH_FLOW_ACCOUNT_CATEGORY = '여행 현금';
 
 export function addEventCashFlow(db, flow) {
   if (!db || !flow.event_id) throw new Error('일정을 선택하세요');

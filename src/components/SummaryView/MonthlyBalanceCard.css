@@ -1,0 +1,32 @@
+/* 요약 › 월별 추이 — 이 달 수지 (I-026) */
+.mb-card {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg, #fff);
+}
+.mb-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; margin-bottom: 8px; font-size: 14px; }
+.mb-card-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.mb-card-grid > div { min-width: 0; }
+.mb-card-grid dt { font-size: 11px; color: var(--text-muted); }
+.mb-card-grid dd { margin: 2px 0 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.mb-left--plus dd { color: #047857; }
+.mb-left--minus dd { color: #B91C1C; }
+.mb-card-note { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+@media (max-width: 480px) {
+  .mb-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* 월별 목록의 수입·남은 돈 칸 — 좁은 화면에서 넘치지 않게: 금액은 한 줄로, 건수 칸은 감춘다 */
+.summary-table .income-cell { width: auto; white-space: nowrap; }
+.summary-table.with-balance .total-cell,
+.summary-table.with-balance .amount-cell { white-space: nowrap; }
+.cell-sub-left-plus { color: #047857; }
+.cell-sub-left-minus { color: #B91C1C; }
+.mb-table-note { margin: 6px 2px 0; font-size: 11px; color: var(--text-muted); }
+/* (기존 .col-cnt 규칙은 모든 표에 걸리므로 월별 목록은 따로 — 기능을 끄면 예전과 같게) */
+@media (max-width: 480px) {
+  .summary-table.with-balance .mb-col-cnt { display: none; }
+  .summary-table.with-balance .total-cell { width: auto; }
+  .summary-table.with-balance { font-size: 12px; }
+}

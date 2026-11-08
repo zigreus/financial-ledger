@@ -1,7 +1,7 @@
 // DB 스키마와 열기 — 테이블 정의, sql.js 초기화, 마이그레이션(createDatabase), 내보내기.
 
 import initSqlJs from 'sql.js';
-import { columnsOf, dbRowsToObjects, runCount, tableExists, withTransaction } from './common';
+import { columnsOf, dbRowsToObjects, runCount, tableExists, todayLocal, withTransaction } from './common';
 import { recurringDateFor, ymOf } from './recurringDates';
 
 let SQL = null;
@@ -266,7 +266,7 @@ export async function initSQL() {
 // ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
 // 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
 // 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
-export const SCHEMA_VERSION = 4; // 4: category_budgets (I-025)
+export const SCHEMA_VERSION = 5; // 4: category_budgets (I-025), 5: accounts.count_income (I-026)
 
 const COLUMN_MIGRATIONS = [
   // [테이블, 컬럼, 정의]
@@ -290,6 +290,8 @@ const COLUMN_MIGRATIONS = [
   // 카테고리 예산: 상시 값을 쓰기 시작한 달 / 상시를 바꿀 때 남긴 그때 예산 (I-025 — 처음 만든 표에는 없었다)
   ['category_budgets', 'since', "TEXT NOT NULL DEFAULT ''"],
   ['category_budgets', 'kept', 'INTEGER NOT NULL DEFAULT 0'],
+  // 월 수지(I-026): 이 계좌의 입금을 수입으로 셀지 — NULL이면 자동(반복 수입 항목이 있는 계좌만), 1 셈, 0 세지 않음
+  ['accounts', 'count_income', 'INTEGER DEFAULT NULL'],
 ];
 
 /** 컬럼이 없을 때만 추가한다. 추가했으면 true. */
@@ -447,6 +449,15 @@ export function createDatabase(SQL, existingData = null) {
 
   // ── 계좌 자동등록 내역의 '대상 월' 채우기 + 중복 정리 (B-007) ─────────
   step('계좌 자동등록 대상 월 정리', () => normalizeAccountRecurringMonths(db));
+
+  // ── 지운 계좌에 남은 앞으로의 자동 예정 정리 (I-026) ─────────────────
+  // 계좌를 지우면 앞으로의 자동 예정도 지운다(deleteAccount). 그 전 버전이나 예전 버전 기기로 지운 계좌에는 남아 있어,
+  // 날짜가 지나면 지난 입금처럼 수입에 잡혀 월급 계좌를 바꾼 달에 새 계좌 월급과 겹친다. 날짜가 지나기 전에 지운다.
+  step('지운 계좌의 앞으로 예정 정리', () => runCount(db,
+    `DELETE FROM account_transactions
+     WHERE is_auto_generated = 1 AND is_modified = 0 AND date > ?
+       AND account_id IN (SELECT id FROM accounts WHERE is_active = 0)`,
+    [todayLocal()]) > 0);
 
   const newerSchema = storedVersion > SCHEMA_VERSION;
   if (!newerSchema && storedVersion !== SCHEMA_VERSION && migrationErrors.length === 0) {

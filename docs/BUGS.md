@@ -132,7 +132,7 @@
 | I-023 | ✅ | - | 입력 | AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음 |
 | I-024 | ✅ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
 | I-025 | ✅ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
-| I-026 | ⬜ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
+| I-026 | ✅ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
 
 
 ## 상세
@@ -1157,9 +1157,9 @@
 - 파일: src/services/db/categoryBudgets.js(새), src/services/db/schema.js·masterData.js, src/services/dbManager.js, src/components/SettingsView/sections/CategoryBudgetSettings.js(새)·BudgetSection.js·CategorySection.js, src/components/SettingsView/SettingsView.css, src/components/SummaryView/CategoryBudgetPanel.js·CategoryBudgetPanel.css(새)·SummaryView.js, src/components/TransactionList/BudgetAlertBanner.js(새)·TransactionList.js, src/components/App/App.js, src/services/__tests__/categoryBudgets.test.js, src/components/__tests__/CategoryBudget.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
 
 ### I-026 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6)
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-09)
 - 영역: 요약
 - 문제: 요약이 지출만 보여 주어 이번 달 수입에서 얼마가 남았는지, 저축률이 얼마인지 알 수 없다.
-- 원인: (예정) 수입은 계좌 기능(예정 금액·자동 등록)에만 있고 요약과 이어지지 않는다.
-- 해결: (예정) ROADMAP C-6 1안 — 계좌의 수입(월급처럼 달마다 조금씩 다른 실제 금액, 없으면 예정 금액)을 요약에 합쳐 남은 돈·저축률을 보이고, 이체는 이중 계산하지 않음. 선택 기능으로 켜고 끈다(사용자 요청).
-- 파일: (예정)
+- 원인: 수입은 계좌 기능(예정 금액·자동 등록)에만 있고 요약과 이어지지 않았다.
+- 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로, 수입으로 셀 계좌(기본은 반복 수입이 있는(있었던) 계좌, accounts.count_income으로 직접 고름, 지운 계좌·항목도 지난 달은 셈 — 계좌를 지우면 앞으로의 자동 예정은 지우고(예전에 지운 계좌는 불러올 때 정리) 세지도 않아 월급 계좌를 바꿔도 겹치지 않음)의 입금(예정 금액 포함·고치면 실제 금액, 그 몫의 달 기준, 여행 현금 재환전 제외)을 수입으로, 가계부 순지출을 지출로 잡아 요약 › 월별 추이에 이 달 수지(수입·지출·남은 돈·저축률)와 월별 수입/남은 돈을 보이며, 카드 대금 같은 계좌 출금은 이중으로 세지 않는다(ROADMAP C-6 1안, 사용자 요청).
+- 파일: src/services/db/monthlyBalance.js(새), src/services/db/schema.js·tripCash.js·accounts.js, src/services/dbManager.js, vite.config.mjs, src/components/AccountManagement/AccountManagement.js, src/components/SettingsView/sections/MonthlyBalanceSettings.js(새)·BudgetSection.js, src/components/SettingsView/SettingsView.css, src/components/SummaryView/MonthlyBalanceCard.js·MonthlyBalanceCard.css(새)·SummaryView.js, src/services/__tests__/monthlyBalance.test.js, src/components/__tests__/MonthlyBalance.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

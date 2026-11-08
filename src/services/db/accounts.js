@@ -83,8 +83,18 @@ export function setDefaultAccount(db, id) {
   });
 }
 
+/**
+ * 계좌 삭제(숨김) — 지난 내역은 남기고, 자동 등록으로 미리 만들어 둔 앞으로의 예정 내역(고치지 않은 것)은 지운다.
+ * 남겨 두면 월급 계좌를 바꿀 때 옛 계좌의 예정 월급이 새 계좌 월급과 겹쳐 월 수지 수입이 두 배가 된다 (I-026, B-009와 같은 방식)
+ */
 export function deleteAccount(db, id) {
-  db.run('UPDATE accounts SET is_active = 0 WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    db.run('UPDATE accounts SET is_active = 0 WHERE id = ?', [id]);
+    db.run(
+      'DELETE FROM account_transactions WHERE account_id = ? AND is_auto_generated = 1 AND is_modified = 0 AND date > ?',
+      [id, todayLocal()],
+    );
+  });
 }
 
 export function reorderAccounts(db, orderedIds) {

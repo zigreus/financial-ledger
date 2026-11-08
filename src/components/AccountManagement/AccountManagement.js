@@ -155,7 +155,7 @@ function AccountList({ db, dataVersion, accounts, defaultAccountId, showNavForm,
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('이 계좌를 삭제하시겠습니까?\n연결된 거래 내역은 유지됩니다.')) return;
+    if (!window.confirm('이 계좌를 삭제하시겠습니까?\n지난 거래 내역은 유지되고, 앞으로의 자동 예정 내역은 지워집니다.')) return;
     deleteAccount(db, id);
     await onChanged();
   };
@@ -549,7 +549,7 @@ function AccountSettingsTab({ db, dataVersion, account, onChanged, onBack }) {
   };
 
   const handleDeleteAccount = async () => {
-    if (!window.confirm(`"${account.name}" 계좌를 삭제하시겠습니까?\n연결된 거래 내역은 유지됩니다.`)) return;
+    if (!window.confirm(`"${account.name}" 계좌를 삭제하시겠습니까?\n지난 거래 내역은 유지되고, 앞으로의 자동 예정 내역은 지워집니다.`)) return;
     deleteAccount(db, account.id);
     await onChanged();
     onBack();

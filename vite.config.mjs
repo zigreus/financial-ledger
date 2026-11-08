@@ -20,8 +20,20 @@ export default defineConfig({
   preview: { port: 3000, strictPort: true },
   // sql.js는 Node 전용 분기에서 fs·path·crypto를 require한다 — 브라우저에서는 실행되지 않아
   // 빌드 시 'externalized for browser compatibility' 경고가 나와도 무해하다.
-  // 앱이 한 번들이라(CRA 때와 동일) 크기 경고 기준을 gzip 전 1MB로 둔다.
-  build: { outDir: 'build', chunkSizeWarningLimit: 1000 },
+  // 크기 경고 기준은 gzip 전 1MB. 라이브러리(React·MSAL·sql.js)는 따로 묶는다 — 앱 코드만 바뀐 배포는 라이브러리 파일을
+  // 다시 받지 않는다. 나눈 파일도 index.html이 미리 불러오기(modulepreload)로 가리키므로, 서비스 워커가 index.html이
+  // 가리키는 빌드 파일을 모두 받아 두는 방식(연결 없이 열기, I-024)과 맞는다. 늦게 불러오는(dynamic import) 나누기는 쓰지 않는다.
+  build: {
+    outDir: 'build',
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-dom/client', '@azure/msal-browser', '@azure/msal-react', 'sql.js'],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'node', // 화면 테스트는 파일 맨 위 @vitest-environment jsdom
