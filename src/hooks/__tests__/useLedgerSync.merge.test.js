@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import { createMemoryStorage } from '../../services/storage/memory';
 import { ConflictError, ReauthRedirectError } from '../../services/storage/provider';
-import { createDatabase, addTransaction, SCHEMA_VERSION } from '../../services/dbManager';
+import { createDatabase, addTransaction, addPaymentMethod, SCHEMA_VERSION } from '../../services/dbManager';
 import { attachChangeLog, getChangeLog, stampWriteId, savePending } from '../../services/changeLog';
 import useLedgerSync from '../useLedgerSync';
 
@@ -144,7 +144,8 @@ test('저장한 뒤 다시 확인할 때는 버전만 보고, 이미 최신이�
 });
 
 describe('지난 세션에서 저장하지 못한 변경 (재로그인·탭 종료)', () => {
-  /** 지난 세션: 지금 파일에서 거래를 하나 입력하고 올리기 시작했다 — 표식과 기록을 기기에 남겼다 */
+  /** 지난 세션: 지금 파일에서 거래를 하나 입력하고 올리기 시작했다 — 표식과 기록을 기기에 남겼다.
+   *  inFlight는 예전 버전이 남기던 { writeId, n } 하나 형식이다 — 업데이트 뒤에도 읽혀야 한다 (B-088 이후는 배열) */
   function lastSession(detail) {
     const { db } = createDatabase(SQL, storage.current());
     attachChangeLog(db);
@@ -275,4 +276,315 @@ test('저장소가 없으면(로그인 전·로그아웃 뒤) 분명한 오류�
   expect(ref.current.error).toBe('불러오기 실패: 로그인 정보가 없습니다 — 다시 로그인하세요');
   await expect(ref.current.listBackups()).rejects.toThrow('로그인 정보가 없습니다');
   unmount();
+});
+
+describe('응답을 못 받은 업로드 뒤에도 같은 입력을 두 번 넣지 않는다 (B-088)', () => {
+  const offline = () => new Error('네트워크 오류 — 인터넷 연결을 확인하세요');
+  /** 다음 저장은 저장소에 닿지만 응답을 잃는다(약한 신호) */
+  function loseNextResponse() {
+    const real = storage.write;
+    storage.write = async (...args) => { storage.write = real; await real(...args); throw offline(); };
+  }
+  /** 다음 저장은 저장소에 닿지 못한다 */
+  function failNextWrite() {
+    const real = storage.write;
+    storage.write = async () => { storage.write = real; throw offline(); };
+  }
+
+  test('응답을 잃은 뒤 다시 저장하면 거절(412)되어 합치는데, 이미 올라간 입력은 다시 넣지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('한 번만')); });
+    loseNextResponse();
+    expect(await saveNowResult(ref)).toBe(false);
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '한 번만']);
+    expect(details(ref.current.db)).toEqual(['지금', '한 번만']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
+  });
+
+  test('응답을 잃고, 다음 시도는 닿지도 못한 뒤 연결이 돌아와도 한 번만', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('한 번만')); });
+    loseNextResponse();
+    expect(await saveNowResult(ref)).toBe(false);
+    await act(async () => { addTransaction(ref.current.db, tx('그다음 입력')); });
+    failNextWrite();
+    expect(await saveNowResult(ref)).toBe(false);
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '한 번만', '그다음 입력']);
+    unmount();
+  });
+
+  test('응답을 잃은 사이 다른 기기가 그 위에 저장했어도, 합칠 때 내 업로드를 알아본다', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('한 번만')); });
+    loseNextResponse();
+    expect(await saveNowResult(ref)).toBe(false);
+    otherDeviceAdds('다른 기기'); // 내 업로드가 들어간 파일 위에 저장 — 마지막 표식이 다른 기기 것으로 바뀐다
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '한 번만', '다른 기기']);
+    unmount();
+  });
+
+  test('응답을 잃고 재시도도 실패한 채 앱을 닫았다가, 그 사이 다른 기기가 저장한 뒤 다시 열어도 한 번만', async () => {
+    const first = await opened();
+    await act(async () => { addTransaction(first.ref.current.db, tx('한 번만')); });
+    loseNextResponse();
+    expect(await saveNowResult(first.ref)).toBe(false);
+    failNextWrite();
+    expect(await saveNowResult(first.ref)).toBe(false);
+    first.unmount();
+    expect(pendingStored().entries).toHaveLength(1); // 이 기기는 아직 저장 안 된 변경으로 알고 있다
+
+    otherDeviceAdds('다른 기기');
+    const again = await opened();
+    await waitSave();
+    expect(details(again.ref.current.db)).toEqual(['지금', '한 번만', '다른 기기']);
+    expect(detailsOf(storage.current())).toEqual(['지금', '한 번만', '다른 기기']);
+    expect(pendingStored()).toBeNull();
+    again.unmount();
+  });
+});
+
+const offlineError = () => new Error('네트워크 오류 — 인터넷 연결을 확인하세요');
+/** 다음 저장은 저장소에 닿지 못한다 */
+function failNext() {
+  const real = storage.write;
+  storage.write = async () => { storage.write = real; throw offlineError(); };
+}
+/** 다음 저장은 저장소에 닿지만 응답을 잃는다 */
+function loseNext() {
+  const real = storage.write;
+  storage.write = async (...a) => { storage.write = real; await real(...a); throw offlineError(); };
+}
+/** 저장 i번째를 plan[i]대로: 'lose'면 올라가지만 응답을 잃는다, 그 밖에는 그대로 */
+function writePlan(plan) {
+  const real = storage.write;
+  let i = 0;
+  storage.write = async (...args) => {
+    const mode = plan[i++];
+    if (mode === 'lose') { await real(...args); throw offlineError(); }
+    return real(...args);
+  };
+}
+
+describe('결과를 모르는 업로드 목록이 지켜야 할 것 (B-088)', () => {
+  test('닿지 못한 시도 다음 시도가 응답을 잃어도 한 번만 — 실제로 올라간 쪽만큼 뺀다', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('하나')); });
+    failNext();
+    expect(await saveNowResult(ref)).toBe(false);
+    await act(async () => { addTransaction(ref.current.db, tx('둘')); });
+    loseNext();
+    expect(await saveNowResult(ref)).toBe(false);
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '하나', '둘']);
+    unmount();
+  });
+
+  test('저장에 성공하면 목록을 비운다 — 그 뒤 다른 기기와 겹쳐도 새 입력이 사라지지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('하나')); });
+    failNext();
+    expect(await saveNowResult(ref)).toBe(false);
+    expect(await saveNowResult(ref)).toBe(true);
+    await act(async () => { addTransaction(ref.current.db, tx('둘')); });
+    otherDeviceAdds('다른');
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '하나', '다른', '둘']);
+    unmount();
+  });
+
+  test('합치면 목록을 비운다 — 합친 뒤 또 겹쳐도 새 입력이 사라지지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    await act(async () => { addTransaction(ref.current.db, tx('하나')); });
+    loseNext();
+    expect(await saveNowResult(ref)).toBe(false);
+    await act(async () => { addTransaction(ref.current.db, tx('둘')); });
+    const real = storage.write;
+    let i = 0;
+    storage.write = async (...a) => { i += 1; if (i === 2) { storage.write = real; throw offlineError(); } return real(...a); };
+    expect(await saveNowResult(ref)).toBe(false); // 거절 → 합침('하나'는 이미 있음) → 다음 저장은 닿지 못함
+    await act(async () => { addTransaction(ref.current.db, tx('셋')); });
+    otherDeviceAdds('다른');
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '하나', '다른', '둘', '셋']);
+    unmount();
+  });
+});
+
+describe('불러오는 사이에 저장이 돌 때 (B-088)', () => {
+  /** 다른 기기가 저장해 둔 상태에서 불러오기를 시작하고, 그 읽기를 붙잡아 둔다 */
+  async function loadingHeld(ref) {
+    otherDeviceAdds('다른');
+    const realRead = storage.read;
+    let release;
+    const gate = new Promise(r => { release = r; });
+    let first = true;
+    storage.read = async () => { if (first) { first = false; await gate; } return realRead(); };
+    let loading;
+    await act(async () => { loading = ref.current.loadDb({ silent: true }); });
+    await flush();
+    return { release: () => release(), loading };
+  }
+
+  test('불러오는 사이 응답을 잃은 저장이 생기면 받은 파일로 바꾸지 않는다 — 이미 올라간 입력을 또 넣지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    const { release, loading } = await loadingHeld(ref);
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    writePlan(['ok', 'lose']); // 1: 옛 버전이라 거절 → 합침, 2: 올라가지만 응답을 잃음
+    expect(await saveNowResult(ref)).toBe(false);
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른', '내 입력']);
+
+    await act(async () => { release(); await loading; });
+    expect(details(ref.current.db)).toEqual(['지금', '다른', '내 입력']);
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른', '내 입력']);
+    expect(details(ref.current.db)).toEqual(['지금', '다른', '내 입력']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
+  });
+
+  test('불러오는 사이 건너뛰는 변경(이미 있는 결제수단)이 섞여 있어도 올라가지 않은 입력을 잃지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    const { release, loading } = await loadingHeld(ref);
+    await act(async () => {
+      addPaymentMethod(ref.current.db, '새 카드'); // 같은 이름을 다시 넣으면 UNIQUE로 건너뛴다
+      addTransaction(ref.current.db, tx('내 입력'));
+    });
+    writePlan(['ok', 'lose', 'lose']);
+    expect(await saveNowResult(ref)).toBe(false);
+    await act(async () => { release(); await loading; });
+
+    await act(async () => { addTransaction(ref.current.db, tx('나중 입력')); });
+    expect(await saveNowResult(ref)).toBe(true);
+    const remote = new SQL.Database(storage.current());
+    expect(details(remote)).toEqual(['지금', '다른', '내 입력', '나중 입력']);
+    expect(remote.exec('SELECT COUNT(*) FROM payment_methods WHERE name = ?', ['새 카드'])[0].values[0][0]).toBe(1);
+    unmount();
+  });
+
+  test('불러오는 사이 저장의 응답이 오는 중이면 끝나기를 기다렸다 다시 확인한다 — 응답을 잃지 않아도 중복되지 않게', async () => {
+    const { ref, unmount } = await opened();
+    const { release, loading } = await loadingHeld(ref);
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    const real = storage.write;
+    let i = 0;
+    let answer;
+    const answered = new Promise(r => { answer = r; });
+    storage.write = async (...a) => {
+      i += 1;
+      if (i === 2) { const v = await real(...a); await answered; return v; } // 올라갔고 응답은 오는 중
+      return real(...a);
+    };
+    let saving;
+    await act(async () => { saving = ref.current.saveNow(); });
+    await flush();
+    await flush();
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른', '내 입력']);
+
+    release();
+    await flush();
+    await flush();
+    answer();
+    await act(async () => { await saving; await loading; });
+    await act(async () => { addTransaction(ref.current.db, tx('다음 입력')); });
+    expect(await saveNowResult(ref)).toBe(true);
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른', '내 입력', '다음 입력']);
+    expect(details(ref.current.db)).toEqual(['지금', '다른', '내 입력', '다음 입력']);
+    unmount();
+  });
+});
+
+describe('불러오기가 받은 파일보다 이 기기 저장이 앞설 때 (B-090)', () => {
+  /** 불러오기의 읽기는 지금 상태로 끝났지만 응답이 늦게 온다 — 돌려준 함수로 놓아준다 */
+  function slowFirstReadAnswer() {
+    const realRead = storage.read;
+    let release;
+    const gate = new Promise(r => { release = r; });
+    let first = true;
+    storage.read = async () => { const got = await realRead(); if (first) { first = false; await gate; } return got; };
+    return () => release();
+  }
+
+  test('불러오는 사이 이 기기 저장이 합쳐 성공하면, 그보다 옛 파일로 바꿔 방금 저장한 입력을 감추지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    otherDeviceAdds('다른');
+    const release = slowFirstReadAnswer();
+    let loading;
+    await act(async () => { loading = ref.current.loadDb({ silent: true }); });
+    await flush();
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    expect(await saveNowResult(ref)).toBe(true); // 거절 → 합침 → 저장 성공
+    expect(details(ref.current.db)).toEqual(['지금', '다른', '내 입력']);
+
+    await act(async () => { release(); await loading; });
+    expect(details(ref.current.db)).toEqual(['지금', '다른', '내 입력']);
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른', '내 입력']);
+    unmount();
+  });
+
+  test('불러오기가 기다린 저장이 실패하면 저장 실패 안내를 덮지 않고 멈춘다', async () => {
+    const { ref, unmount } = await opened();
+    otherDeviceAdds('다른');
+    const realRead = storage.read;
+    let releaseRead;
+    const readGate = new Promise(r => { releaseRead = r; });
+    let first = true;
+    storage.read = async () => { if (first) { first = false; await readGate; } return realRead(); };
+    let loading;
+    await act(async () => { loading = ref.current.loadDb({ silent: true }); });
+    await flush();
+
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    let failWrite;
+    const writeGate = new Promise(r => { failWrite = r; });
+    storage.write = async () => { await writeGate; throw offlineError(); }; // 닿지 못하는 저장이 응답을 기다리는 중
+    const getVersion = vi.spyOn(storage, 'getVersion');
+    let saving;
+    await act(async () => { saving = ref.current.saveNow(); });
+    await act(async () => { releaseRead(); });
+    await flush(); // 불러오기가 저장이 끝나기를 기다린다
+    getVersion.mockClear();
+    await act(async () => { failWrite(); await saving; await loading; });
+
+    expect(ref.current.error).toMatch(/^저장 실패: 네트워크 오류.*이 기기에 보관/);
+    expect(getVersion).not.toHaveBeenCalled(); // 실패한 저장 뒤 다시 확인하러 가지 않는다
+    expect(details(ref.current.db)).toEqual(['지금', '내 입력']); // 받은 파일로 바꾸지 않았다
+    expect(ref.current.pendingCount).toBe(1);
+    unmount();
+  });
+});
+
+describe('저장에 실패한 뒤 다시 시도하는 간격 (B-089)', () => {
+  test('0.4초마다 다시 시도하지 않고 점점 길게 기다리며, 다시 온라인이 되면 바로 저장한다', async () => {
+    const { ref, unmount } = await opened();
+    const realWrite = storage.write;
+    const write = vi.fn(async () => { throw new Error('네트워크 오류 — 인터넷 연결을 확인하세요'); });
+    storage.write = write;
+    await act(async () => { addTransaction(ref.current.db, tx('오프라인 입력')); });
+    expect(await saveNowResult(ref)).toBe(false);
+    await act(async () => { await new Promise(r => setTimeout(r, 1200)); });
+    expect(write).toHaveBeenCalledTimes(1);
+    await act(async () => { await new Promise(r => setTimeout(r, 2300)); }); // 실패 뒤 2초에 한 번 더 (그다음은 그 5초 뒤)
+    expect(write).toHaveBeenCalledTimes(2);
+
+    storage.write = realWrite;
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    await flush();
+    expect(detailsOf(storage.current())).toEqual(['지금', '오프라인 입력']);
+    unmount();
+  });
+
+  test('화면이 사라지면 예약해 둔 다시 시도도 지운다', async () => {
+    const { ref, unmount } = await opened();
+    const write = vi.fn(async () => { throw new Error('네트워크 오류 — 인터넷 연결을 확인하세요'); });
+    storage.write = write;
+    await act(async () => { addTransaction(ref.current.db, tx('입력')); });
+    expect(await saveNowResult(ref)).toBe(false);
+    unmount();
+    await act(async () => { await new Promise(r => setTimeout(r, 2300)); });
+    expect(write).toHaveBeenCalledTimes(1);
+  });
 });

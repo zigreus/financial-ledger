@@ -231,19 +231,50 @@ export function replayChanges(targetDb, entries) {
 
 // ── 동기화 표식 ──────────────────────────────────────────────────
 // 저장 요청마다 고유 id를 DB 안(settings)에 적어 둔다. 응답을 못 받은 저장이
-// 실제로는 반영됐는지(OneDrive 파일에 그 id가 있는지) 나중에 확인해, 같은 변경을 두 번 넣지 않는다.
+// 실제로는 반영됐는지(저장소 파일에 그 id가 있는지) 나중에 확인해, 같은 변경을 두 번 넣지 않는다.
+//  - sync_write_id: 마지막 저장의 id (되돌리기가 '내 파일이 그대로 올라갔는지' 확인할 때)
+//  - sync_write_log: 최근 저장 id들(JSON 배열). 다른 기기가 내 저장 위에 합쳐 저장하면 마지막 id는 그 기기 것으로
+//    바뀌지만 이 목록에는 내 id가 남는다 — 그래야 나중에 합치거나 다시 열 때 이미 올라간 변경을 알아본다 (B-088)
 
 const SYNC_KEY = 'sync_write_id';
+const SYNC_LOG_KEY = 'sync_write_log';
+export const SYNC_LOG_KEEP = 100;
 
-export function stampWriteId(db) {
+const readSetting = (db, key) => {
+  const res = Object.getPrototypeOf(db).exec.call(db, 'SELECT value FROM settings WHERE key = ?', [key]);
+  return res[0]?.values[0]?.[0];
+};
+
+function readWriteLog(db) {
+  try {
+    const list = JSON.parse(readSetting(db, SYNC_LOG_KEY) || '[]');
+    return Array.isArray(list) ? list.filter(id => typeof id === 'string') : [];
+  } catch (e) {
+    return []; // 깨진 값은 없는 것으로 본다 — 다음 저장이 새로 쓴다
+  }
+}
+
+/**
+ * 저장 직전에 새 표식을 남긴다. replaces: 이 기기가 같은 버전 위에서 앞서 시도했지만 결과를 모르는 저장의 표식 —
+ * 목록에서 뺀다. 그중 실제로 올라간 것이 있으면 이번 저장은 거절되고(버전이 다름) 그 파일에는 그 표식이 이미 있다.
+ * 그래서 파일에는 버전 하나당 이 기기의 표식이 많아야 하나만 남고, 오래 오프라인이어도 다른 기기의 표식을 밀어내지 않는다.
+ */
+export function stampWriteId(db, { replaces = [] } = {}) {
   const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const log = [...readWriteLog(db).filter(old => !replaces.includes(old)), id].slice(-SYNC_LOG_KEEP);
   rawRun(db, 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [SYNC_KEY, id]);
+  rawRun(db, 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [SYNC_LOG_KEY, JSON.stringify(log)]);
   return id;
 }
 
 export function readWriteId(db) {
-  const res = Object.getPrototypeOf(db).exec.call(db, 'SELECT value FROM settings WHERE key = ?', [SYNC_KEY]);
-  return res[0]?.values[0]?.[0] || '';
+  return readSetting(db, SYNC_KEY) || '';
+}
+
+/** 이 파일에 그 저장 id가 들어간 적이 있는지 — 마지막 저장이 아니어도(그 위에 다른 기기가 저장했어도) 찾는다 */
+export function hasWriteId(db, id) {
+  if (!id) return false;
+  return readWriteId(db) === id || readWriteLog(db).includes(id);
 }
 
 // ── 브라우저 보관 ────────────────────────────────────────────────

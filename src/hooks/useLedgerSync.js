@@ -5,7 +5,7 @@ import {
 } from '../services/dbManager';
 import { ConflictError, ReauthRedirectError } from '../services/storage/provider';
 import {
-  attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId,
+  attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId,
   savePending, loadPending, clearPending,
 } from '../services/changeLog';
 import {
@@ -15,8 +15,23 @@ import { hasHolidayData } from '../data/holidays';
 import { todayStr } from '../services/dateUtils';
 
 const SAVE_DEBOUNCE_MS = 400;
+const RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000]; // 저장에 실패한 뒤 다시 시도하기까지 — 실패할수록 길게 (B-089)
 const OLD_DB_CLOSE_DELAY_MS = 30000;
 const MAX_ATTEMPTS = 5;
+
+/**
+ * 결과를 모르는 업로드 중 실제로 이 파일에 닿은 것 — 그 업로드의 변경(앞에서 n개)은 이미 들어 있다. 없으면 null.
+ * 목록의 업로드는 모두 같은 버전 위에서 시도해 많아야 하나만 닿고, 저장할 때 앞선 시도의 표식을 빼므로(stampWriteId의 replaces)
+ * 닿은 파일에는 그 업로드의 표식만 있다. 예전 버전 앱이 남긴 파일처럼 여럿이 걸리면 가장 많이 담은 것을 쓴다 —
+ * 뒤의 시도일수록 앞의 변경을 모두 담고 있기 때문이다.
+ * uploads는 [{ writeId, n }] — 예전 버전이 기기에 남긴 { writeId, n } 하나도 받는다 (B-088)
+ */
+function landedUpload(db, uploads) {
+  const list = Array.isArray(uploads) ? uploads : [uploads];
+  return list
+    .filter(u => u && hasWriteId(db, u.writeId))
+    .reduce((best, u) => (!best || u.n > best.n ? u : best), null);
+}
 
 /** 로그인 전·로그아웃 뒤(저장소 없음)에 저장소를 쓰려 하면 분명한 오류로 실패한다 */
 function required(storage) {
@@ -36,6 +51,8 @@ function required(storage) {
  *    변경 기록을 다시 실행해 합친 뒤 저장한다 — 어느 쪽 입력도 사라지지 않는다.
  *  - 저장에 성공하면 내 DB가 곧 저장소 파일이므로 다시 읽지 않는다 (업로드 1번).
  *  - 저장 안 된 변경은 브라우저에도 보관해, 재로그인 리다이렉트·탭 종료 뒤에도 되살린다.
+ *  - 응답을 못 받은 업로드는 모두 기억해 두고(inFlightRef), 나중에 합치거나 다시 열 때 실제로 올라간 것이 있으면
+ *    그만큼은 다시 넣지 않는다 (B-088). 저장에 실패하면 점점 길게 기다렸다 다시 시도한다 (B-089).
  *  - dataVersion은 쓰기마다 올라간다. 화면은 db를 읽는 memo 의존성에 이 값을 넣는다.
  *
  * 백업 (I-014)
@@ -59,7 +76,10 @@ export default function useLedgerSync({ storage }) {
   const loadedForRef = useRef('');
   const loopRef = useRef(null);
   const loadingRef = useRef(false);
-  const inFlightRef = useRef(null); // 결과를 모르는 업로드 { writeId, n }
+  // 결과를 모르는 업로드들 [{ writeId, n }] — 모두 지금 버전(versionRef) 위에서 시도했다. 성공하거나 합치면 비운다 (B-088)
+  const inFlightRef = useRef([]);
+  const failuresRef = useRef(0); // 잇따라 실패한 저장 횟수 — 다시 시도할 간격을 정한다 (B-089)
+  const unmountedRef = useRef(false);
   const saveTimerRef = useRef(null);
   const bumpScheduledRef = useRef(false);
   const onWriteRef = useRef(() => {});
@@ -90,7 +110,9 @@ export default function useLedgerSync({ storage }) {
       persist();
       clearTimeout(saveTimerRef.current);
       // 되돌리는 중에 생긴 변경은 되돌리기가 끝난 뒤 새 DB에서 저장한다
-      if (!restoringRef.current) saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
+      if (!restoringRef.current && !unmountedRef.current) {
+        saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
+      }
     });
   };
 
@@ -116,10 +138,8 @@ export default function useLedgerSync({ storage }) {
   /** 이전 세션에서 저장하지 못한 변경을 꺼낸다. 이미 저장소에 반영된 업로드분은 뺀다. */
   const takeRestorable = useCallback((freshDb, pending) => {
     if (!pending) return [];
-    let entries = pending.entries;
-    const inFlight = pending.inFlight;
-    if (inFlight && readWriteId(freshDb) === inFlight.writeId) entries = entries.slice(inFlight.n);
-    return entries;
+    const landed = landedUpload(freshDb, pending.inFlight);
+    return landed ? pending.entries.slice(landed.n) : pending.entries;
   }, []);
 
   /** 충돌 시: 최신 파일을 받아 내 변경 기록을 다시 실행해 합친다. */
@@ -137,9 +157,9 @@ export default function useLedgerSync({ storage }) {
     // ↓ 여기부터 교체까지는 동기 실행 — 그 사이 새 쓰기가 끼어들 수 없다
     const log = getChangeLog(dbRef.current);
     let entries = log ? log.entries.slice() : [];
-    const inFlight = inFlightRef.current;
-    if (inFlight && readWriteId(fresh) === inFlight.writeId) entries = entries.slice(inFlight.n);
-    inFlightRef.current = null;
+    const landed = landedUpload(fresh, inFlightRef.current);
+    if (landed) entries = entries.slice(landed.n);
+    inFlightRef.current = []; // 이 파일이 새 바탕이다
 
     const { entries: rewritten, skipped } = replayChanges(fresh, entries);
     attach(fresh, rewritten);
@@ -163,29 +183,36 @@ export default function useLedgerSync({ storage }) {
           const current = dbRef.current;
           const log = getChangeLog(current);
           if (!log || log.entries.length === 0) {
+            failuresRef.current = 0;
             setError('');
             return true;
           }
           const n = log.entries.length;
-          inFlightRef.current = { writeId: stampWriteId(current), n };
+          // 앞서 응답을 못 받은 업로드도 지우지 않고 함께 기억한다 — 그중 하나가 실제로 올라갔을 수 있다 (B-088)
+          const earlier = inFlightRef.current;
+          const writeId = stampWriteId(current, { replaces: earlier.map(u => u.writeId) });
+          inFlightRef.current = [...earlier, { writeId, n }];
           persist();
           const bytes = exportDatabase(current);
           try {
             const newVersion = await required(storage).write(bytes, versionRef.current);
             versionRef.current = newVersion;
-            inFlightRef.current = null;
+            // 같은 버전 위에서 이 저장이 받아들여졌으니, 앞서 결과를 몰랐던 업로드는 닿지 않은 것이다
+            inFlightRef.current = [];
+            failuresRef.current = 0;
             const liveLog = getChangeLog(dbRef.current);
             if (liveLog) liveLog.entries.splice(0, n); // 올리는 동안 생긴 변경은 남겨 다음 바퀴에 저장
             setPendingCount(liveLog ? liveLog.entries.length : 0);
             persist();
             attempt = -1; // 성공했으면 시도 횟수를 다시 센다
           } catch (e) {
-            if (!(e instanceof ConflictError)) throw e; // 결과를 모르는 업로드는 inFlight로 남겨 둔다
+            if (!(e instanceof ConflictError)) throw e; // 결과를 모르는 업로드는 inFlightRef에 남겨 둔다
             await mergeRemote();
           }
         }
         throw new Error('다른 기기와 저장이 계속 겹칩니다 — 잠시 후 다시 시도하세요');
       } catch (e) {
+        failuresRef.current += 1;
         if (e instanceof ReauthRedirectError) setError(e.message);
         else setError(`저장 실패: ${e.message} — 변경 내용은 이 기기에 보관되어 있고, 연결되면 다시 저장합니다`);
         return false;
@@ -196,15 +223,20 @@ export default function useLedgerSync({ storage }) {
 
     loopRef.current = run().finally(() => {
       loopRef.current = null;
-      // 마지막 확인 직후 들어온 쓰기가 있으면 다시 예약
+      if (unmountedRef.current) return;
+      // 남은 변경이 있으면 다시 예약 — 마지막 확인 직후 들어온 쓰기는 곧바로,
+      // 실패했으면 점점 길게 기다린다(연결되거나 앱으로 돌아오면 그때 바로 저장한다) (B-089)
       const log = getChangeLog(dbRef.current);
       if (log && log.entries.length && !saveTimerRef.current) {
-        saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
+        const failures = failuresRef.current;
+        const delay = failures ? RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length) - 1] : SAVE_DEBOUNCE_MS;
+        saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, delay);
       }
     });
     return loopRef.current;
   }, [storage, mergeRemote, persist]);
-  saveNowRef.current = () => { saveTimerRef.current = null; return saveNow(); };
+  // saveNow가 예약된 다시 시도를 지우고 시작한다 — 온라인·앱 복귀 때 불러도 예약이 겹치지 않는다
+  saveNowRef.current = saveNow;
 
   /**
    * 그날의 매일 백업 (I-014) — 저장소에서 막 받은 파일 그대로를 백업 폴더의 ledger-YYYY-MM-DD.db로 올린다.
@@ -251,6 +283,7 @@ export default function useLedgerSync({ storage }) {
       const store = required(storage);
       const SQL = await initSQL();
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        const baseVersion = versionRef.current; // 이 바퀴를 시작할 때 화면 DB의 바탕 — 불러오는 사이 이 기기 저장이 바꿀 수 있다
         // 이미 최신이면 다시 받지 않는다
         if (hadDb && versionRef.current) {
           const remoteVersion = await store.getVersion();
@@ -273,6 +306,20 @@ export default function useLedgerSync({ storage }) {
             if (e instanceof ConflictError) continue; // 그 사이 다른 기기가 저장 — 다시 불러온다
             throw e;
           }
+        }
+
+        if (hadDb && (loopRef.current || inFlightRef.current.length || versionRef.current !== baseVersion)) {
+          // 불러오는 사이 이 기기의 저장이 끼어들었다. 이대로 바꾸면
+          //  - 올라갔는지 모르는 저장이 있으면 이미 올라간 변경을 받은 파일에 또 넣거나, 늦게 온 응답이 새 기록을 잘못 지우고 (B-088)
+          //  - 저장이 성공해 바탕이 바뀌었으면 그보다 옛 파일로 바꿔 방금 저장한 입력이 화면에서 사라진다 (B-090)
+          fresh.close();
+          if (loopRef.current) {
+            const saved = await loopRef.current;
+            if (!saved) return; // 저장이 실패했다 — 그 안내(이 기기에 보관)를 덮지 않고, 다음 저장이 정리하게 둔다
+          } else if (inFlightRef.current.length) {
+            return; // 바꾸지 않는다 — 다음 저장이 거절되면 합치면서 올라간 것을 가려낸다
+          }
+          continue; // 처음부터 다시 확인한다 — 그사이 저장한 것이 최신이면 받지 않고 끝난다
         }
 
         // ↓ 여기부터 교체까지는 동기 실행 — 그 사이 새 쓰기가 끼어들 수 없다
@@ -432,7 +479,7 @@ export default function useLedgerSync({ storage }) {
       // 5) ↓ 교체는 동기 실행 — 되돌리는 동안 생긴 변경은 새 DB에 다시 실행해 이어서 저장한다
       const leftover = getChangeLog(dbRef.current)?.entries || [];
       const carried = leftover.length ? replayChanges(fresh, leftover).entries : [];
-      inFlightRef.current = null;
+      inFlightRef.current = [];
       attach(fresh, carried);
       swapDb(fresh, tag);
       if (!carried.length) clearPending(accountKeyRef.current);
@@ -443,7 +490,7 @@ export default function useLedgerSync({ storage }) {
     } finally {
       if (fresh) { try { fresh.close(); } catch (e) { /* 이미 닫힘 */ } }
       restoringRef.current = false;
-      if (getChangeLog(dbRef.current)?.entries.length && !saveTimerRef.current) {
+      if (!unmountedRef.current && getChangeLog(dbRef.current)?.entries.length && !saveTimerRef.current) {
         saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
       }
     }
@@ -456,7 +503,8 @@ export default function useLedgerSync({ storage }) {
     const old = dbRef.current;
     dbRef.current = null;
     versionRef.current = null;
-    inFlightRef.current = null;
+    inFlightRef.current = [];
+    failuresRef.current = 0;
     loadedForRef.current = '';
     setDb(null);
     setPendingCount(0);
@@ -470,12 +518,24 @@ export default function useLedgerSync({ storage }) {
       const old = dbRef.current;
       dbRef.current = null;
       versionRef.current = null;
+      inFlightRef.current = [];
+      failuresRef.current = 0;
       loadedForRef.current = '';
       setDb(null);
       setPendingCount(0);
       try { old.close(); } catch (e) { /* 이미 닫힘 */ }
     }
   }, [accountKey]);
+
+  // 화면이 사라지면 예약해 둔 저장·다시 시도를 지운다 (B-089). StrictMode는 한 번 지웠다 다시 붙이므로 붙일 때 되돌린다
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    };
+  }, []);
 
   // 다시 온라인이 되면 미저장 변경을 저장하고, 앱으로 돌아오면 다른 기기의 변경을 확인한다
   useEffect(() => {

@@ -7,7 +7,7 @@ import {
   createDatabase, addTransaction, addCalendarEvent, addEventCountry, withTransaction,
 } from '../dbManager';
 import {
-  attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, paramColumns,
+  attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId, paramColumns, SYNC_LOG_KEEP,
 } from '../changeLog';
 
 let SQL;
@@ -88,6 +88,48 @@ test('동기화 표식은 기록되지 않고 파일에 남는다', () => {
   const id = stampWriteId(db);
   expect(getChangeLog(db).entries).toHaveLength(0);
   expect(readWriteId(createDatabase(SQL, db.export()).db)).toBe(id);
+});
+
+test('동기화 표식은 최근 것들을 기억해, 다른 기기가 그 위에 합쳐 저장해도 내 표식을 찾는다 (B-088)', () => {
+  const { db: mine } = createDatabase(SQL, null);
+  const myId = stampWriteId(mine);
+  // 다른 기기: 내 파일을 받아 자기 변경을 다시 실행하고 자기 표식을 남겨 저장
+  const { db: other } = createDatabase(SQL, mine.export());
+  addTransaction(other, tx('2026-11-02', '다른 기기', 1));
+  const otherId = stampWriteId(other);
+  const remote = createDatabase(SQL, other.export()).db;
+  expect(readWriteId(remote)).toBe(otherId);
+  expect(hasWriteId(remote, myId)).toBe(true);
+  expect(hasWriteId(remote, 'w-없는-표식')).toBe(false);
+  expect(hasWriteId(remote, '')).toBe(false);
+});
+
+test('동기화 표식 목록은 최근 SYNC_LOG_KEEP개만 남기고, 목록이 없던 예전 파일도 마지막 표식은 찾는다', () => {
+  const { db } = createDatabase(SQL, null);
+  const ids = Array.from({ length: SYNC_LOG_KEEP + 5 }, () => stampWriteId(db));
+  expect(hasWriteId(db, ids[4])).toBe(false);
+  expect(hasWriteId(db, ids[5])).toBe(true);
+  expect(hasWriteId(db, ids[ids.length - 1])).toBe(true);
+
+  const { db: old } = createDatabase(SQL, null);
+  old.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['sync_write_id', 'w-예전']);
+  expect(hasWriteId(old, 'w-예전')).toBe(true);
+  old.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['sync_write_log', '{깨진 값']);
+  expect(hasWriteId(old, 'w-예전')).toBe(true);
+  const next = stampWriteId(old); // 깨진 목록은 새로 쓴다
+  expect(hasWriteId(old, next)).toBe(true);
+});
+
+test('새 표식을 남길 때 앞서 결과를 모르는 이 기기의 표식은 목록에서 뺀다 — 다른 기기 표식은 그대로', () => {
+  const { db } = createDatabase(SQL, null);
+  const otherDevice = stampWriteId(db);
+  const failed1 = stampWriteId(db);
+  const failed2 = stampWriteId(db, { replaces: [failed1] });
+  const now = stampWriteId(db, { replaces: [failed1, failed2] });
+  expect(hasWriteId(db, otherDevice)).toBe(true);
+  expect(hasWriteId(db, failed1)).toBe(false);
+  expect(hasWriteId(db, failed2)).toBe(false);
+  expect(readWriteId(db)).toBe(now);
 });
 
 test('paramColumns는 ? 자리의 컬럼을 찾는다', () => {
