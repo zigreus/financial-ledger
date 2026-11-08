@@ -3,18 +3,20 @@ import {
   getAllPaymentMethods, getBudgetCategories, getSubCategories,
   getDiscountRules, evaluateDiscountRule,
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
-  deleteRecurringTransaction, getRegistrationLog,
+  deleteRecurringTransaction, getRegistrationLog, isSubscriptionsEnabled,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import { evaluateFormula, parseOptionalAmount } from '../../../services/formulaEvaluator';
 import AmountInput from '../../common/AmountInput';
 import { IconEdit, IconTrash } from '../icons';
+import SubscriptionPanel from './SubscriptionPanel';
 
 const emptyRecurringForm = {
   payment_method: '', budget_category: '', sub_category: '',
   detail: '', amount: '', frequency: 'monthly',
   day_of_month: '1', month_of_year: '1', note: '',
   discount_amount: '', discount_note: '',
+  is_subscription: false, cancel_note: '',
 };
 
 /** 지출계획 › 정기지출 — 목록과 추가/수정 폼 (결제수단 할인규칙으로 할인 자동 계산) */
@@ -29,6 +31,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
   const ruleCategories = useMemo(() => getBudgetCategories(live.db), [live]);
   const recurringList = useMemo(() => getRecurringTransactions(live.db), [live]);
   const registrationLog = useMemo(() => getRegistrationLog(live.db), [live]);
+  const subscriptionsOn = useMemo(() => isSubscriptionsEnabled(live.db), [live]);
   const recurringFormSubCategories = useMemo(
     () => recurringForm.budget_category ? getSubCategories(live.db, recurringForm.budget_category) : [],
     [live, recurringForm.budget_category]
@@ -72,6 +75,8 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
         note: item.note || '',
         discount_amount: item.discount_amount > 0 ? String(item.discount_amount) : '',
         discount_note: item.discount_note || '',
+        is_subscription: !!item.is_subscription,
+        cancel_note: item.cancel_note || '',
       });
     } else {
       setEditingRecurringId(null);
@@ -91,12 +96,15 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
     // 할인은 빈 칸만 0원 — 잘못된 금액·음수는 막는다 (B-065)
     const discountAmount = parseOptionalAmount(recurringForm.discount_amount);
     if (isNaN(discountAmount)) { setError('할인을 올바르게 입력하세요.'); return; }
+    const { is_subscription: isSubscription, cancel_note: cancelNote, ...fields } = recurringForm;
     const data = {
-      ...recurringForm,
+      ...fields,
       amount,
       day_of_month: dayOfMonth,
       month_of_year: recurringForm.frequency === 'annual' ? parseInt(recurringForm.month_of_year, 10) : null,
       discount_amount: discountAmount,
+      // 구독 표시·해지 메모는 구독 모아보기를 켰을 때만 보이므로 그때만 바꾼다(끈 동안 고쳐도 남게)
+      ...(subscriptionsOn ? { is_subscription: isSubscription, cancel_note: cancelNote } : {}),
     };
     try {
       if (editingRecurringId !== null) {
@@ -125,6 +133,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
     <div>
       {!showRecurringForm ? (
         <>
+          <SubscriptionPanel db={db} dataVersion={dataVersion} onChanged={onChanged} />
           <button className="btn-primary" style={{ width: '100%', marginBottom: '16px' }} onClick={() => openRecurringForm()}>
             + 정기지출 추가
           </button>
@@ -155,6 +164,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
                               <span style={{ fontWeight: '600', fontSize: '14px', flexShrink: 0, maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.detail || r.sub_category || r.budget_category}</span>
+                              {subscriptionsOn && !!r.is_subscription && <span className="sub-badge">구독</span>}
                               <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.budget_category}{r.sub_category ? ` / ${r.sub_category}` : ''}</span>
                               {lastRegistered && <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>최근 {lastRegistered}</span>}
                             </div>
@@ -340,6 +350,37 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
               placeholder="예: 가족 구독"
             />
           </div>
+
+          {subscriptionsOn && (
+            <>
+              <div className="rule-form-row">
+                <label className="rule-form-label" htmlFor="recurring-is-subscription">구독</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}>
+                  <input
+                    id="recurring-is-subscription"
+                    type="checkbox"
+                    checked={recurringForm.is_subscription}
+                    onChange={e => setRecurringForm(f => ({ ...f, is_subscription: e.target.checked }))}
+                  />
+                  구독 모아보기에 넣기
+                </label>
+              </div>
+              {recurringForm.is_subscription && (
+                <div className="rule-form-row">
+                  <label className="rule-form-label" htmlFor="recurring-cancel-note">해지 메모</label>
+                  <input
+                    id="recurring-cancel-note"
+                    className="rule-form-input"
+                    type="text"
+                    maxLength={200}
+                    value={recurringForm.cancel_note}
+                    onChange={e => setRecurringForm(f => ({ ...f, cancel_note: e.target.value }))}
+                    placeholder="예: 3월에 해지 · 앱 › 계정 › 멤버십 해지"
+                  />
+                </div>
+              )}
+            </>
+          )}
 
           <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
             <button className="btn-primary" style={{ flex: 1 }} onClick={handleSaveRecurring}>

@@ -17,4 +17,5 @@ export * from './db/accounts';
 export * from './db/members';
 export * from './db/categoryBudgets';
 export * from './db/monthlyBalance';
+export * from './db/subscriptions';
 export { withTransaction } from './db/common';

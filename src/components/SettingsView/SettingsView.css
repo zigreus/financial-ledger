@@ -175,6 +175,35 @@
 }
 .mb-transfer-hint { color: #B45309; }
 
+/* 구독 모아보기 (I-027) */
+.sub-panel { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.sub-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.sub-totals > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg); }
+.sub-totals span { font-size: 11px; color: var(--text-muted); }
+.sub-totals strong { font-size: 14px; color: var(--primary); white-space: nowrap; }
+.sub-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sub-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.sub-row--changed { border-color: #F59E0B; }
+.sub-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sub-name { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.sub-amount { font-size: 14px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+.sub-per { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.sub-meta { margin-top: 2px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.sub-changed { margin-top: 4px; font-size: 12px; color: #B45309; overflow-wrap: anywhere; }
+.sub-changed-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -6px; }
+.sub-note { margin-top: 4px; font-size: 12px; color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.sub-note-edit { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+.sub-note-edit .rule-form-input { flex: 1; min-width: 0; }
+.sub-note-btn { padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+.sub-link {
+  padding: 4px 6px; min-height: 28px; border: none; background: none;
+  color: var(--primary); font-size: 12px; text-decoration: underline; cursor: pointer;
+}
+.sub-pick-toggle { margin-top: 8px; padding-left: 0; }
+.sub-pick-list { margin-top: 4px; }
+.sub-hint { color: #B45309; }
+.sub-badge { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: #EEF2FF; color: #4338CA; font-size: 10px; font-weight: 700; }
+
 .btn-drilldown {
   display: flex;
   align-items: center;

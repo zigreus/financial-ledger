@@ -266,7 +266,7 @@ export async function initSQL() {
 // ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
 // 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
 // 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
-export const SCHEMA_VERSION = 5; // 4: category_budgets (I-025), 5: accounts.count_income (I-026)
+export const SCHEMA_VERSION = 6; // 4: category_budgets (I-025), 5: accounts.count_income (I-026), 6: 구독 표시 (I-027)
 
 const COLUMN_MIGRATIONS = [
   // [테이블, 컬럼, 정의]
@@ -292,6 +292,10 @@ const COLUMN_MIGRATIONS = [
   ['category_budgets', 'kept', 'INTEGER NOT NULL DEFAULT 0'],
   // 월 수지(I-026): 이 계좌의 입금을 수입으로 셀지 — NULL이면 자동(반복 수입 항목이 있는 계좌만), 1 셈, 0 세지 않음
   ['accounts', 'count_income', 'INTEGER DEFAULT NULL'],
+  // 구독 모아보기(I-027): 정기지출 중 구독인지, 해지 메모, 금액을 확인한 날(그 뒤 결제만 '금액이 바뀜'으로 견준다)
+  ['recurring_transactions', 'is_subscription', 'INTEGER NOT NULL DEFAULT 0'],
+  ['recurring_transactions', 'cancel_note', "TEXT NOT NULL DEFAULT ''"],
+  ['recurring_transactions', 'amount_checked_on', "TEXT NOT NULL DEFAULT ''"],
 ];
 
 /** 컬럼이 없을 때만 추가한다. 추가했으면 true. */

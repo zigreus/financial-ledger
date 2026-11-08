@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-092, I-027
+다음 번호: B-093, I-028
 
 ## 요약표
 
@@ -107,6 +107,7 @@
 | B-089 | ✅ | 낮음 | 저장·동기화 | 연결이 끊긴 동안 0.4초마다 저장을 끝없이 다시 시도 |
 | B-090 | ✅ | 낮음 | 저장·동기화 | 불러오는 사이 이 기기 저장이 성공하면 옛 파일로 바꿔 방금 입력이 화면에서 사라짐 |
 | B-091 | ✅ | 중간 | 저장·동기화 | 합칠 때 들어가지 않은 내 행을 가리키는 수정이 같은 번호의 다른 기기 행을 고치거나 지움 |
+| B-092 | ✅ | 중간 | 정기지출 | 정기지출 금액을 바꿔도 미리 자동 등록된 앞으로의 거래는 옛 금액 그대로 남음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -133,6 +134,7 @@
 | I-024 | ✅ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
 | I-025 | ✅ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
 | I-026 | ✅ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
+| I-027 | ✅ | - | 정기지출 | 구독이 정기지출에 섞여 한 달·한 해에 구독으로 얼마 나가는지, 값이 오른 구독이 무엇인지 알 수 없음 (ROADMAP C-8) |
 
 
 ## 상세
@@ -956,6 +958,15 @@
 - 해결: 다시 실행 때 들어가지 않은 행(UNIQUE로 건너뜀·0행 INSERT)을 기억해, 그 행을 id나 참조 컬럼(FK_COLUMNS)으로 가리키는 뒤 문장(딸린 행의 딸린 행까지)은 건너뛰고 이어 갈 기록에서도 빼며, 병합 안내는 '이미 있는 N건'과 '넣지 않은 변경'을 나눠 알린다.
 - 파일: src/services/changeLog.js, src/hooks/useLedgerSync.js(병합 안내), src/services/__tests__/changeLog.test.js, src/services/__tests__/onboarding.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js
 
+### B-092 정기지출 금액을 바꿔도 미리 자동 등록된 앞으로의 거래는 옛 금액 그대로 남음
+- 상태: ✅ 해결 (2026-11-09)
+- 심각도: 중간
+- 영역: 정기지출
+- 문제: 구독료가 올라 정기지출 금액을 고쳐도 자동등록이 두 달 앞까지 미리 넣어 둔 거래는 옛 금액이라, 다음 달 지출·예산이 실제보다 적게 잡힌다.
+- 원인: updateRecurringTransaction이 템플릿만 바꾸고 이미 등록된 거래는 건드리지 않았다(I-027에서 찾음).
+- 해결: 일정·결제수단·카테고리·내용은 그대로 두고 금액·할인만 바꾸면, 오늘 뒤의 손대지 않은 거래(금액·할인·할인 메모·결제수단·카테고리·내용이 예전 템플릿 그대로 — 할인 규칙 템플릿이면 규칙 전에 할인 0으로 등록된 것도, 분할 결제 아님)를 새 금액·다시 계산한 할인으로 바꾼다.
+- 파일: src/services/db/recurring.js, src/services/__tests__/subscriptions.test.js, SETUP.md
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -1163,3 +1174,11 @@
 - 원인: 수입은 계좌 기능(예정 금액·자동 등록)에만 있고 요약과 이어지지 않았다.
 - 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로, 수입으로 셀 계좌(기본은 반복 수입이 있는(있었던) 계좌, accounts.count_income으로 직접 고름, 지운 계좌·항목도 지난 달은 셈 — 계좌를 지우면 앞으로의 자동 예정은 지우고(예전에 지운 계좌는 불러올 때 정리) 세지도 않아 월급 계좌를 바꿔도 겹치지 않음)의 입금(예정 금액 포함·고치면 실제 금액, 그 몫의 달 기준, 여행 현금 재환전 제외)을 수입으로, 가계부 순지출을 지출로 잡아 요약 › 월별 추이에 이 달 수지(수입·지출·남은 돈·저축률)와 월별 수입/남은 돈을 보이며, 카드 대금 같은 계좌 출금은 이중으로 세지 않는다(ROADMAP C-6 1안, 사용자 요청).
 - 파일: src/services/db/monthlyBalance.js(새), src/services/db/schema.js·tripCash.js·accounts.js, src/services/dbManager.js, vite.config.mjs, src/components/AccountManagement/AccountManagement.js, src/components/SettingsView/sections/MonthlyBalanceSettings.js(새)·BudgetSection.js, src/components/SettingsView/SettingsView.css, src/components/SummaryView/MonthlyBalanceCard.js·MonthlyBalanceCard.css(새)·SummaryView.js, src/services/__tests__/monthlyBalance.test.js, src/components/__tests__/MonthlyBalance.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-027 구독이 정기지출에 섞여 한 달·한 해에 구독으로 얼마 나가는지, 값이 오른 구독이 무엇인지 알 수 없음 (ROADMAP C-8)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 정기지출
+- 문제: 넷플릭스 같은 구독이 관리비 등 다른 정기지출과 섞여 있어 구독 합계(월·연)를 알 수 없고, 값이 올라 실제 결제액이 바뀐 구독을 놓친다.
+- 원인: 정기지출에 구독인지 표시가 없고, 등록 금액과 실제로 결제된 금액을 견주는 곳이 없다.
+- 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 정기지출에 구독 표시·해지 메모·금액 확인일(recurring_transactions.is_subscription·cancel_note·amount_checked_on)을 두고 월·연 환산 합계(할인 뺀 금액)와, 금액을 확인한 뒤의 최근 결제(분할은 몫의 합)가 등록 금액과 3% 넘게 다른 구독을 보이며 '바꾸기'·'이대로 두기'를 고르게 한다(앞으로의 거래 따라 바꾸기는 B-092, ROADMAP C-8, 사용자 요청).
+- 파일: src/services/db/subscriptions.js(새), src/services/db/recurring.js·schema.js, src/services/dbManager.js, src/components/SettingsView/sections/SubscriptionPanel.js(새)·RecurringSection.js, src/components/SettingsView/SettingsView.css, src/services/__tests__/subscriptions.test.js, src/components/__tests__/Subscriptions.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
