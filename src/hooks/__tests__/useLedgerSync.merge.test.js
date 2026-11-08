@@ -630,3 +630,44 @@ test('지난 세션에서 오프라인으로 고른 첫 실행 기본값은, 그
   expect(getPaymentMethods(new SQL.Database(storage.current()))).toEqual(['우리카드']);
   unmount();
 });
+
+describe('연결 없이 열기 (I-024)', () => {
+  test('오래된 사본에서 시작했는데 그 사이 다른 기기가 저장했으면, 연결되면 최신 파일에 합쳐 둘 다 남긴다', async () => {
+    const { createMemoryOfflineCache } = await import('../../services/offlineCache');
+    const { OfflineError } = await import('../../services/storage/provider');
+    const cache = createMemoryOfflineCache();
+    const net = { up: true };
+    const guard = fn => async (...args) => { if (!net.up) throw new OfflineError(); return fn(...args); };
+    const store = { ...storage, read: guard(storage.read), getVersion: guard(storage.getVersion), write: guard(storage.write) };
+    const mountWith = async () => {
+      const ref = { current: null };
+      function Harness() { ref.current = useLedgerSync({ storage: store, offlineCache: cache }); return null; }
+      const root = createRoot(document.createElement('div'));
+      await act(async () => { root.render(<Harness />); });
+      await act(async () => { await ref.current.loadDb(); });
+      await flush();
+      return { ref, unmount: () => act(() => root.unmount()) };
+    };
+
+    const A = await mountWith();                 // 연결된 채 열어 사본(v1)을 남긴다
+    A.unmount();
+    otherDeviceAdds('다른 기기');                 // 그 사이 다른 기기가 저장(v2)
+
+    net.up = false;
+    const B = await mountWith();                 // 해외 — 연결 없이 사본(v1)으로 연다
+    expect(details(B.ref.current.db)).toEqual(['지금']);
+    await act(async () => { addTransaction(B.ref.current.db, tx('여행 중 입력')); });
+    await waitSave();
+    expect(B.ref.current.offline).toBe(true);
+
+    net.up = true;                                // 연결되면 v1로 저장 → 거절 → 최신(v2)에 다시 실행해 합친다
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    await waitSave();
+    await flush();
+    expect(detailsOf(storage.current())).toEqual(['지금', '다른 기기', '여행 중 입력']);
+    expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기', '여행 중 입력']);
+    expect(B.ref.current.pendingCount).toBe(0);
+    expect(B.ref.current.offline).toBe(false);
+    B.unmount();
+  });
+});

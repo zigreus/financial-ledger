@@ -7,7 +7,7 @@
 //    버전 규칙 자체는 가짜 Graph 서버가 실제 Graph를 흉내 내 지킨다 — 실제 Graph의 동작을 증명하지는 않는다.
 // 새 저장소(예: Google Drive)를 붙이면 contract('...')를 하나 더 부른다.
 import { InteractionRequiredAuthError } from '@azure/msal-browser';
-import { ConflictError, ReauthRedirectError } from '../storage/provider';
+import { ConflictError, OfflineError, ReauthRedirectError } from '../storage/provider';
 import { createMemoryStorage } from '../storage/memory';
 import { createOneDriveStorage } from '../storage/oneDrive';
 
@@ -259,5 +259,41 @@ describe('OneDrive 요청 모양 (F-2로 옮기기 전과 같은지)', () => {
 
   test('계정이 없으면 계정 키는 빈 문자열', () => {
     expect(createOneDriveStorage(instance, []).accountKey).toBe('');
+  });
+
+  describe('연결이 없으면 OfflineError (I-024)', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    test('요청이 나가지 못하면 OfflineError — 오류 문구는 그대로', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+      const s = createOneDriveStorage(instance, [{ homeAccountId: 'me' }]);
+      const err = await s.read().catch(e => e);
+      expect(err).toBeInstanceOf(OfflineError);
+      expect(err.message).toBe('네트워크 오류 — 인터넷 연결을 확인하세요');
+      await expect(s.write(bytesOf(1), '"e1"')).rejects.toBeInstanceOf(OfflineError);
+    });
+
+    test('연결이 없을 때 다시 로그인해야 해도 로그인 화면으로 넘기지 않는다 — 열리지 않는 페이지로 가 앱을 잃지 않게', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      const msal = {
+        acquireTokenSilent: async () => { throw new InteractionRequiredAuthError('interaction_required'); },
+        acquireTokenRedirect: vi.fn(async () => {}),
+      };
+      vi.stubGlobal('fetch', vi.fn());
+      const s = createOneDriveStorage(msal, [{ homeAccountId: 'me' }]);
+      await expect(s.read()).rejects.toBeInstanceOf(OfflineError);
+      expect(msal.acquireTokenRedirect).not.toHaveBeenCalled();
+    });
+
+    test('토큰을 받으러 나가다 연결 오류로 실패해도 OfflineError (onLine이 true로 남는 브라우저)', async () => {
+      const msal = { acquireTokenSilent: async () => { const e = new Error('no network'); e.errorCode = 'no_network_connectivity'; throw e; } };
+      vi.stubGlobal('fetch', vi.fn());
+      const s = createOneDriveStorage(msal, [{ homeAccountId: 'me' }]);
+      await expect(s.getVersion()).rejects.toBeInstanceOf(OfflineError);
+      const other = { acquireTokenSilent: async () => { const e = new Error('bad'); e.errorCode = 'invalid_grant_x'; throw e; } };
+      const err = await createOneDriveStorage(other, [{ homeAccountId: 'me' }]).getVersion().catch(e => e);
+      expect(err).not.toBeInstanceOf(OfflineError);
+      expect(err.message).toMatch(/인증 토큰을 받지 못했습니다/);
+    });
   });
 });

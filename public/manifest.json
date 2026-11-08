@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "short_name": "지금 가계부",
   "name": "지금 가계부",
   "icons": [
@@ -18,8 +19,41 @@
       "sizes": "512x512"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "theme_color": "#2563EB",
-  "background_color": "#2563EB"
+  "background_color": "#2563EB",
+  "shortcuts": [
+    {
+      "name": "거래 입력",
+      "short_name": "거래 입력",
+      "description": "새 거래 입력 창을 엽니다",
+      "url": "/?action=add",
+      "icons": [{ "src": "logo192_b2.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "AI 입력",
+      "short_name": "AI 입력",
+      "description": "사진·카드 문자·말로 바로 입력합니다",
+      "url": "/?action=ai",
+      "icons": [{ "src": "logo192_b2.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": ["image/*"]
+        }
+      ]
+    }
+  }
 }

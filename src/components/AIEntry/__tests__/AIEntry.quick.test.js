@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 // AI 입력 (I-022) — 한 상자에 넣으면 카드 문자는 규칙으로, 그 밖의 글은 AI로 읽고, 늘 넣던 거래는 확인 없이 바로 넣는다
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../../../services/dbManager';
@@ -322,6 +322,61 @@ test('카드 문자: 화면 위 알림에서 되돌려도 확인 화면이 알�
   expect(starbucks[0].textContent).toContain('되돌린 거래예요');
   expect(starbucks[0].textContent).not.toContain('이미 있는 것 같아요');
   expect(isChecked('스타벅스')).toBe(false);
+});
+
+describe('바로가기·공유 받기로 연 입력 창 (I-024)', () => {
+  const renderWith = start => act(async () => {
+    root.render(<AIEntry db={db} start={start} onApply={() => {}} onBulkAdd={onBulkAdd} onQuickAdd={onQuickAdd} resetKey={0} />);
+  });
+
+  test("바로가기 'AI 입력' — 상자를 바로 연다", async () => {
+    await renderWith({ quick: true });
+    expect(quickBox()).not.toBeNull();
+    expect(quickBox().value).toBe('');
+  });
+
+  test('공유받은 글 — 상자에 채우고 안내만 한다(바로 정리하지 않음). 고쳐 쓰면 안내가 사라진다', async () => {
+    await renderWith({ text: STARBUCKS_SMS, files: [] });
+    expect(quickBox().value).toBe(STARBUCKS_SMS);
+    expect(container.querySelector('.quick-box').textContent).toContain('공유받은 글이에요');
+    expect(onQuickAdd).not.toHaveBeenCalled();
+    await setValue(quickBox(), `${STARBUCKS_SMS} `);
+    expect(container.querySelector('.quick-box').textContent).not.toContain('공유받은 글이에요');
+    await click(button('정리하기'));
+    expect(onQuickAdd).toHaveBeenCalledTimes(1);                  // 정리하면 평소처럼 늘 가던 곳은 바로
+  });
+
+  test('공유받은 사진 — 영수증으로 읽는다 (AI 키가 없으면 설정부터, 저장하면 그 사진을 읽는다)', async () => {
+    window.localStorage.removeItem('ai_receipt_config');
+    await renderWith({ text: '', files: [new File([new Uint8Array([1, 2])], 'r.jpg', { type: 'image/jpeg' })] });
+    expect(container.querySelector('.fake-settings')).not.toBeNull();
+  });
+
+  test('StrictMode(개발 서버)에서도 시작 정보가 지워지지 않는다', async () => {
+    await act(async () => {
+      root.render(<StrictMode><AIEntry db={db} start={{ text: '점심 9천원', files: [] }} onApply={() => {}} onBulkAdd={onBulkAdd} onQuickAdd={onQuickAdd} resetKey={0} /></StrictMode>);
+    });
+    expect(quickBox().value).toBe('점심 9천원');
+  });
+
+  test('사진을 여러 장 공유하면 첫 장만 읽는다고, 함께 온 글은 무엇인지 알린다', async () => {
+    window.localStorage.removeItem('ai_receipt_config');
+    const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
+    await renderWith({ text: '어제 마트 영수증', files: [png(1), png(2), png(3)] });
+    await click(button('설정 저장'));                                    // 설정을 마치면 그 사진을 읽는다
+    const note = container.querySelector('.ai-start-note');
+    expect(note.textContent).toContain('공유한 사진 3장 중 첫 장만 읽어요');
+    expect(note.textContent).toContain('함께 온 글: “어제 마트 영수증”');
+  });
+
+  test('다음 거래로 넘어가도(resetKey) 다시 시작하지 않는다 — 처음 한 번만', async () => {
+    await renderWith({ quick: true });
+    await click(button('닫기'));
+    await act(async () => {
+      root.render(<AIEntry db={db} start={{ quick: true }} onApply={() => {}} onBulkAdd={onBulkAdd} onQuickAdd={onQuickAdd} resetKey={1} />);
+    });
+    expect(quickBox()).toBeNull();
+  });
 });
 
 describe('정리하던 글 이어서 하기 (I-023)', () => {

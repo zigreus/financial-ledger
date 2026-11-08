@@ -33,7 +33,7 @@ const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅
  * 말로 입력 중에 AI 설정을 열면 그 화면을 숨겨 둔 채 살려 두어, 설정을 마치거나 취소하면 하던 대화로 돌아간다.
  * 캡처한 영수증은 단축키(Ctrl+V·⌘V)나 막대 아래 '캡처한 영수증 붙여넣기' 버튼으로도 넣는다(I-020).
  */
-export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }) {
+export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickAdd, resetKey }) {
   const [mode, setMode] = useState('idle'); // idle | quick | setup | receipt | text | sms
   const [pending, setPending] = useState(null); // 설정을 마치면 이어서 할 일
   const [file, setFile] = useState(null);
@@ -52,11 +52,15 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
   const [fromDraft, setFromDraft] = useState(false); // 지금 말로 입력 화면이 이어서 정리하는 글인지
   // 기기에 적어 둔 글이 이 창에서 시작한 정리의 것인지 — 그 정리를 끝낼 때만 지운다(관련 없는 닫기로 남은 글을 잃지 않게)
   const ownsDraftRef = useRef(false);
+  const [sharedText, setSharedText] = useState(''); // 공유로 받은 글 (I-024) — 상자에 채우고 안내한다
+  const [startNote, setStartNote] = useState('');   // 공유로 받은 사진을 읽을 때의 안내(여러 장·함께 온 글)
+  const startedRef = useRef(false);
   const [smsInit, setSmsInit] = useState(null);     // 카드 문자로 읽고 남은 확인거리
   // 카드 문자에서 바로 넣은 묶음 — '다시 붙여넣기'로 오가도 되돌릴 수 있게 입력 창을 닫을 때까지 지킨다
   const { batches: smsBatches, add: addSmsBatch, undoAll: undoSmsBatches, reset: resetSmsBatches } = useQuickBatches();
   const fileRef = useRef(null);
-  const firstRef = useRef(true);
+  // 처음 그린 때의 resetKey — 실제로 바뀌었을 때만 처음 상태로 돌린다(StrictMode가 효과를 다시 실행해도 시작 정보를 지우지 않게)
+  const prevResetKeyRef = useRef(resetKey);
   const waitingFileRef = useRef(null); // AI 설정을 마치면 읽을, 붙여넣은 이미지
   const pasteTokenRef = useRef(0);      // 클립보드를 읽는 동안 화면이 바뀌면 늦게 온 결과를 버린다
   const modeRef = useRef(mode);
@@ -69,7 +73,8 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
   }, [mode, resetKey]);
 
   useEffect(() => {
-    if (firstRef.current) { firstRef.current = false; return; }
+    if (prevResetKeyRef.current === resetKey) return;
+    prevResetKeyRef.current = resetKey;
     setMode('idle');
     setFile(null);
     setNotice('');
@@ -126,6 +131,7 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     setQuickError('');
     setSmsInit(null);
     resetSmsBatches();
+    setStartNote('');
     finishDraft();
   };
   const openQuick = () => { setNotice(''); setQuickError(''); setMode('quick'); };
@@ -162,11 +168,31 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
 
   const onFile = (e) => {
     const f = e.target.files && e.target.files[0];
-    if (f) acceptImage(f);
+    if (f) { setStartNote(''); acceptImage(f); }
   };
 
+  // 홈 화면 바로가기('AI 입력')·안드로이드 공유 받기로 연 입력 창 (I-024) — 처음 한 번만.
+  // 사진은 영수증으로 바로 읽고, 글은 상자에 채워 확인하고 '정리하기'를 누르게 한다
+  useEffect(() => {
+    if (startedRef.current || !start) return;
+    startedRef.current = true;
+    if (start.files && start.files.length) {
+      // 영수증은 한 장씩 읽는다 — 여러 장이면 첫 장만 읽는다고, 함께 온 글이 있으면 그 글을 알린다
+      const notes = [];
+      if (start.files.length > 1) notes.push(`공유한 사진 ${start.files.length}장 중 첫 장만 읽어요 — 나머지는 한 장씩 공유하거나 붙여넣어 주세요`);
+      const caption = String(start.text || '').trim();
+      if (caption) notes.push(`함께 온 글: “${caption.length > 40 ? `${caption.slice(0, 40)}…` : caption}”`);
+      setStartNote(notes.join(' · '));
+      acceptImage(start.files[0]);
+      return;
+    }
+    if (start.text) { setQuickText(start.text); setSharedText(start.text); }
+    setMode('quick');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 막대·AI 입력 상자·영수증 화면이 보이는 동안 Ctrl+V로 붙여넣은 캡처 — 영수증 화면에서는 새 이미지로 바꿔 다시 읽는다
-  usePasteImages(files => acceptImage(files[0]), mode === 'idle' || mode === 'quick' || mode === 'receipt');
+  usePasteImages(files => { setStartNote(''); acceptImage(files[0]); }, mode === 'idle' || mode === 'quick' || mode === 'receipt');
 
   const pasteFromClipboard = async () => {
     setPasteError('');
@@ -174,7 +200,7 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     const stillHere = () => token === pasteTokenRef.current && modeRef.current === 'idle';
     try {
       const files = await readClipboardImages();
-      if (stillHere()) acceptImage(files[0]);
+      if (stillHere()) { setStartNote(''); acceptImage(files[0]); }
     } catch (e) {
       if (stillHere()) setPasteError(e.message);
     }
@@ -300,6 +326,9 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
         {restored && quickText.trim() === restored.trim() && (
           <div className="quick-reason">앱이 닫히기 전에 정리하던 글이에요 — 이번에는 바로 넣지 않고 모두 확인을 받아요</div>
         )}
+        {sharedText && quickText === sharedText && (
+          <div className="quick-reason">공유받은 글이에요 — 확인하고 '정리하기'를 누르세요</div>
+        )}
         {quickError && <div className="rs-error-text">{quickError}</div>}
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={closeAll}>닫기</button>
@@ -310,15 +339,18 @@ export default function AIEntry({ db, onApply, onBulkAdd, onQuickAdd, resetKey }
     );
   } else if (mode === 'receipt') {
     body = (
-      <ReceiptPanel
-        db={db}
-        file={file}
-        onApply={s => apply(s, '영수증 내용을 채웠습니다')}
-        onAutoAdd={autoAdd}
-        onRepick={openPicker}
-        onClose={closeAll}
-        onSetup={() => needSetup(null)}
-      />
+      <>
+        {startNote && <div className="quick-reason ai-start-note">{startNote}</div>}
+        <ReceiptPanel
+          db={db}
+          file={file}
+          onApply={s => apply(s, '영수증 내용을 채웠습니다')}
+          onAutoAdd={autoAdd}
+          onRepick={openPicker}
+          onClose={closeAll}
+          onSetup={() => needSetup(null)}
+        />
+      </>
     );
   } else if (mode === 'sms') {
     body = (

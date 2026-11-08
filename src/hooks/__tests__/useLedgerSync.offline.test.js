@@ -1,0 +1,361 @@
+/**
+ * @vitest-environment jsdom
+ */
+/* eslint-disable */
+// 연결 없이 열기 (I-024, ROADMAP C-4) — 저장소는 메모리 가짜(연결을 끊을 수 있게 감쌈), 사본도 메모리 가짜, DB는 진짜 sql.js
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import initSqlJs from 'sql.js/dist/sql-asm.js';
+import { createMemoryStorage } from '../../services/storage/memory';
+import { OfflineError } from '../../services/storage/provider';
+import { createMemoryOfflineCache } from '../../services/offlineCache';
+import { createDatabase, addTransaction, addRecurringTransaction } from '../../services/dbManager';
+import { savePending, stampWriteId } from '../../services/changeLog';
+import useLedgerSync from '../useLedgerSync';
+
+vi.mock('../../services/dbManager', async (importOriginal) => {
+  const actual = await importOriginal();
+  const initSqlJs = (await import('sql.js/dist/sql-asm.js')).default;
+  let SQL = null;
+  return { ...actual, initSQL: async () => (SQL ||= await initSqlJs()) };
+});
+
+global.IS_REACT_ACT_ENVIRONMENT = true;
+let SQL;
+beforeAll(async () => { SQL = await initSqlJs(); });
+
+const tx = (detail, amount = 1000) => ({ payment_method: '카드', date: '2026-11-01', budget_category: '식비', detail, amount });
+function ledgerWith(...detailsList) {
+  const { db } = createDatabase(SQL, null);
+  detailsList.forEach(d => addTransaction(db, tx(d)));
+  return db.export();
+}
+const details = (db) => (db.exec('SELECT detail FROM transactions ORDER BY id')[0]?.values || []).map(r => r[0]);
+const detailsOf = (bytes) => details(new SQL.Database(bytes));
+
+let storage;
+let net;
+let cache;
+/** 메모리 저장소를 감싸 연결을 끊을 수 있게 한다 — 끊기면 OfflineError (OneDrive 구현과 같은 약속) */
+function offlineAware(store) {
+  const guard = fn => async (...args) => { if (!net.up) throw new OfflineError(); return fn(...args); };
+  return { ...store, read: guard(store.read), getVersion: guard(store.getVersion), write: guard(store.write), createBackup: guard(store.createBackup), listBackups: guard(store.listBackups) };
+}
+
+async function mount(opts = {}) {
+  const ref = { current: null };
+  function Harness() { ref.current = useLedgerSync({ storage, offlineCache: cache, ...opts }); return null; }
+  const root = createRoot(document.createElement('div'));
+  await act(async () => { root.render(<Harness />); });
+  return { ref, unmount: () => act(() => root.unmount()) };
+}
+async function opened(opts) {
+  const m = await mount(opts);
+  await act(async () => { await m.ref.current.loadDb(); });
+  await flush();
+  return m;
+}
+const flush = () => act(async () => { await new Promise(r => setTimeout(r, 0)); });
+const waitSave = () => act(async () => { await new Promise(r => setTimeout(r, 450)); });
+/** 다른 기기가 지금 저장소 파일에 거래를 하나 더 적어 저장한다 */
+function otherDevice(detail) {
+  const { db } = createDatabase(SQL, base.current());
+  addTransaction(db, tx(detail));
+  stampWriteId(db);
+  base.replace(db.export());
+}
+const goOnline = async () => {
+  net.up = true;
+  await act(async () => { window.dispatchEvent(new Event('online')); });
+  await waitSave();
+  await flush();
+};
+
+let base;
+beforeEach(() => {
+  window.localStorage.clear();
+  net = { up: true };
+  cache = createMemoryOfflineCache();
+  base = createMemoryStorage({ accountKey: 'me', bytes: ledgerWith('지금') });
+  storage = offlineAware(base);
+});
+
+test('연결된 채 열면 사본을 남기고, 다음에 연결 없이 열면 그 사본으로 연다 — 입력은 오류 없이 보관했다가 연결되면 저장한다', async () => {
+  const A = await opened();
+  await flush();
+  expect(cache.peek('me').version).toBe(await base.getVersion());
+  A.unmount();
+
+  net.up = false;
+  const B = await opened();
+  expect(B.ref.current.offline).toBe(true);
+  expect(details(B.ref.current.db)).toEqual(['지금']);
+  expect(B.ref.current.notice.text).toMatch(/연결이 없어 이 기기에 둔 가계부.*로 열었습니다/);
+  expect(B.ref.current.error).toBe('');
+
+  await act(async () => { addTransaction(B.ref.current.db, tx('오프라인 입력')); });
+  await waitSave();
+  expect(B.ref.current.error).toBe('');                 // 연결이 없을 뿐 — 오류 배너 대신 offline
+  expect(B.ref.current.offline).toBe(true);
+  expect(B.ref.current.pendingCount).toBe(1);
+
+  await goOnline();
+  expect(detailsOf(base.current())).toEqual(['지금', '오프라인 입력']);
+  expect(B.ref.current.offline).toBe(false);
+  expect(B.ref.current.pendingCount).toBe(0);
+  expect(cache.peek('me').version).toBe(await base.getVersion()); // 저장한 것을 새 사본으로
+  B.unmount();
+});
+
+test('저장한 순간마다 사본을 새로 남긴다 — 사본은 저장소 그대로의 내용(아직 안 올린 변경 없이)', async () => {
+  const A = await opened();
+  await act(async () => { addTransaction(A.ref.current.db, tx('첫 입력')); });
+  await waitSave();
+  await flush();
+  expect(detailsOf(cache.peek('me').bytes)).toEqual(['지금', '첫 입력']);
+  expect(cache.peek('me').version).toBe(await base.getVersion());
+
+  net.up = false;
+  await act(async () => { addTransaction(A.ref.current.db, tx('못 올린 입력')); });
+  await waitSave();
+  expect(detailsOf(cache.peek('me').bytes)).toEqual(['지금', '첫 입력']);
+  A.unmount();
+});
+
+test('앱을 닫기 전 저장하지 못한 변경도 사본 위에 되살리고, 연결되면 저장한다', async () => {
+  const A = await opened();
+  net.up = false;
+  await act(async () => { addTransaction(A.ref.current.db, tx('닫기 전 입력')); });
+  await waitSave();
+  A.unmount();                                          // 저장하지 못한 채 앱이 닫혔다
+
+  const B = await opened();
+  expect(details(B.ref.current.db)).toEqual(['지금', '닫기 전 입력']);
+  expect(B.ref.current.pendingCount).toBe(1);
+  await goOnline();
+  expect(detailsOf(base.current())).toEqual(['지금', '닫기 전 입력']);
+  expect(B.ref.current.pendingCount).toBe(0);
+  B.unmount();
+});
+
+test('사본이 저장 못 한 변경의 바탕보다 오래됐으면(사본 쓰기 실패) 연결 없이 열지 않고, 연결되면 변경을 제자리에 넣는다', async () => {
+  let allow = true;
+  const flaky = { ...cache, save: async (...a) => { if (!allow) throw new Error('QuotaExceeded'); return cache.save(...a); } };
+  const A = await opened({ offlineCache: flaky });
+  await flush();
+  allow = false;                                                 // 이제 사본 쓰기가 실패한다 (저장 공간 부족 등)
+  await act(async () => { addTransaction(A.ref.current.db, tx('A')); });
+  await waitSave();
+  await flush();
+  expect(detailsOf(base.current())).toEqual(['지금', 'A']);       // 저장소는 V2
+  expect(detailsOf(cache.peek('me').bytes)).toEqual(['지금']);     // 사본은 V1에 머문다
+
+  net.up = false;
+  await act(async () => {
+    addTransaction(A.ref.current.db, tx('B'));                                       // V2 위에서 id 3
+    A.ref.current.db.run('UPDATE transactions SET detail = ? WHERE id = ?', ['A수정', 2]); // 저장된 A(id 2)를 고침
+  });
+  await flush();                                                 // 저장을 시도하기 전에 앱이 닫혔다
+  A.unmount();
+
+  const B = await opened({ offlineCache: flaky });
+  expect(B.ref.current.db).toBeNull();                           // V1 위에서 다시 실행하면 B가 id 2를 받아 A수정이 B에 들어간다
+  expect(B.ref.current.error).toMatch(/사본이 저장하지 못한 변경보다 오래되어 연결 없이는 열 수 없습니다/);
+
+  allow = true;
+  await goOnline();
+  expect(detailsOf(base.current())).toEqual(['지금', 'A수정', 'B']);
+  expect(details(B.ref.current.db)).toEqual(['지금', 'A수정', 'B']);
+  B.unmount();
+});
+
+test('응답을 못 받은 업로드가 실제로 올라갔으면 — 연결 없이 다시 열었다가 연결되어도 같은 입력이 두 번 들어가지 않는다 (B-088)', async () => {
+  const A = await opened();
+  await flush();
+  const realWrite = storage.write;
+  storage.write = async (b, v) => {                               // 올라갔지만 응답을 잃었다
+    const r = await realWrite(b, v);
+    net.up = false;
+    storage.write = realWrite;
+    throw new OfflineError();
+  };
+  await act(async () => { addTransaction(A.ref.current.db, tx('X')); });
+  await waitSave();
+  expect(detailsOf(base.current())).toEqual(['지금', 'X']);
+  A.unmount();
+
+  const B = await opened();
+  expect(details(B.ref.current.db)).toEqual(['지금', 'X']);
+  await act(async () => { addTransaction(B.ref.current.db, tx('Y')); });
+  await waitSave();
+  await goOnline();
+  await waitSave();
+  await flush();
+  expect(detailsOf(base.current())).toEqual(['지금', 'X', 'Y']);
+  expect(details(B.ref.current.db)).toEqual(['지금', 'X', 'Y']);
+  B.unmount();
+});
+
+test('불러오는 사이 로그아웃하면 늦게 끝난 불러오기가 가계부·사본을 되살리지 않는다 (B-004)', async () => {
+  const A = await opened();
+  await flush();
+  otherDevice('다른 기기');
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const realRead = storage.read;
+  storage.read = async (...a) => { await gate; return realRead(...a); };
+  let loading;
+  await act(async () => { loading = A.ref.current.loadDb({ silent: true }); });
+  let cleared;
+  await act(async () => { cleared = A.ref.current.resetForLogout(); });
+  await act(async () => { await cleared; });
+  expect(cache.peek('me')).toBeNull();
+  release();
+  await act(async () => { await loading; });
+  await flush();
+  expect(cache.peek('me')).toBeNull();
+  expect(A.ref.current.db).toBeNull();
+  A.unmount();
+});
+
+test('처음 열 때 저장소가 너무 오래 답하지 않으면(약한 신호) 열 수 있는 사본으로 연다', async () => {
+  const A = await opened();
+  A.unmount();
+  const realRead = storage.read;
+  storage.read = () => new Promise(() => {});                    // 끝나지 않는다
+  const B = await mount({ firstLoadTimeoutMs: 30 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  await flush();
+  expect(B.ref.current.offline).toBe(true);
+  expect(details(B.ref.current.db)).toEqual(['지금']);
+  expect(B.ref.current.notice.text).toMatch(/연결이 너무 느려 이 기기에 둔 가계부/);
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('사본이 없으면(다시 로그인·새 기기) 느려도 오류 없이 기다려 연다 — 다시 시도해도 받기를 겹쳐 시작하지 않는다', async () => {
+  const realRead = storage.read;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const reads = vi.fn(async () => { await gate; return realRead(); });
+  storage.read = reads;
+  const B = await mount({ firstLoadTimeoutMs: 30, offlineRetryMs: 40 });
+  let first;
+  await act(async () => { first = B.ref.current.loadDb(); });
+  await act(async () => { await new Promise(r => setTimeout(r, 120)); });   // 제한 시간이 지났다 — 사본이 없으니 계속 기다린다
+  expect(B.ref.current.db).toBeNull();
+  expect(B.ref.current.error).toBe('');
+  await act(async () => { B.ref.current.loadDb(); });                       // 사용자가 다시 시도해도
+  expect(reads).toHaveBeenCalledTimes(1);                                    // 새로 받지 않는다
+  release();
+  await act(async () => { await first; });
+  await flush();
+  expect(details(B.ref.current.db)).toEqual(['지금']);
+  expect(B.ref.current.offline).toBe(false);
+  expect(reads).toHaveBeenCalledTimes(1);
+  storage.read = realRead;
+  B.unmount();
+});
+
+test("연결이 없는 동안에는 가끔 다시 확인한다 — 'online' 이벤트가 오지 않아도 연결되면 저장하고 오프라인을 푼다", async () => {
+  const A = await opened();
+  A.unmount();
+  net.up = false;
+  const B = await opened({ offlineRetryMs: 40 });
+  await act(async () => { addTransaction(B.ref.current.db, tx('오프라인 입력')); });
+  await waitSave();
+  expect(B.ref.current.offline).toBe(true);
+  net.up = true;                                                 // 이벤트 없이 연결됐다
+  await act(async () => { await new Promise(r => setTimeout(r, 200)); });
+  await flush();
+  expect(B.ref.current.offline).toBe(false);
+  expect(detailsOf(base.current())).toEqual(['지금', '오프라인 입력']);
+  B.unmount();
+});
+
+test('사본으로 연 동안에는 자동등록을 하지 않고, 연결되면 — 저장소가 그대로여도 — 한 번 새로 받아 자동등록한다', async () => {
+  const { db } = createDatabase(SQL, base.current());
+  addRecurringTransaction(db, { payment_method: '카드', budget_category: '식비', detail: '정기 구독', amount: 9900, day_of_month: 1 });
+  const v = base.replace(db.export());                           // 자동등록 전의 파일 (사본과 같다)
+  await cache.save('me', base.current(), v);
+  net.up = false;
+  const B = await opened();
+  expect(details(B.ref.current.db)).toEqual(['지금']);
+  await goOnline();
+  expect(details(B.ref.current.db)).toContain('정기 구독');
+  expect(detailsOf(base.current())).toContain('정기 구독');
+  B.unmount();
+});
+
+test('결과를 모르는 업로드가 있는데 사본이 그 바탕이 아니면 연결 없이 열지 않는다 (같은 입력이 두 번 들어가지 않게)', async () => {
+  const A = await opened();
+  A.unmount();
+  savePending('me', {
+    entries: [{
+      method: 'run',
+      sql: 'INSERT INTO transactions (payment_method, date, budget_category, detail, amount) VALUES (?, ?, ?, ?, ?)',
+      params: ['카드', '2026-11-01', '식비', '결과 모름', 1],
+      insertTable: 'transactions',
+      insertId: 2,
+    }],
+    inFlight: [{ writeId: 'w-unknown', n: 1 }],
+    base: 'v-somewhere-else',
+  });
+  net.up = false;
+  const B = await opened();
+  expect(B.ref.current.db).toBeNull();
+  expect(B.ref.current.error).toMatch(/사본이 저장하지 못한 변경보다 오래되어 연결 없이는 열 수 없습니다/);
+  B.unmount();
+});
+
+test('사본이 없으면 연결 없이는 열 수 없다고 알리고, 연결되면 연다', async () => {
+  net.up = false;
+  const B = await opened();
+  expect(B.ref.current.db).toBeNull();
+  expect(B.ref.current.error).toMatch(/연결된 상태로 한 번 열고 나면/);
+  await goOnline();
+  expect(details(B.ref.current.db)).toEqual(['지금']);
+  expect(B.ref.current.error).toBe('');
+  expect(B.ref.current.offline).toBe(false);
+  B.unmount();
+});
+
+test('사본으로 연 세션은 연결되면 저장소에서 한 번 새로 받는다(자동등록·매일 백업) — 바뀐 것이 없어도', async () => {
+  const A = await opened();
+  A.unmount();
+  window.localStorage.removeItem('ledger_last_backup:me');
+  net.up = false;
+  const B = await opened();
+  const reads = vi.spyOn(storage, 'read');
+  await goOnline();
+  expect(reads).toHaveBeenCalledTimes(1);
+  expect(await base.listBackups()).toHaveLength(1);    // 그날 백업
+  // 그다음 앱 복귀는 평소처럼 버전만 확인한다
+  await act(async () => { await B.ref.current.loadDb({ silent: true }); });
+  expect(reads).toHaveBeenCalledTimes(1);
+  B.unmount();
+});
+
+test('연결된 채 연 뒤 연결이 끊기면, 새로고침은 이유를 보이고 앱 복귀(조용한 불러오기)는 오류를 띄우지 않는다', async () => {
+  const A = await opened();
+  net.up = false;
+  await act(async () => { await A.ref.current.loadDb({ silent: true }); });
+  expect(A.ref.current.error).toBe('');
+  expect(A.ref.current.offline).toBe(true);
+  await act(async () => { await A.ref.current.loadDb(); });
+  expect(A.ref.current.error).toMatch(/연결이 없어 새로 받지 못했습니다/);
+  expect(details(A.ref.current.db)).toEqual(['지금']);  // 화면의 가계부는 그대로
+  await goOnline();
+  expect(A.ref.current.offline).toBe(false);
+  A.unmount();
+});
+
+test('로그아웃하면 이 기기의 사본을 지운다 (B-004)', async () => {
+  const A = await opened();
+  await flush();
+  expect(cache.peek('me')).not.toBeNull();
+  await act(async () => { A.ref.current.resetForLogout(); });
+  await flush();
+  expect(cache.peek('me')).toBeNull();
+  A.unmount();
+});

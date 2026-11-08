@@ -10,7 +10,11 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { loginRequest } from '../../auth/msalConfig';
 import { ONEDRIVE_DB_PATH } from '../../config';
-import { ConflictError, ReauthRedirectError } from './provider';
+import { ConflictError, OfflineError, ReauthRedirectError } from './provider';
+
+// MSAL이 토큰을 받으러 나가다 연결이 없어 실패한 오류 (BrowserAuthError·ClientAuthError의 errorCode)
+const MSAL_NETWORK_ERRORS = new Set(['no_network_connectivity', 'endpoints_resolution_error', 'post_request_failed', 'get_request_failed', 'network_error']);
+const offlineNow = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const ITEM_URL = `${GRAPH_BASE}/me/drive/root:/${ONEDRIVE_DB_PATH}`;
@@ -27,6 +31,8 @@ async function getToken(instance, accounts, { interactive = true } = {}) {
     const res = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
     return res.accessToken;
   } catch (e) {
+    // 연결이 없으면 로그인 화면으로 넘기지 않는다 — 열리지 않는 페이지로 가 입력 중인 앱을 잃는다 (I-024)
+    if (offlineNow() || MSAL_NETWORK_ERRORS.has(e?.errorCode)) throw new OfflineError();
     // 사용자가 직접 로그인해야 하는 경우에만 리다이렉트한다 (B-005).
     // 네트워크 오류 같은 일시적 실패는 그냥 실패로 돌려 나중에 다시 시도하게 한다.
     if (e instanceof InteractionRequiredAuthError && !interactive) {
@@ -44,7 +50,7 @@ async function graphFetch(url, init) {
   try {
     return await fetch(url, init);
   } catch (e) {
-    throw new Error('네트워크 오류 — 인터넷 연결을 확인하세요');
+    throw new OfflineError();
   }
 }
 

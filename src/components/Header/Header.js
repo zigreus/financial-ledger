@@ -2,7 +2,7 @@ import React from 'react';
 import { useMsal } from '@azure/msal-react';
 import './Header.css';
 
-function Header({ onRefresh, onSave, onLogout, loading, saving, dirty, pendingCount = 0, onSettings, settingsActive }) {
+function Header({ onRefresh, onSave, onLogout, loading, saving, dirty, offline = false, pendingCount = 0, onSettings, settingsActive }) {
   const { accounts } = useMsal();
   const userName = accounts[0]?.name || accounts[0]?.username?.split('@')[0] || '';
 
@@ -13,6 +13,12 @@ function Header({ onRefresh, onSave, onLogout, loading, saving, dirty, pendingCo
         <span className="header-title">지금 가계부</span>
       </div>
       <div className="header-right">
+        {offline && (
+          // 연결이 없어 OneDrive에 닿지 못하는 중 (I-024) — 입력은 이 기기에 보관했다가 연결되면 저장한다
+          <span className="header-offline" title="연결이 없습니다 — 입력한 내용은 이 기기에 보관했다가 연결되면 저장합니다">
+            오프라인
+          </span>
+        )}
         {(dirty || saving) && (
           <button
             className="btn-header btn-save"

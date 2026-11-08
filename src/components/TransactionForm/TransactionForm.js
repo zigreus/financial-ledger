@@ -36,7 +36,7 @@ const EMPTY_FORM = {
   member: '',
 };
 
-function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, onBulkAdd, onQuickAdd, onCancel }) {
+function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, aiStart = null, onSave, onBulkAdd, onQuickAdd, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -362,7 +362,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
           {/* AI 입력 — 영수증 사진 / 말로 입력 */}
           {!editingTx && (
-            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
+            <AIEntry db={db} start={aiStart} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
           )}
 
           {/* 즐겨찾기 칩 */}

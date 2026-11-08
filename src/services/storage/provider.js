@@ -18,6 +18,9 @@
  *    "올라갔는지 모르는 저장"으로 다룬다(실제로 올라갔는지는 DB 안의 동기화 표식으로 나중에 가린다).
  *  - 오류 메시지는 "저장 실패: …"처럼 화면에 그대로 보이므로 한국어 안내문으로 쓴다.
  *  - 다시 로그인해야 해서 로그인 화면으로 넘기기 시작했으면 ReauthRedirectError를 던진다(설정 파일 동작은 넘기지 않는다).
+ *  - 연결이 없어 저장소에 닿지 못했으면 OfflineError를 던진다. 연결이 없을 때는 로그인 화면으로 넘기지 않는다(넘어가도 열리지 않는다).
+ *    useLedgerSync는 이때 이 기기에 둔 마지막 사본으로 가계부를 열고, 연결되면 저장한다 (I-024).
+ *    write가 OfflineError로 끝나도 "올라갔는지 모르는 저장"으로 다룬다(보내는 도중 끊겼을 수 있다).
  *
  * @typedef {object} LedgerStorage
  * @property {string} accountKey
@@ -60,6 +63,14 @@ export class ConflictError extends Error {
   constructor() {
     super('다른 기기에서 가계부가 먼저 저장되었습니다');
     this.name = 'ConflictError';
+  }
+}
+
+/** 연결이 없어 저장소에 닿지 못함 — 동기화는 이 기기의 사본으로 이어 가고, 연결되면 다시 저장한다 (I-024) */
+export class OfflineError extends Error {
+  constructor(message = '네트워크 오류 — 인터넷 연결을 확인하세요') {
+    super(message);
+    this.name = 'OfflineError';
   }
 }
 

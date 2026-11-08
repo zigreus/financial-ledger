@@ -130,7 +130,7 @@
 | I-021 | ✅ | - | 검색 | 거래 필터가 단순해 금액·기간·여러 항목으로 좁힐 수 없고, 걸러진 결과의 합계·요약을 볼 수 없음 (ROADMAP C-7 + AI 요약) |
 | I-022 | ✅ | - | 입력 | 영수증·말로 입력·카드 문자 버튼이 따로 있어 매번 골라야 하고, 늘 넣던 거래도 하나하나 확인해야 함 |
 | I-023 | ✅ | - | 입력 | AI가 읽는 동안 화면이 꺼지거나 다른 앱을 보고 오면 분석이 끊기거나 결과를 잃을 수 있음 |
-| I-024 | ⬜ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
+| I-024 | ✅ | - | 앱 | 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4) |
 | I-025 | ⬜ | - | 예산 | 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5) |
 | I-026 | ⬜ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
 
@@ -1141,12 +1141,12 @@
 - 파일: src/services/aiClient.js, src/services/pageVisibility.js(새), src/services/wakeLock.js(새), src/services/aiDraft.js(새), src/services/quickEntry.js, src/hooks/useTopToast.js(새), src/components/App/App.js, src/components/AIEntry/AIEntry.js·AIEntry.css·TextPanel.js, src/services/__tests__/aiResume.test.js·aiDraft.test.js, src/hooks/__tests__/useTopToast.test.js, src/components/AIEntry/__tests__/AIEntry.quick.test.js, SETUP.md, AGENTS.md
 
 ### I-024 홈 화면 앱에서 바로 입력할 바로가기·공유 받기가 없고, 연결이 없으면 앱이 열리지 않음 (ROADMAP C-4)
-- 상태: ⬜ 대기
+- 상태: ✅ 해결 (2026-11-09)
 - 영역: 앱
 - 문제: 홈 화면에 추가한 앱을 길게 눌러 바로 입력하거나 갤러리의 영수증·카드 문자를 공유로 보낼 수 없고, 해외에서 데이터가 꺼져 있으면 앱을 열 수조차 없다.
-- 원인: (예정) manifest에 shortcuts·share_target이 없고, 서비스 워커·로컬 보관이 없어 매번 OneDrive에서 받아야 시작한다.
-- 해결: (예정) ROADMAP C-4 — 바로가기, 공유 받기(AI 입력으로 연결), 앱 셸·DB 로컬 보관으로 오프라인 시작 후 연결되면 기존 병합 경로로 저장(사용자 요청).
-- 파일: (예정)
+- 원인: manifest에 shortcuts·share_target이 없고, 서비스 워커·기기 사본이 없어 앱 화면과 가계부를 매번 서버·OneDrive에서 받아야 시작했다.
+- 해결: 바로가기(거래 입력·AI 입력)와 안드로이드 공유 받기(서비스 워커가 받아 두면 AI 입력으로 열기)를 더하고, 서비스 워커가 앱 화면을, IndexedDB가 저장소와 맞춘 가계부 사본(계정별, 로그아웃 때 삭제)을 두어 연결이 없으면(OfflineError) 사본에 미저장 변경을 다시 실행해 열고, 연결되면 사본 버전으로 저장해 기존 병합 경로로 합친 뒤 한 번 새로 받는다(헤더에 오프라인 표시).
+- 파일: public/sw.js(새), public/manifest.json, vercel.json, src/index.js, src/services/serviceWorker.js(새), src/services/shareInbox.js(새), src/services/offlineCache.js(새), src/services/storage/provider.js·oneDrive.js, src/hooks/useLedgerSync.js, src/components/App/App.js, src/components/Header/Header.js·Header.css, src/components/TransactionForm/TransactionForm.js, src/components/AIEntry/AIEntry.js, src/hooks/__tests__/useLedgerSync.offline.test.js(새)·useLedgerSync.merge.test.js, src/services/__tests__/storage.test.js·shareInbox.test.js(새), src/components/App/__tests__/App.launch.test.js(새), src/components/AIEntry/__tests__/AIEntry.quick.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
 
 ### I-025 월 총액 목표만 있어 어느 카테고리에서 새는지 알 수 없음 (ROADMAP C-5)
 - 상태: ⬜ 대기

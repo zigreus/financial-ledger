@@ -21,6 +21,7 @@
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |
 | `src/services/storage/oneDrive.js` + memory | OneDrive 구현(Graph, eTag 조건부 저장) / 테스트용 메모리 가짜(같은 버전 규칙) |
 | `src/services/backups.js` | 백업 이름 규칙·목록·정리(저장소와 무관). 실제 파일은 저장소의 백업 폴더(OneDrive는 `backups/`) |
+| `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 계정별) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
 | `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
@@ -43,6 +44,7 @@
    - 컴포넌트는 OneDrive(저장소)를 직접 부르지 않습니다. App이 `createOneDriveStorage`로 만든 저장소를 useLedgerSync·aiSettingsSync에 넘깁니다.
    - 동기화 코드는 어느 저장소인지 모릅니다. 저장소별 코드는 `services/storage/`에만 두고, 새 저장소는 `storage.test.js`의 계약 테스트를 함께 통과해야 합니다. (I-018)
    - `onChanged()`는 "지금 저장하고 토스트를 보여 줘"라는 뜻입니다. 부르지 않아도 저장은 됩니다. (B-001, B-003, B-037)
+   - 저장소에 연결이 없으면 `OfflineError`를 던집니다(그때는 로그인 화면으로 넘기지 않음). useLedgerSync는 이 기기의 사본(`offlineCache`)으로 열고, 연결되면 사본 버전으로 저장해 기존 병합 경로로 합칩니다. 저장소와 맞춘 순간(불러오기·저장·병합·되돌리기)마다 사본을 새로 남기고, 로그아웃하면 지웁니다. 사본으로 연 동안에는 자동등록을 하지 않습니다. (I-024, B-004)
 3. **확정 전에는 DB에 쓰지 않습니다.**
    - 미리보기, 마법사 중간 단계, 취소 가능한 화면에서 쓰면 바로 저장됩니다.
    - 사용자가 확정할 때 한 번에 씁니다. (B-029)

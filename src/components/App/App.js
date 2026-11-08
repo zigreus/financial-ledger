@@ -24,6 +24,7 @@ import { isOnboardingPostponed, postponeOnboarding } from '../../services/onboar
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import { useTopToast } from '../../hooks/useTopToast';
 import { clearAIDraft, setAIDraftAccount } from '../../services/aiDraft';
+import { clearSharedItems, readLaunchAction, takeSharedItems } from '../../services/shareInbox';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
@@ -38,7 +39,7 @@ function App() {
   // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
   // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
   const {
-    db, dataVersion, loading, saving, error, setError, notice,
+    db, dataVersion, loading, saving, error, setError, notice, offline,
     dirty, pendingCount, loadDb, saveNow, resetForLogout,
     listBackups, createBackup, restoreBackup,
   } = useLedgerSync({ storage });
@@ -58,6 +59,8 @@ function App() {
   const [showOnboarding, setShowOnboarding] = useState(false); // 첫 실행 안내 (F-3)
   const [editingTx, setEditingTx] = useState(null);
   const [defaultFormDate, setDefaultFormDate] = useState(null);
+  // 입력 창을 열 때 AI 입력을 바로 시작할 것 (I-024) — 바로가기 'AI 입력' { quick: true }, 공유 받기 { text, files }
+  const [aiStart, setAiStart] = useState(null);
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
 
@@ -206,6 +209,36 @@ function App() {
     onboardingCheckedRef.current = true;
     if (blankLedger && !isOnboardingPostponed(accountKey)) navigate({ showOnboarding: true });
   }, [db, blankLedger, accountKey, navigate]);
+
+  // 홈 화면 바로가기·공유 받기 (I-024) — 가계부를 연 뒤 한 번: 공유로 받아 둔 사진·글이 있으면 AI 입력으로,
+  // 바로가기(?action=add|ai)면 입력 창을 연다. 빈 가계부는 첫 실행 안내가 먼저다(받아 둔 것은 버린다 — 넣을 분류가 없다).
+  // 주소의 표시는 지운다 — 새로고침해도 또 열리지 않게
+  const launchRef = React.useRef(readLaunchAction());
+  const launchHandledRef = React.useRef(false);
+  const blankLedgerRef = React.useRef(blankLedger);
+  blankLedgerRef.current = blankLedger;
+  useEffect(() => {
+    if (!db || launchHandledRef.current) return;
+    launchHandledRef.current = true;
+    const action = launchRef.current;
+    launchRef.current = null;
+    if (action) window.history.replaceState(window.history.state, '', window.location.pathname);
+    (async () => {
+      const shared = await takeSharedItems().catch(() => null);
+      // 꺼내는 사이 로그아웃했거나 빈 가계부(첫 실행 안내)면 열지 않는다
+      if (!dbRef.current || blankLedgerRef.current) return;
+      if (shared) {
+        setAiStart({ text: shared.text, files: shared.files });
+        navigate({ showForm: true, editingTx: null });
+      } else if (action === 'add' || action === 'ai') {
+        setAiStart(action === 'ai' ? { quick: true } : null);
+        navigate({ showForm: true, editingTx: null });
+      }
+    })();
+  }, [db, navigate]);
+
+  // 입력 창이 닫히면 AI 입력 시작 정보를 버린다 — 다음에 열 때는 평소대로
+  useEffect(() => { if (!showForm) setAiStart(null); }, [showForm]);
 
   const handleOnboardingDone = useCallback((counts) => {
     setShowOnboarding(false);
@@ -399,7 +432,10 @@ function App() {
         if (window.confirm(`이 기기에 저장된 AI API 키도 지울까요?\n(${note})`)) clearAIKeys();
       }
       clearAIDraft(); // AI 입력에 쓰다 남은 글은 이 계정의 것 — 다음에 로그인하는 사람에게 보이지 않게
-      resetForLogout();
+      // 공유로 받아 두고 아직 꺼내지 않은 사진·글과 이 기기의 가계부 사본도 지운다 (B-004, I-024) — 로그인 화면으로
+      // 넘어가며 문서가 내려가면 지우기가 끊길 수 있어 잠깐(최대 3초) 기다린다
+      const clearing = Promise.all([clearSharedItems(), resetForLogout()]);
+      await Promise.race([clearing, new Promise(r => setTimeout(r, 3000))]);
       await instance.logoutRedirect({ account: accounts[0] });
     } catch (e) {
       loggingOutRef.current = false;
@@ -458,6 +494,7 @@ function App() {
         loading={loading}
         saving={saving}
         dirty={dirty}
+        offline={offline}
         pendingCount={pendingCount}
         onSettings={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         settingsActive={activeTab === 'settings'}
@@ -638,6 +675,7 @@ function App() {
           dataVersion={dataVersion}
           editingTx={editingTx}
           defaultDate={defaultFormDate}
+          aiStart={editingTx ? null : aiStart}
           onSave={editingTx ? handleUpdate : handleAdd}
           onBulkAdd={handleBulkAdd}
           onQuickAdd={handleQuickAdd}

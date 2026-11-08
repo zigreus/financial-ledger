@@ -16,6 +16,15 @@
 .header-logo { width: 32px; height: 32px; }
 .header-title { font-size: 20px; font-weight: 700; }
 .header-right { display: flex; align-items: center; gap: 8px; }
+.header-offline {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #FEF3C7;
+  color: #92400E;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 .btn-header {
   padding: 6px 12px;
