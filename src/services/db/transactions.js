@@ -1,6 +1,6 @@
 // 가계부 거래(transactions) 조회·추가·수정·삭제와 분할 결제 묶음 조회.
 
-import { dbRowsToObjects } from './common';
+import { dbRowsToObjects, withTransaction } from './common';
 
 /** 거래 목록 필터에서 '누가'를 지정하지 않은 거래만 고를 때 쓰는 값 */
 export const MEMBER_NONE = '__none__';
@@ -127,6 +127,49 @@ export function updateTransaction(db, id, tx) {
 
 export function deleteTransaction(db, id) {
   db.run('DELETE FROM transactions WHERE id = ?', [id]);
+}
+
+// 바로 넣은 거래를 알아보는 칸 — 되돌릴 때 이 값이 모두 같아야 지운다
+const SNAPSHOT_FIELDS = ['date', 'amount', 'detail', 'payment_method', 'budget_category', 'sub_category'];
+
+/** 방금 넣은 거래의 모습 — removeAddedTransactions로 되돌릴 때 쓴다 (I-022) */
+export function addedSnapshot(id, tx) {
+  const snap = { id };
+  SNAPSHOT_FIELDS.forEach(k => { snap[k] = k === 'amount' ? Number(tx[k]) : String(tx[k] ?? ''); });
+  return snap;
+}
+
+const sameAsSnapshot = (row, snap) => SNAPSHOT_FIELDS.every(k => (
+  k === 'amount' ? Number(row[k]) === snap[k] : String(row[k] ?? '') === snap[k]
+));
+
+/**
+ * AI 입력이 바로 넣은 거래를 되돌린다(지운다) — 하나의 트랜잭션.
+ * 그 사이 다른 기기의 변경이 합쳐지면 새 행의 id가 바뀔 수 있어(변경 기록 병합) id만 믿지 않는다:
+ * 그 id의 행이 넣을 때와 같으면 지우고, 아니면 같은 모습의 행이 딱 하나일 때만 지운다. 이미 고쳤거나 지운 것은 그대로 둔다.
+ * 반환: 지운 개수
+ */
+export function removeAddedTransactions(db, snapshots) {
+  let removed = 0;
+  const taken = new Set();
+  withTransaction(db, () => {
+    snapshots.forEach(snap => {
+      const byId = dbRowsToObjects(db.exec('SELECT * FROM transactions WHERE id = ?', [snap.id]))[0];
+      let target = byId && !taken.has(byId.id) && sameAsSnapshot(byId, snap) ? byId : null;
+      if (!target) {
+        const same = dbRowsToObjects(db.exec(
+          'SELECT * FROM transactions WHERE date = ? AND amount = ? AND payment_method = ?',
+          [snap.date, snap.amount, snap.payment_method],
+        )).filter(row => !taken.has(row.id) && sameAsSnapshot(row, snap));
+        if (same.length === 1) [target] = same;
+      }
+      if (!target) return;
+      taken.add(target.id);
+      deleteTransaction(db, target.id);
+      removed += 1;
+    });
+  });
+  return removed;
 }
 
 /** 분할 결제로 묶인 거래들 (id 순) */

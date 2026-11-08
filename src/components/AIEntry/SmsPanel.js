@@ -1,23 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { buildSmsSuggestions, rememberCards } from '../../services/cardSms';
+import { buildSmsSuggestions, describeSkipped as skippedText, rememberCards, smsKeyOf } from '../../services/cardSms';
 import { isSuggestionComplete, suggestionToTransaction } from '../../services/receiptAssistant';
 import { formatAmount } from '../../services/formulaEvaluator';
 import { getPaymentMethods } from '../../services/dbManager';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import { amountText } from './SuggestionCard';
+import QuickAutoNote from './QuickAutoNote';
+import { fullyUndone } from './useQuickBatches';
+import { QUICK_REASONS } from '../../services/quickEntry';
 import './AIEntry.css';
 
 const EXAMPLE = '[Web발신]\n신한카드(1234)승인 홍*동 12,500원(일시불)11/08 12:34 스타벅스 누적…';
-const SKIP_LABEL = { declined: '승인 거절', notice: '청구·출금 안내', unread: '금액 없음' };
-
-/** 건너뛴 글 요약 — "건너뛴 글 3개 (승인 거절 1, 금액 없음 2)" */
-function skippedText(skipped) {
-  if (!skipped.length) return '';
-  const counts = {};
-  skipped.forEach(x => { counts[x.reason] = (counts[x.reason] || 0) + 1; });
-  const parts = Object.entries(counts).map(([r, n]) => `${SKIP_LABEL[r] || r} ${n}`);
-  return `건너뛴 글 ${skipped.length}개 (${parts.join(', ')})`;
-}
 
 /** 미리 체크할 승인 — 다 채워졌고, 중복·취소 짝이 아니며, 날짜를 실제로 읽은 것 */
 const preChecked = s => isSuggestionComplete(s) && !s.duplicateOf && !s.pairedCancel && s.sources.date !== 'today';
@@ -26,17 +19,47 @@ const preChecked = s => isSuggestionComplete(s) && !s.duplicateOf && !s.pairedCa
  * 카드 승인 문자 붙여넣기 (I-012) — AI 없이 규칙으로 읽는다.
  * 승인 문자는 거래 추천으로, 승인 취소 문자는 가계부에서 지울 거래 후보로 보여 주고,
  * 사용자가 고른 것만 한 번에 반영한다(확정 전에는 DB에 쓰지 않음 — AGENTS.md §2-3).
+ *
+ * AI 입력(I-022)에서는 이미 읽고 자주 넣던 건을 바로 넣은 뒤 남은 확인거리를 initial로 받아 확인 화면부터 연다:
+ *   initial = { text, review: [{ s, reason, checked? }], cancels, skipped } — reason은 확인이 필요한 이유
+ *   batches·onUndoAuto: AI 입력이 바로 넣은 묶음(useQuickBatches)과 되돌리기. 이 화면이 열린 뒤 어디서든(알림·버튼)
+ *   모두 되돌려진 묶음은 목록에 다시 올려(체크 없이) 고쳐 넣게 한다.
+ * onBack이 있으면 '다시 붙여넣기'는 AI 입력 상자로 돌아간다.
  */
-export default function SmsPanel({ db, onApply, onBulkAdd, onClose }) {
-  const [phase, setPhase] = useState('compose'); // compose | review
-  const [text, setText] = useState('');
-  const [items, setItems] = useState([]);     // 승인: [{ s, checked }]
-  const [cancels, setCancels] = useState([]); // 취소: [{ c, checked }]
-  const [skipped, setSkipped] = useState([]);
+export default function SmsPanel({ db, initial, batches = [], onUndoAuto, onApply, onBulkAdd, onBack, onClose }) {
+  const [phase, setPhase] = useState(initial ? 'review' : 'compose'); // compose | review
+  const [text, setText] = useState(initial?.text || '');
+  const [items, setItems] = useState(() => (initial
+    ? initial.review.map(({ s, reason, checked }) => ({ s, checked: checked ?? preChecked(s), reason }))
+    : []));                                   // 승인: [{ s, checked, reason? }]
+  const [cancels, setCancels] = useState(() => (initial
+    ? initial.cancels.map(c => ({ c, checked: !!c.match?.strong }))
+    : []));                                   // 취소: [{ c, checked }]
+  const [skipped, setSkipped] = useState(initial?.skipped || []);
   const [error, setError] = useState('');
   const textRef = useRef(null);
+  // 열릴 때 이미 되돌려져 있던 묶음은 AI 입력이 확인 목록에 넣어 보냈다 — 그 뒤에 되돌려진 것만 다시 올린다
+  const restoredRef = useRef(null);
+  if (restoredRef.current === null) restoredRef.current = new Set(batches.filter(fullyUndone).map(b => b.id));
 
   useEffect(() => { if (textRef.current) textRef.current.focus(); }, []);
+
+  // 되돌린 건을 다시 올린다 — 같은 문자가 이미 목록에 있으면(다시 붙여넣어 '이미 있는 것 같아요'로 보이던 줄) 그 줄을 바꾼다
+  useEffect(() => {
+    const fresh = batches.filter(b => fullyUndone(b) && !restoredRef.current.has(b.id));
+    if (!fresh.length) return;
+    fresh.forEach(b => restoredRef.current.add(b.id));
+    const back = fresh.flatMap(b => b.suggestions).map(s => ({ s, checked: false, reason: QUICK_REASONS.undone }));
+    setItems(list => {
+      const next = [...list];
+      back.forEach(item => {
+        const i = next.findIndex(it => it.reason !== QUICK_REASONS.undone && smsKeyOf(it.s) === smsKeyOf(item.s));
+        if (i >= 0) next[i] = item;
+        else next.push(item);
+      });
+      return next;
+    });
+  }, [batches]);
 
   const canReadClipboard = typeof navigator !== 'undefined' && !!navigator.clipboard?.readText;
 
@@ -116,13 +139,19 @@ export default function SmsPanel({ db, onApply, onBulkAdd, onClose }) {
     toDelete.length ? `${toDelete.length}건 삭제` : '',
   ].filter(Boolean).join(' · ');
 
+  const unread = skipped.filter(x => x.reason === 'unread').length;
   return (
     <div className="rs-box rs-review">
       <div className="rs-review-title">
         <b>
-          카드 문자 {items.length}건{cancels.length ? ` · 승인 취소 ${cancels.length}건` : ''}
+          {!items.length && !cancels.length
+            ? '읽지 못한 카드 문자가 있어요'
+            : `${batches.length ? '확인이 필요한 ' : ''}카드 문자 ${items.length}건${cancels.length ? ` · 승인 취소 ${cancels.length}건` : ''}`}
         </b>
-        {skipped.length > 0 && <span className="tp-hint">{skippedText(skipped)}</span>}
+        <QuickAutoNote batches={batches} onUndo={onUndoAuto} />
+        {skipped.length > 0 && (
+          <span className="tp-hint">{skippedText(skipped)}{unread > 0 ? ' — 금액을 읽지 못한 문자는 직접 입력해 주세요' : ''}</span>
+        )}
       </div>
 
       <div className="tp-list">
@@ -132,7 +161,7 @@ export default function SmsPanel({ db, onApply, onBulkAdd, onClose }) {
             db={db}
             item={it}
             methods={methods}
-            subtitle={[`${it.s.date}${it.s.time ? ` ${it.s.time}` : ''}`, it.s.cardLabel, it.s.eventTitle].filter(Boolean).join(' · ')}
+            subtitle={[`${it.s.date}${it.s.time ? ` ${it.s.time}` : ''}`, it.s.cardLabel, it.s.eventTitle, it.reason].filter(Boolean).join(' · ')}
             onToggle={checked => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked } : x)))}
             onPatch={patch => setItems(list => list.map((x, i) => (i === idx ? patchListItem(x, patch) : x)))}
             onFillForm={onApply}
@@ -167,7 +196,7 @@ export default function SmsPanel({ db, onApply, onBulkAdd, onClose }) {
 
       <div className="rs-actions">
         <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
-        <button type="button" className="rs-btn-secondary" onClick={() => setPhase('compose')}>다시 붙여넣기</button>
+        <button type="button" className="rs-btn-secondary" onClick={() => (onBack ? onBack() : setPhase('compose'))}>다시 붙여넣기</button>
         <button type="button" className="rs-btn-primary" disabled={!label} onClick={confirm}>
           {label || '추가할 건 선택'}
         </button>

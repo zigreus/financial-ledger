@@ -145,6 +145,25 @@ describe('정리 결과', () => {
     expect(eur).toMatchObject({ amount: 15000, event_id: null, warnings: ['EUR 여행 일정이 없어 원화 금액만 기록됩니다'] });
   });
 
+  test('말한 날짜가 앞날짜·없는 날짜라 오늘로 넣으면 그렇다고 알린다 (I-022 — 예약을 오늘 거래로 바로 넣지 않게)', async () => {
+    analyzeWithAI.mockResolvedValueOnce({
+      entries: [
+        entry({ detail: '미용실', amount: 30000, date: '2026-11-20' }),
+        entry({ detail: '김밥', amount: 4000, date: '2026-02-30' }),
+        entry({ detail: '점심', amount: 9000, date: '2026-11-07' }),
+        entry({ detail: '커피', amount: 2000 }),
+      ],
+      question: '',
+    });
+    const list = await parse(makeDb(), '다음 주 미용실 3만원, 김밥 4천원, 어제 점심 9천원, 커피 2천원');
+    expect(list.map(s => [s.date, s.warnings])).toEqual([
+      [TODAY, ['말한 날짜(2026-11-20)를 쓸 수 없어 오늘로 넣었습니다']],
+      [TODAY, ['말한 날짜(2026-02-30)를 쓸 수 없어 오늘로 넣었습니다']],
+      ['2026-11-07', []],
+      [TODAY, []],
+    ]);
+  });
+
   test('네트워크·키 오류는 되묻기로 바꾸지 않고 그대로 전한다', async () => {
     analyzeWithAI.mockRejectedValue(new AIError('네트워크 오류 — 인터넷 연결을 확인하세요', 'network'));
     const err = await parse(makeDb(), '김치찌개 9천원').catch(e => e);

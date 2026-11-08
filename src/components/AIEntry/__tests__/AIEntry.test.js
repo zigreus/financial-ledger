@@ -53,13 +53,15 @@ const setValue = (el, value) => act(() => {
   el.dispatchEvent(new Event('input', { bubbles: true }));
 });
 const followText = () => container.querySelector('.tp-followup textarea');
+const openQuick = () => act(async () => { container.querySelector('.ai-entry-main').click(); });
+const quickText = () => container.querySelector('.quick-box textarea');
 
 async function startConversation() {
   await render();
-  await click('💬말로 입력');
-  await setValue(container.querySelector('textarea'), '좀 썼어');
+  await openQuick();
+  await setValue(quickText(), '좀 썼어');
   parseTextEntry.mockRejectedValueOnce(new AIError('무엇을 사셨나요?', 'unclear'));
-  await click('정리하기');
+  await click('정리하기');                                    // AI 입력 상자의 글은 말로 입력 화면이 바로 정리한다
   parseTextEntry.mockRejectedValueOnce(new AIError('API 키를 확인하세요 (invalid)', 'auth'));
   await setValue(followText(), '점심 김치찌개');
   await click('덧붙여 정리하기');
@@ -90,6 +92,6 @@ test('설정을 취소해도 하던 대화로 돌아가고, 닫으면 다음에�
 
   await click('닫기');
   expect(container.querySelector('.tp-followup')).toBeNull();
-  await click('💬말로 입력');
-  expect(container.querySelector('textarea').value).toBe('');
+  await openQuick();
+  expect(quickText().value).toBe('');
 });

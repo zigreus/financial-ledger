@@ -123,3 +123,33 @@
 .nav-icon-add { font-size: 28px; line-height: 1; }
 .nav-add--event { background: #7C3AED; box-shadow: 0 4px 12px rgba(124,58,237,.4); }
 .nav-add--event .nav-icon-add { font-size: 22px; }
+
+/* 화면 위 알림(바로 넣은 거래·되돌리기) — 입력 창(모달) 위에도 보이게 띄운다 (I-022) */
+.toast-banner.toast-top {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #86EFAC;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: none;
+}
+.toast-action-btn {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid #166534;
+  border-radius: 8px;
+  background: white;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}

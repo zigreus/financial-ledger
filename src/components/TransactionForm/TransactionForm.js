@@ -36,7 +36,7 @@ const EMPTY_FORM = {
   member: '',
 };
 
-function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, onBulkAdd, onCancel }) {
+function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, onBulkAdd, onQuickAdd, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -328,10 +328,10 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
   };
 
   // 영수증·말로 입력·카드 문자로 여러 건을 한 번에 넣을 때도 폼에서 고른 '누가'를 쓴다
-  const bulkAdd = (rows, opts) => onBulkAdd(
-    rows.map(r => (r.member === undefined ? { ...r, member: form.member || '' } : r)),
-    opts,
-  );
+  const withFormMember = rows => rows.map(r => (r.member === undefined ? { ...r, member: form.member || '' } : r));
+  const bulkAdd = (rows, opts) => onBulkAdd(withFormMember(rows), opts);
+  // AI 입력이 자주 넣던 거래를 바로 넣을 때 (I-022) — 확인할 것이 없으면(done) 입력 창을 닫는다
+  const quickAdd = (rows, opts) => (onQuickAdd ? onQuickAdd(withFormMember(rows), opts) : onBulkAdd(withFormMember(rows)));
 
   const applyFavorite = (fav) => {
     favs.recordUse(fav);
@@ -362,7 +362,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, onSave, 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
           {/* AI 입력 — 영수증 사진 / 말로 입력 */}
           {!editingTx && (
-            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={bulkAdd} resetKey={addedCount} />
+            <AIEntry db={db} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
           )}
 
           {/* 즐겨찾기 칩 */}

@@ -8,8 +8,13 @@ import { createRoot } from 'react-dom/client';
 import ReceiptPanel from '../ReceiptPanel';
 import { analyzeReceipt } from '../../../services/receiptAssistant';
 import { prepareImage } from '../../../services/imageUtils';
+import { familiarity } from '../../../services/quickEntry';
 
-vi.mock('../../../services/receiptAssistant', () => ({ analyzeReceipt: vi.fn() }));
+vi.mock('../../../services/receiptAssistant', () => ({
+  analyzeReceipt: vi.fn(),
+  suggestionToTransaction: (db, s) => ({ detail: s.merchant, amount: s.amount }),
+}));
+vi.mock('../../../services/quickEntry', () => ({ familiarity: vi.fn() }));
 vi.mock('../../../services/imageUtils', () => ({ prepareImage: vi.fn() }));
 vi.mock('../SuggestionCard', () => ({ default: () => null }));
 
@@ -35,6 +40,7 @@ beforeEach(() => {
   window.localStorage.setItem('ai_receipt_config', JSON.stringify({ provider: 'gemini', keys: { gemini: 'k' }, models: {} }));
   analyzeReceipt.mockReset();
   prepareImage.mockReset();
+  familiarity.mockReset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -104,4 +110,39 @@ test('새 사진을 고르면 이전 사진의 진행 문구와 대신 읽은 �
   await flush();
   expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
   expect(container.querySelector('.rs-model-note')).toBeNull();
+});
+
+// AI 입력 (I-022) — 늘 가던 가게의 분명한 영수증은 확인 없이 바로 넣는다
+const renderQuick = (file, onAutoAdd) => act(async () => {
+  root.render(<ReceiptPanel db={{}} file={file} onApply={() => {}} onAutoAdd={onAutoAdd} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+});
+
+test('AI 입력에서 늘 가던 가게의 영수증이면 확인 화면 없이 바로 넣는다', async () => {
+  prepareImage.mockResolvedValue(IMAGE);
+  analyzeReceipt.mockResolvedValue({ ...SUGGESTION, amount: 5000 });
+  familiarity.mockReturnValue({ familiar: true, reason: '' });
+  const onAutoAdd = vi.fn();
+  await renderQuick({ name: 'a.jpg', type: 'image/jpeg' }, onAutoAdd);
+  await flush();
+  expect(familiarity).toHaveBeenCalledWith({}, expect.objectContaining({ merchant: '스타벅스' }), 'receipt');
+  expect(onAutoAdd).toHaveBeenCalledWith([{ detail: '스타벅스', amount: 5000 }], { remaining: 0 });
+  expect(container.textContent).not.toContain('이렇게 입력하시겠습니까?');
+});
+
+test('처음 보는 가게면 확인 화면에 그 이유를 보이고, 영수증 버튼(onAutoAdd 없음)에서는 따지지 않는다', async () => {
+  prepareImage.mockResolvedValue(IMAGE);
+  analyzeReceipt.mockResolvedValue({ ...SUGGESTION, amount: 5000 });
+  familiarity.mockReturnValue({ familiar: false, reason: '처음 보는 곳이에요' });
+  const onAutoAdd = vi.fn();
+  await renderQuick({ name: 'a.jpg', type: 'image/jpeg' }, onAutoAdd);
+  await flush();
+  expect(onAutoAdd).not.toHaveBeenCalled();
+  expect(container.querySelector('.quick-reason').textContent).toBe('확인이 필요한 이유: 처음 보는 곳이에요');
+
+  familiarity.mockClear();
+  await render({ name: 'b.jpg', type: 'image/jpeg' });
+  await flush();
+  expect(familiarity).not.toHaveBeenCalled();
+  expect(container.querySelector('.quick-reason')).toBeNull();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
 });

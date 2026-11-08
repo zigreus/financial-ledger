@@ -25,6 +25,7 @@
 | `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
+| `src/services/quickEntry.js` + `components/AIEntry` | 'AI 입력' 하나로 사진·카드 문자·말을 갈래 지어 읽고, 늘 넣던 거래만 바로 넣기(`familiarity`). 바로 넣은 것은 App 알림·확인 화면의 되돌리기(`removeAddedTransactions`, 그 순간의 DB에서 넣은 그대로인 행만) |
 | `src/services/txFilters.js` + txSummary | 거래내역 필터(기간·여러 개 선택·순지출 금액 범위·저장한 필터)와 걸러진 결과의 집계·AI 요약(집계만 보냄) |
 | `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |

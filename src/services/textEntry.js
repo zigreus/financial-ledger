@@ -179,6 +179,13 @@ export function buildTextSuggestion(db, e, today = todayStr()) {
   if (money.event_id) sources.event = 'trip';
   if (pay.source) sources.payment_method = pay.source;
 
+  // 말한 날짜를 쓸 수 없으면(앞날짜·없는 날짜) 오늘로 넣되 알린다 — 예약·예정을 오늘 거래로 조용히 넣지 않게 (I-022)
+  const warnings = [...money.warnings];
+  const spokenDate = String(e.date || '').trim();
+  if (spokenDate && dateSource === 'today' && spokenDate !== date) {
+    warnings.push(`말한 날짜(${spokenDate})를 쓸 수 없어 오늘로 넣었습니다`);
+  }
+
   return {
     date,
     merchant: String(e.merchant || '').trim(),
@@ -197,7 +204,7 @@ export function buildTextSuggestion(db, e, today = todayStr()) {
     historyDetail: cls.history?.detail || '',
     historyCount: cls.history?.cnt || 0,
     confidence: 'high',
-    warnings: money.warnings,
+    warnings,
     sources,
   };
 }

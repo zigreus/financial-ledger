@@ -368,3 +368,15 @@
 .tp-followup-open { align-self: flex-start; }
 .tp-restore { font-size: 12px; color: #92400E; line-height: 1.5; word-break: break-word; }
 .tp-restore .rs-btn-link { margin-left: 6px; }
+
+/* ── AI 입력 하나로 (I-022) ─────────────────────────────── */
+.ai-entry-main { justify-content: flex-start; gap: 10px; padding: 10px 14px; }
+.ai-entry-main-label { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.3; }
+.ai-entry-main-label small { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+@media (max-width: 480px) {
+  /* 버튼이 하나라 좁은 화면에서도 아이콘 옆에 글자를 둔다 */
+  .ai-entry-btn.ai-entry-main { flex-direction: row; gap: 10px; padding: 10px 12px; font-size: 13px; }
+}
+.quick-auto-note { display: block; font-size: 12px; color: #047857; line-height: 1.5; }
+.quick-auto-note .quick-undo { margin-left: 8px; font-weight: 700; text-decoration: underline; }
+.quick-reason { display: block; font-size: 12px; color: #B45309; line-height: 1.5; }

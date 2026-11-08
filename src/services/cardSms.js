@@ -216,6 +216,32 @@ function skipReason(raw) {
   return '';
 }
 
+const SKIP_LABEL = { declined: '승인 거절', notice: '청구·출금 안내', unread: '금액 없음' };
+
+/** 건너뛴 글 요약 — "건너뛴 글 3개 (승인 거절 1, 금액 없음 2)" */
+export function describeSkipped(skipped) {
+  if (!skipped || !skipped.length) return '';
+  const counts = {};
+  skipped.forEach(x => { counts[x.reason] = (counts[x.reason] || 0) + 1; });
+  const parts = Object.entries(counts).map(([r, n]) => `${SKIP_LABEL[r] || r} ${n}`);
+  return `건너뛴 글 ${skipped.length}개 (${parts.join(', ')})`;
+}
+
+// 카드 문자의 날짜(11/08·11.08)·시각(12:34) — "4.5천원"·"1.5만원"처럼 소수점 금액은 날짜(4.5)로 보지 않는다
+const SMS_DATE_TIME_RE = /(?:^|[^\d.,])\d{1,2}[/.]\d{1,2}(?![\d.,]|\s*(?:천|만|원|달러|불|유로|엔))|\d{1,2}:\d{2}/;
+
+/**
+ * 붙여넣은 글이 카드 승인·취소 문자로 보이는지 (AI 입력이 규칙으로 읽을지 AI에 맡길지 고른다, I-022).
+ * [Web발신] 같은 발신 표시가 있거나, 카드사로 시작하는 승인·취소·결제 머리말 줄이 있고 날짜·시각이 함께 있을 때.
+ * "어제 신한카드로 스타벅스 4500원 결제했어" 같은 말은 날짜·시각 표기가 없어 AI로 보낸다.
+ */
+export function looksLikeCardMessage(text) {
+  const t = String(text || '');
+  if (new RegExp(MARKER_RE.source).test(t)) return true;
+  const header = t.split(/\r\n?|\n/).some(line => KEYWORD_RE.test(line) && looksLikeHeader(line.trim()));
+  return header && SMS_DATE_TIME_RE.test(t);
+}
+
 /**
  * 붙여넣은 글을 문자 하나씩으로 나눈다.
  * [Web발신] 표시·빈 줄이 경계이고, 그런 것 없이 붙어 있어도 발급사로 시작하는 새 승인 머리말이나
@@ -432,7 +458,9 @@ function buildApproval(db, msg, methods, cardMap, today) {
   };
 }
 
-/** 가계부에 이미 같은 날·같은 금액으로 적은 거래 (결제수단이나 내용이 맞을 때) */
+/** 가계부에 이미 같은 날·같은 금액으로 적은 거래 (결제수단이나 내용이 맞을 때) — AI 입력의 바로 넣기도 이것으로 중복을 거른다(I-022) */
+export function findExistingTransaction(db, s) { return findExisting(db, s); }
+
 function findExisting(db, s) {
   if (s.amount === null) return null;
   const sameDay = getTransactions(db, { dateFrom: s.date, dateTo: s.date })
@@ -495,6 +523,9 @@ function buildCancel(db, msg, methods, cardMap, today, taken) {
   });
 }
 
+/** 같은 승인 문자인지 알아보는 열쇠 — 날짜·금액·가맹점·카드·시각 */
+export const smsKeyOf = s => [s.date, s.amount, s.merchant, s.cardKey, s.time].join('|');
+
 /**
  * 붙여넣은 카드 문자 → 화면에 보여 줄 추천 목록.
  * 반환: { items: [승인 추천 | 취소 추천], skipped: [{ text, reason }] }
@@ -509,7 +540,7 @@ export function buildSmsSuggestions(db, text, { today = todayStr(), cardMap = lo
   // 1) 이미 가계부에 있거나, 같은 문자를 두 번 붙여넣은 승인
   const seen = new Set();
   approvals.forEach(s => {
-    const key = [s.date, s.amount, s.merchant, s.cardKey, s.time].join('|');
+    const key = smsKeyOf(s);
     if (seen.has(key)) {
       s.duplicateOf = { inPaste: true };
       s.warnings.push('같은 문자가 두 번 들어 있어요');

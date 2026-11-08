@@ -14,7 +14,7 @@ import CalendarView from '../CalendarView/CalendarView';
 
 import AccountManagement from '../AccountManagement/AccountManagement';
 import Onboarding from '../Onboarding/Onboarding';
-import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger } from '../../services/dbManager';
+import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
@@ -40,6 +40,9 @@ function App() {
     dirty, pendingCount, loadDb, saveNow, resetForLogout,
     listBackups, createBackup, restoreBackup,
   } = useLedgerSync({ storage });
+  // 늦게 끝나는 일(AI 입력의 바로 넣기·되돌리기)이 그 순간의 DB를 쓰게 — 저장소에서 다시 받으면 DB 객체가 바뀐다
+  const dbRef = React.useRef(db);
+  dbRef.current = db;
   // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
   const backupApi = useMemo(
     () => ({ list: listBackups, create: createBackup, restore: restoreBackup }),
@@ -55,6 +58,8 @@ function App() {
   const [defaultFormDate, setDefaultFormDate] = useState(null);
   const [toast, setToast] = useState('');
   const toastTimer = React.useRef(null);
+  const [topToast, setTopToast] = useState(null); // { text, action } — 바로 넣은 거래의 되돌리기 (I-022)
+  const topToastTimer = React.useRef(null);
 
   // SummaryView 내비게이션 state
   const [summaryTab, setSummaryTab] = useState('monthly');
@@ -86,6 +91,18 @@ function App() {
     setToast(msg);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 2500);
+  }, []);
+
+  // 화면 위에 띄우는 알림(I-022) — 입력 창(모달) 위에도 보이고, 일반 알림이 덮지 않는다.
+  // action: { label, onClick } — '되돌리기'처럼 누를 수 있으면 조금 더 오래 둔다
+  const showTopToast = useCallback((text, action = null) => {
+    setTopToast({ text, action });
+    clearTimeout(topToastTimer.current);
+    topToastTimer.current = setTimeout(() => setTopToast(null), action ? 10000 : 3000);
+  }, []);
+  const hideTopToast = useCallback(() => {
+    clearTimeout(topToastTimer.current);
+    setTopToast(null);
   }, []);
 
   const applyNavState = useCallback((s) => {
@@ -238,6 +255,47 @@ function App() {
   const withMember = useCallback((row) => (
     row.member === undefined ? { ...row, member: resolveDeviceMember(db) } : row
   ), [db]);
+
+  // AI 입력이 자주 넣던 거래를 바로 넣는다 (I-022) — 확인할 것이 남아 있으면 입력 창은 열어 둔다(done이 아님).
+  // 분석을 기다리는 사이 저장소에서 다시 받아 DB가 바뀌었을 수 있어, 넣을 때와 되돌릴 때 모두 그 순간의 DB(dbRef)를 쓴다.
+  // 되돌리기는 넣을 때의 모습과 같은 행만 지운다(병합으로 id가 바뀌었으면 같은 모습의 행을 찾고, 고친 것은 그대로).
+  // 반환: { undo, onUndone } — 확인 화면 안의 되돌리기 버튼도 같은 것을 부른다.
+  //  - undo(): 지운 개수 — 한 번만 지우고, 다시 부르면(알림과 화면 버튼 둘 다) 그때의 개수를 돌려준다. DB가 없으면 null
+  //  - onUndone(fn): 어디서 되돌리든(알림·화면 버튼) fn(지운 개수)을 부른다 — 확인 화면이 목록을 맞춘다. 반환은 구독 해제
+  const handleQuickAdd = useCallback((inputRows, { done = false } = {}) => {
+    const target = dbRef.current;
+    const rows = inputRows.map(row => (row.member === undefined ? { ...row, member: resolveDeviceMember(target) } : row));
+    if (!rows.length || !target) return null;
+    const snapshots = [];
+    withTransaction(target, () => rows.forEach(row => snapshots.push(addedSnapshot(addTransaction(target, row), row))));
+    if (done) {
+      setShowForm(false);
+      setEditingTx(null);
+      window.history.back();
+    }
+    let removed = null;
+    const listeners = new Set();
+    const undo = () => {
+      if (removed !== null) return removed;
+      if (!dbRef.current) return null;
+      removed = removeAddedTransactions(dbRef.current, snapshots);
+      showTopToast(removed === snapshots.length
+        ? `✓ 방금 바로 넣은 ${removed}건을 되돌렸습니다`
+        : `${removed}건만 되돌렸습니다 — 나머지는 그사이 고쳐졌거나 지워졌습니다`);
+      listeners.forEach(fn => fn(removed));
+      listeners.clear();
+      return removed;
+    };
+    const onUndone = (fn) => {
+      if (removed !== null) { fn(removed); return () => {}; }
+      listeners.add(fn);
+      return () => { listeners.delete(fn); };
+    };
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    const what = rows.length > 1 ? `${rows.length}건 ${total.toLocaleString()}원` : `${rows[0].detail || rows[0].budget_category} ${total.toLocaleString()}원`;
+    showTopToast(`✓ 자주 넣던 ${what} 바로 추가됨`, { label: '되돌리기', onClick: undo });
+    return { undo, onUndone };
+  }, [showTopToast]);
 
   const handleAdd = useCallback((txData, { keepOpen = false } = {}) => {
     // 분할 결제는 거래 2건으로 들어온다
@@ -417,6 +475,16 @@ function App() {
           {toast}
         </div>
       )}
+      {topToast && (
+        <div className="toast-banner toast-top" role="status">
+          <span>{topToast.text}</span>
+          {topToast.action && (
+            <button type="button" className="toast-action-btn" onClick={() => { const { onClick } = topToast.action; hideTopToast(); onClick(); }}>
+              {topToast.action.label}
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="error-banner" onClick={() => setError('')}>
@@ -579,6 +647,7 @@ function App() {
           defaultDate={defaultFormDate}
           onSave={editingTx ? handleUpdate : handleAdd}
           onBulkAdd={handleBulkAdd}
+          onQuickAdd={handleQuickAdd}
           onCancel={closeForm}
         />
       )}

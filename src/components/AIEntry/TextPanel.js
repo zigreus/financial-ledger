@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { parseTextEntry, UNCLEAR } from '../../services/textEntry';
-import { isSuggestionComplete, suggestionToTransaction } from '../../services/receiptAssistant';
+import { isSuggestionComplete, normalizeName, suggestionToTransaction } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
+import { QUICK_REASONS, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
 import SuggestionDetails from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import { FollowUpBox, SaidSoFar, describeGaps, gapQuestion, recordPick, carryChoices } from './TextFollowUp';
+import QuickAutoNote from './QuickAutoNote';
+import { useQuickBatches } from './useQuickBatches';
 import './AIEntry.css';
 
 const EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 4500 카카오페이';
@@ -13,15 +16,31 @@ const EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 45
 const SETTINGS_KINDS = new Set(['auth', 'model', 'quota', 'billing']);
 const PENDING_NOTE = "덧붙여 쓴 말이 있어요 — '덧붙여 정리하기'를 누르거나 지우면 진행할 수 있어요.";
 const MERGE_HINT = '앞에서 말한 것과 합쳐 다시 정리합니다.';
+// 바로 넣은(또는 되돌린) 거래를 알아보는 열쇠 — 다시 정리하면 같은 건·고쳐 말한 건은 바로 넣지 않고,
+// 체크를 끈 채 이유를 붙인다 (I-022). 한 건 화면(이대로 채우기)에도 맞게 '고르세요'라고 쓴다
+const keyOf = s => `${s.date}|${s.amount}|${s.detail}|${s.payment_method}`;
+const placeOf = s => ({ key: keyOf(s), date: s.date, name: normalizeName(s.detail) });
+const mark = (s, kind) => ({ ...s, quickMark: kind, reviewReason: QUICK_REASONS[kind] });
 
 /**
  * 말로 입력 — 문장을 거래로.
  * 한 건이면 확인 후 폼을 채우고, 여러 건이면 목록에서 고쳐 한 번에 추가한다.
  * 정보가 모자라면 무엇이 빠졌는지 알려 주고, 덧붙여 말하면 처음 말과 합쳐 다시 정리한다 (I-017).
+ *
+ * AI 입력(I-022): initialText·autoRun이면 열리자마자 정리하고, onAutoAdd가 있으면 처음 정리(덧붙인 말 없이)에서
+ * 자주 넣던 건은 바로 넣고(onAutoAdd(rows, { remaining }) → { undo }) 나머지만 확인받는다.
+ * 취소·예약 같은 말이 있으면 바로 넣지 않는다. 바로 넣은 건은 다시 정리하면 체크를 끈 채 보여 주고, 확인 화면에서 되돌릴 수 있다.
+ * AI 응답은 오래 걸릴 수 있어 그 사이 바뀐 db·onAutoAdd(App이 다시 받은 DB, 폼에서 고른 '누가')는 ref로 최신 것을 쓴다.
  */
-export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) {
-  const [phase, setPhase] = useState('compose'); // compose | analyzing | review | ask | error
-  const [text, setText] = useState('');
+export default function TextPanel({ db, title = '말로 입력', initialText = '', autoRun = false, onAutoAdd, onApply, onBulkAdd, onClose, onSetup }) {
+  const [phase, setPhase] = useState(autoRun && initialText ? 'analyzing' : 'compose'); // compose | analyzing | review | ask | error
+  const [text, setText] = useState(initialText);
+  const autoAddedRef = useRef([]);               // 바로 넣은 건 [{ key, date, name }] (같은 건이 둘이면 둘)
+  const undoneRef = useRef([]);                  // 바로 넣었다가 되돌린 건 — 다시 정리해도 바로 넣지 않는다
+  const dbRef = useRef(db);
+  dbRef.current = db;
+  const onAutoAddRef = useRef(onAutoAdd);
+  onAutoAddRef.current = onAutoAdd;
   const [followUps, setFollowUps] = useState([]); // 덧붙인 말 [{ asked, said }]
   const [addition, setAddition] = useState('');   // 덧붙여 말하는 중인 글
   const [boxOpen, setBoxOpen] = useState(false);  // 빠진 정보가 없어도 덧붙이기 상자를 열었는지
@@ -36,16 +55,52 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   const backRef = useRef('compose'); // 정리를 취소하거나 실패하면 돌아갈 화면
   const textRef = useRef(null);
 
+  /**
+   * 바로 넣은 묶음이 되돌려졌다(화면 위 알림이든 이 화면의 버튼이든) — 모두 지웠으면 그 건을 '되돌린 거래'로 옮겨
+   * 다시 정리해도 바로 넣지 않게 하고, 목록에 다시 올린다(체크 없이). 이미 목록에 '바로 넣은 거래'로 보이던 같은 건은
+   * 그 줄을 바꾸고, 고쳐 말한 건이 보이면 원래 건은 올리지 않는다(둘 다 넣지 않게)
+   */
+  const quick = useQuickBatches(({ suggestions, removed }) => {
+    if (removed !== suggestions.length) return;
+    const places = suggestions.map(placeOf);
+    places.forEach(p => {
+      const i = autoAddedRef.current.findIndex(a => a.key === p.key);
+      if (i >= 0) autoAddedRef.current.splice(i, 1);
+      undoneRef.current.push(p);
+    });
+    setItems(list => {
+      const rest = suggestions.map((_, k) => k);
+      const claim = (match) => {
+        const i = rest.findIndex(k => match(places[k]));
+        if (i < 0) return false;
+        rest.splice(i, 1);
+        return true;
+      };
+      const next = list.map(it => {
+        if (it.s.quickMark === 'again' && claim(p => p.key === keyOf(it.s))) return { ...it, s: mark(it.s, 'undone') };
+        if (it.s.quickMark === 'similar' && claim(p => p.date === it.s.date && p.name === normalizeName(it.s.detail))) {
+          return { ...it, s: mark(it.s, 'fixed') };
+        }
+        return it;
+      });
+      return [...next, ...rest.map(k => ({ s: mark(suggestions[k], 'undone'), checked: false, off: true }))];
+    });
+  });
+
   useEffect(() => {
     if (textRef.current) textRef.current.focus();
+    // AI 입력에서 넘어온 글은 바로 정리한다. 닫히면(StrictMode의 시험 닫기 포함) 진행 중인 정리를 취소하므로
+    // 바로 넣기는 끝까지 간 한 번만 일어난다
+    if (autoRun && initialText.trim()) run([], 'compose');
     return () => { if (abortRef.current) abortRef.current.abort(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** AI 설정으로 — 다녀오는 동안 이 화면은 남는다(AIEntry). 설정을 고치러 가므로 이전 오류는 지운다 */
   const openSetup = () => {
     setError('');
     setFollowError(null);
-    setPhase(p => (p === 'error' ? 'compose' : p));
+    setPhase(p => (p === 'error' || p === 'analyzing' ? 'compose' : p)); // 바로 정리하려다 키가 없으면 쓰던 글로
     onSetup();
   };
 
@@ -65,8 +120,8 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
     setModelNote('');
     setPhase('analyzing');
     try {
-      const list = await parseTextEntry({
-        db, ai, text, followUps: rounds, signal: controller.signal,
+      let list = await parseTextEntry({
+        db: dbRef.current, ai, text, followUps: rounds, signal: controller.signal,
         onProgress: (msg, info) => {
           if (controller.signal.aborted) return;
           if (info?.modelUsed) {
@@ -77,15 +132,75 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
         },
       });
       if (controller.signal.aborted) return;
+      const curDb = dbRef.current;
+      // 앞에서 바로 넣은 건·되돌린 건(또는 날짜·내용이 같아 고쳐 말한 것 같은 건)은 바로 넣지 않고 체크를 끈 채 이유를 보인다
+      const added = [...autoAddedRef.current];
+      const undone = [...undoneRef.current];
+      const take = (pool, sug) => {
+        const i = pool.findIndex(a => a.key === keyOf(sug));
+        if (i < 0) return false;
+        pool.splice(i, 1);
+        return true;
+      };
+      const near = (pool, sug) => pool.some(a => a.date === sug.date && a.name === normalizeName(sug.detail));
+      list = list.map(sug => {
+        if (take(added, sug)) return mark(sug, 'again');
+        if (near(autoAddedRef.current, sug)) return mark(sug, 'similar');
+        if (take(undone, sug)) return mark(sug, 'undone');
+        if (near(undoneRef.current, sug)) return mark(sug, 'fixed');
+        return sug;
+      });
+      const autoAdd = onAutoAddRef.current;
+      if (autoAdd && back === 'compose' && !rounds.length && mayAutoAddText(text)) {
+        const { familiar, review } = splitFamiliar(curDb, list.filter(sug => !sug.quickMark), 'text', { said: text });
+        if (familiar.length) {
+          const remaining = list.length - familiar.length;
+          const handle = autoAdd(familiar.map(sug => suggestionToTransaction(curDb, sug)), { remaining });
+          // 넣은 뒤에 기록한다 — 넣다가 실패하면(오류) 다시 정리할 때 숨기지 않게
+          familiar.forEach(sug => autoAddedRef.current.push(placeOf(sug)));
+          if (!remaining) return; // 모두 바로 넣었다 — 입력 창이 닫힌다
+          quick.add(familiar, handle);
+        }
+        const reasons = new Map(review.map(r => [r.s, r.reason]));
+        list = list.filter(sug => !familiar.includes(sug));
+        list.forEach(sug => { if (reasons.has(sug)) sug.reviewReason = reasons.get(sug); });
+      }
+      if (!list.length) {
+        const message = '넣을 거래를 찾지 못했어요 — 무엇을 얼마에 샀는지 적어 주세요';
+        // 처음 정리면 쓰던 글 아래에, 덧붙여 정리하던 중이면 그 화면(목록·되묻기)에 이유를 보인다
+        if (back === 'compose') {
+          setError(message);
+          setPhase('error');
+        } else {
+          setFollowError({ message, settings: false });
+          setPhase(back);
+        }
+        return;
+      }
       // 목록에서 고른 값·체크를 끈 것은 덧붙여 정리할 때만 이어받는다 (다시 쓰기·처음 정리는 새로)
-      const { items: next, dropped } = carryChoices(before.items, list);
+      const { items: next, dropped: droppedByName, matched } = carryChoices(before.items, list);
+      // 바로 넣은·되돌린 건이 금액만 같은 다른 줄과 짝지어졌으면 그 예전 줄은 빠진 것으로 알린다(체크도 이어받지 않는다)
+      const sameDetail = (a, b) => normalizeName(a.detail) === normalizeName(b.detail);
+      const oldOf = i => (matched[i] >= 0 ? before.items[matched[i]] : null);
+      const pairedByAmount = next
+        .map((it, i) => (it.s.quickMark && oldOf(i) && !sameDetail(oldOf(i).s, it.s) ? oldOf(i) : null))
+        .filter(Boolean);
+      const dropped = [...droppedByName, ...pairedByAmount];
       setRestore(dropped.length
         ? { items: before.items, followUps: before.followUps, said: rounds[rounds.length - 1].said, dropped }
         : null);
       setFollowUps(rounds);
       setAddition('');
       setBoxOpen(false);
-      setItems(next);
+      // 바로 넣은·되돌린 건은 체크를 끈 채 보인다 — 단, 같은 줄(같은 내용의 표시 줄)을 사용자가 직접 체크해 두었으면 그대로.
+      // 금액만 같은 다른 줄과 짝지어졌으면 그 줄에서 고른 값도 이어받지 않는다
+      setItems(next.map((it, i) => {
+        if (!it.s.quickMark) return it;
+        const old = oldOf(i);
+        if (old && !sameDetail(old.s, it.s)) return { s: list[i], checked: false, off: true };
+        if (old && old.s.quickMark && old.checked && old.off === false) return it;
+        return { ...it, checked: false, off: true };
+      }));
       setPhase('review');
     } catch (e) {
       // 취소한 요청은 어떤 오류로 끝나든 화면을 바꾸지 않는다 — cancelAnalysis가 이미 이전 화면으로 돌렸고,
@@ -166,7 +281,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   if (phase === 'compose' || phase === 'error') {
     return (
       <div className="rs-box">
-        <div className="rs-setup-title">말로 입력</div>
+        <div className="rs-setup-title">{title}</div>
         <textarea
           ref={textRef}
           className="tp-textarea"
@@ -269,6 +384,9 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
     </div>
   );
 
+  const autoNote = <QuickAutoNote batches={quick.batches} onUndo={quick.undoAll} />;
+  const hasAuto = quick.batches.length > 0;
+
   // review — 한 건
   if (items.length === 1) {
     const s = items[0].s;
@@ -277,6 +395,8 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
         <div className="rs-review-title">
           <b>이렇게 입력하시겠습니까?</b>
           <SaidSoFar text={text} followUps={followUps} />
+          {autoNote}
+          {s.reviewReason && <span className="quick-reason">확인이 필요한 이유: {s.reviewReason}</span>}
         </div>
         {modelNote && <div className="rs-model-note">{modelNote}</div>}
         {restoreNote}
@@ -299,8 +419,9 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
   return (
     <div className="rs-box rs-review">
       <div className="rs-review-title">
-        <b>{items.length}건으로 정리했어요</b>
+        <b>{hasAuto ? `확인이 필요한 ${items.length}건이에요` : `${items.length}건으로 정리했어요`}</b>
         <SaidSoFar text={text} followUps={followUps} />
+        {autoNote}
       </div>
       {modelNote && <div className="rs-model-note">{modelNote}</div>}
       {restoreNote}
@@ -312,6 +433,7 @@ export default function TextPanel({ db, onApply, onBulkAdd, onClose, onSetup }) 
             db={db}
             item={it}
             methods={methods}
+            subtitle={it.s.reviewReason ? [it.s.date, it.s.eventTitle, it.s.reviewReason].filter(Boolean).join(' · ') : undefined}
             // 다 채워진 건의 체크를 끈 것(off)은 덧붙여 다시 정리해도 끈 채로 둔다
             onToggle={checked => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked, off: !checked } : x)))}
             onPatch={patch => updateItem(idx, patch)}

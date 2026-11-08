@@ -19,6 +19,8 @@ vi.mock('../ReceiptPanel', () => ({
     </div>
   ),
 }));
+// 말로 입력은 정리하는 중으로 머문다 (AI 응답은 TextPanel 테스트에서)
+vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(() => new Promise(() => {})), UNCLEAR: 'unclear' }));
 vi.mock('../AISettingsForm', () => ({
   default: ({ onSaved, onCancel }) => (
     <div className="fake-settings">
@@ -63,6 +65,19 @@ const receiptFile = () => container.querySelector('.fake-file')?.textContent ?? 
 const receiptSize = () => container.querySelector('.fake-size')?.textContent ?? null;
 const PASTE_BUTTON = '🖼️ 캡처한 영수증 붙여넣기';
 const clipboardImage = (bytes = 2) => ({ types: ['image/png'], getType: async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' }) });
+const openQuick = () => click(container.querySelector('.ai-entry-main'));
+const setValue = (el, value) => act(() => {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
+/** AI 입력 상자에 글을 넣고 정리한다 — 카드 문자면 카드 문자 화면, 아니면 말로 입력 화면으로 간다 */
+async function submitQuick(text) {
+  await openQuick();
+  await setValue(container.querySelector('.quick-box textarea'), text);
+  await click(button('정리하기'));
+}
+// 처음 보는 가게라 바로 넣지 않고 카드 문자 화면에서 확인받는다
+const NEW_SHOP_SMS = '[Web발신]\n신한카드(1234)승인 홍*동 12,500원(일시불)11/08 12:34 처음가본가게 누적1,234,567원';
 
 /** 붙여넣기 이벤트를 target에서 보낸다(문서까지 올라간다). 기본 붙여넣기를 막았으면 true */
 async function paste({ images = [], text = '', target = container } = {}) {
@@ -97,14 +112,24 @@ test('글 붙여넣기는 가로채지 않는다 — 엑셀처럼 글과 그림�
   expect(receiptFile()).toBeNull();
 });
 
+test('AI 입력 상자에서 붙여넣은 캡처는 영수증으로 읽는다', async () => {
+  await render();
+  await openQuick();
+  expect(container.querySelector('.quick-box')).not.toBeNull();
+  expect(await paste({ images: [png(7)] })).toBe(true);
+  expect(receiptSize()).toBe('7');
+});
+
 test('말로 입력·카드 문자·AI 설정 화면에서는 붙여넣기를 가로채지 않는다', async () => {
   await render();
-  await click(button('💬말로 입력'));
+  await submitQuick('점심 김치찌개 9천원');
+  expect(container.querySelector('.rs-analyzing')).not.toBeNull();   // 말로 입력이 바로 정리하는 중
+  expect(container.querySelector('.ai-entry-bar')).toBeNull();
   expect(await paste({ images: [png()] })).toBe(false);
-  await click(button('닫기') || [...container.querySelectorAll('button')].find(b => /닫기|✕/.test(b.textContent)));
 
   await render(1);
-  await click(button('💳카드 문자'));
+  await submitQuick(NEW_SHOP_SMS);
+  expect(container.textContent).toContain('처음가본가게');
   expect(await paste({ images: [png()] })).toBe(false);
 
   await render(2);
@@ -152,7 +177,7 @@ test('다음 거래로 넘어가면(resetKey) 기다리던 캡처와 붙여넣�
   expect(container.querySelector('.ai-entry-error')).toBeNull();
 });
 
-test('붙여넣기 버튼은 막대 밖(카드 문자의 글 붙여넣기와 다른 이름)에 클립보드를 읽을 수 있을 때만 보이고, 누르면 캡처를 읽는다', async () => {
+test('붙여넣기 버튼은 막대 밖에 클립보드를 읽을 수 있을 때만 보이고, 누르면 캡처를 읽는다', async () => {
   await render();
   expect(button(PASTE_BUTTON)).toBeUndefined();
 
@@ -160,7 +185,7 @@ test('붙여넣기 버튼은 막대 밖(카드 문자의 글 붙여넣기와 다
   await render(1);
   const pasteButton = button(PASTE_BUTTON);
   expect(pasteButton.closest('.ai-entry-bar')).toBeNull();
-  expect(container.querySelectorAll('.ai-entry-bar .ai-entry-btn')).toHaveLength(3);
+  expect(container.querySelectorAll('.ai-entry-bar .ai-entry-btn')).toHaveLength(1);   // 'AI 입력' 하나 (I-022)
   await click(pasteButton);
   expect(navigator.clipboard.read).toHaveBeenCalledTimes(1);
   expect(receiptSize()).toBe('2');
@@ -172,8 +197,8 @@ test('붙여넣기 버튼을 눌렀는데 이미지가 없으면 이유를 보�
   await click(button(PASTE_BUTTON));
   expect(container.querySelector('.ai-entry-error').textContent).toContain('클립보드에 이미지가 없습니다');
   expect(receiptFile()).toBeNull();
-  await click(button('💳카드 문자'));
-  await click([...container.querySelectorAll('button')].find(b => /닫기|✕/.test(b.textContent)));
+  await openQuick();
+  await click(button('닫기'));
   expect(container.querySelector('.ai-entry-error')).toBeNull();
 });
 
@@ -182,10 +207,10 @@ test('클립보드를 읽는 동안 다른 화면으로 가면, 늦게 온 결�
   navigator.clipboard = { read: vi.fn(() => new Promise(r => { resolve = r; })) };
   await render();
   await click(button(PASTE_BUTTON));
-  await click(button('💳카드 문자'));
+  await openQuick();
   await act(async () => { resolve([clipboardImage()]); await new Promise(r => setTimeout(r, 0)); });
   expect(receiptFile()).toBeNull();
-  expect(container.querySelector('.ai-entry-bar')).toBeNull(); // 카드 문자 화면 그대로
+  expect(container.querySelector('.quick-box')).not.toBeNull(); // AI 입력 상자 그대로
 });
 
 test('마우스가 있는 기기에서는 단축키를 알려 주고(Mac은 ⌘V), 터치 기기에서는 알리지 않는다', async () => {

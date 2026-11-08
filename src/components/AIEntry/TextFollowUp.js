@@ -165,7 +165,8 @@ export function carryChoices(oldItems, suggestions) {
     if (old && old.off) item.off = true;
     return item;
   });
-  return { items, dropped: oldItems.filter((_, j) => !used.has(j)) };
+  // matched[i]: 새 건 i가 이어받은 예전 줄의 번호(-1이면 새로 나타난 건)
+  return { items, dropped: oldItems.filter((_, j) => !used.has(j)), matched: match };
 }
 
 // ── 화면 ──────────────────────────────────────────────────────

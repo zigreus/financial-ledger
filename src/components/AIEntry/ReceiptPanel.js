@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
-import { analyzeReceipt } from '../../services/receiptAssistant';
+import { analyzeReceipt, suggestionToTransaction } from '../../services/receiptAssistant';
+import { familiarity } from '../../services/quickEntry';
 import { prepareImage } from '../../services/imageUtils';
 import SuggestionDetails from './SuggestionCard';
 import './AIEntry.css';
@@ -11,15 +12,19 @@ const CONFIDENCE_LABEL = { high: '잘 읽힘', medium: '대체로 읽힘', low: 
  * 영수증 사진 → AI 분석 → "이렇게 입력하시겠습니까?" → 폼 채우기.
  * 사진 선택창은 부모(AIEntry)가 연다 — 모바일 브라우저는 사용자가 누른 순간에만 열어 주기 때문.
  * file이 바뀔 때마다 새로 분석한다.
+ * onAutoAdd가 있으면(AI 입력, I-022) 자주 넣던 가게의 분명한 영수증은 확인 없이 바로 넣는다. 아니면 확인이 필요한 이유를 보인다.
  */
-export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onSetup }) {
+export default function ReceiptPanel({ db, file, onApply, onAutoAdd, onRepick, onClose, onSetup }) {
   const [phase, setPhase] = useState('analyzing'); // analyzing | review | error
   const [image, setImage] = useState(null);
   const [suggestion, setSuggestion] = useState(null);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
   const [modelNote, setModelNote] = useState(''); // 고른 모델이 붐벼 다른 모델이 대신 읽었을 때
+  const [reviewReason, setReviewReason] = useState(''); // 바로 넣지 않고 확인받는 이유
   const abortRef = useRef(null);
+  const autoAddRef = useRef(onAutoAdd);
+  autoAddRef.current = onAutoAdd;
   const dbRef = useRef(db);
   dbRef.current = db;
 
@@ -35,6 +40,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
     setProgress('');
     setModelNote('');
     setSuggestion(null);
+    setReviewReason('');
     setPhase('analyzing');
     try {
       const s = await analyzeReceipt({
@@ -49,6 +55,14 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
         },
       });
       if (controller.signal.aborted) return;
+      if (autoAddRef.current) {
+        const f = familiarity(dbRef.current, s, 'receipt');
+        if (f.familiar) {
+          autoAddRef.current([suggestionToTransaction(dbRef.current, s)], { remaining: 0 });
+          return; // 바로 넣었다 — 입력 창이 닫힌다
+        }
+        setReviewReason(f.reason);
+      }
       setSuggestion(s);
       setPhase('review');
     } catch (e) {
@@ -69,6 +83,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
     // 새 사진 — 이전 사진·결과를 지운다 (준비에 실패했을 때 '다시 시도'가 이전 사진을 보내지 않도록)
     setImage(null);
     setSuggestion(null);
+    setReviewReason('');
     setError('');
     setProgress(''); // 이전 사진의 "붐벼서 다시 시도하는 중…"이 새 사진을 준비하는 동안 남지 않게
     setModelNote('');
@@ -131,6 +146,7 @@ export default function ReceiptPanel({ db, file, onApply, onRepick, onClose, onS
         <div className="rs-review-title">
           <b>이렇게 입력하시겠습니까?</b>
           <span>{s.merchant || '가맹점 미확인'} · {CONFIDENCE_LABEL[s.confidence]}</span>
+          {reviewReason && <span className="quick-reason">확인이 필요한 이유: {reviewReason}</span>}
         </div>
       </div>
       {modelNote && <div className="rs-model-note">{modelNote}</div>}
