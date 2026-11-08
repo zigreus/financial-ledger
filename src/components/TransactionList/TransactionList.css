@@ -539,3 +539,62 @@
   cursor: pointer;
   padding: 0 2px;
 }
+
+/* ── 첫 거래 안내 · 새 가계부 (F-3, I-019) ─────────────────── */
+.first-entry {
+  margin: 24px 16px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.first-entry h3 { font-size: 17px; }
+.first-entry-lead { font-size: 14px; line-height: 1.6; color: var(--text-muted); }
+.first-entry-steps {
+  list-style: none;
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.first-entry-steps li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.first-entry-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.first-entry-steps li span { color: var(--text-muted); }
+.first-entry-warn { font-size: 13px; line-height: 1.5; color: var(--danger); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.first-entry-tip { font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.first-entry-link {
+  background: none;
+  border: none;
+  padding: 4px;
+  font-size: 14px;
+  color: var(--primary);
+  cursor: pointer;
+}

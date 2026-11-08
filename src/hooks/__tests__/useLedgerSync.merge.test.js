@@ -8,7 +8,8 @@ import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import { createMemoryStorage } from '../../services/storage/memory';
 import { ConflictError, ReauthRedirectError } from '../../services/storage/provider';
-import { createDatabase, addTransaction, addPaymentMethod, SCHEMA_VERSION } from '../../services/dbManager';
+import { createDatabase, addTransaction, addPaymentMethod, applyStarterSetup, getPaymentMethods, getBudgetCategories, SCHEMA_VERSION } from '../../services/dbManager';
+import { STARTER_TEMPLATES } from '../../data/starterTemplates';
 import { attachChangeLog, getChangeLog, stampWriteId, savePending } from '../../services/changeLog';
 import useLedgerSync from '../useLedgerSync';
 
@@ -587,4 +588,45 @@ describe('저장에 실패한 뒤 다시 시도하는 간격 (B-089)', () => {
     await act(async () => { await new Promise(r => setTimeout(r, 2300)); });
     expect(write).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('합칠 때 들어가지 않은 내 행을 가리키는 수정 (B-091)', () => {
+  test('다른 기기도 같은 이름으로 만든 결제수단을 이 기기에서 숨겼다면, 합칠 때 같은 번호의 다른 결제수단을 숨기지 않는다', async () => {
+    const { ref, unmount } = await opened();
+    // 다른 기기가 먼저 '우리카드'(id 1)·'토스'(id 2)를 만들어 저장했다
+    const { db: other } = createDatabase(SQL, storage.current());
+    addPaymentMethod(other, '우리카드');
+    addPaymentMethod(other, '토스');
+    storage.replace(other.export());
+
+    // 이 기기는 옛 파일 위에서 '토스'(여기서는 id 1)를 만들고 숨겼다
+    await act(async () => {
+      addPaymentMethod(ref.current.db, '토스');
+      ref.current.db.run('UPDATE payment_methods SET is_hidden = 1 WHERE id = ?', [1]);
+    });
+    expect(await saveNowResult(ref)).toBe(true);
+    const remote = new SQL.Database(storage.current());
+    expect(remote.exec('SELECT name, is_hidden FROM payment_methods ORDER BY id')[0].values).toEqual([['우리카드', 0], ['토스', 0]]);
+    expect(ref.current.notice.text).toBe('다른 기기에서 바뀐 내용을 받아 합쳤습니다 (이미 있는 1건 제외 · 먼저 바뀐 내용과 맞지 않는 이 기기 변경 일부는 넣지 않았습니다)');
+    unmount();
+  });
+});
+
+test('지난 세션에서 오프라인으로 고른 첫 실행 기본값은, 그 사이 다른 기기가 꾸민 가계부에 넣지 않고 그렇다고 알린다 (B-091)', async () => {
+  storage = createMemoryStorage({ accountKey: 'me', bytes: createDatabase(SQL, null).db.export() });
+  const { db: last } = createDatabase(SQL, storage.current());
+  attachChangeLog(last);
+  applyStarterSetup(last, STARTER_TEMPLATES[0]);
+  savePending('me', { entries: getChangeLog(last).entries, inFlight: [] });
+  const { db: other } = createDatabase(SQL, storage.current());
+  addPaymentMethod(other, '우리카드');
+  storage.replace(other.export());
+
+  const { ref, unmount } = await opened();
+  await waitSave();
+  expect(getPaymentMethods(ref.current.db)).toEqual(['우리카드']);
+  expect(getBudgetCategories(ref.current.db)).toEqual([]);
+  expect(ref.current.notice.text).toContain('먼저 바뀐 내용과 맞지 않는 이 기기 변경 일부는 넣지 않았습니다');
+  expect(getPaymentMethods(new SQL.Database(storage.current()))).toEqual(['우리카드']);
+  unmount();
 });

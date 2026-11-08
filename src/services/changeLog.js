@@ -187,30 +187,69 @@ function remapParams(entry, remap) {
   });
 }
 
+/** 이 문장이 대상 DB에 들어가지 않은 행(gone: { 테이블 → Set(옛 id) })을 id·참조 컬럼으로 가리키는지 (B-091) */
+function refersToGone(entry, gone) {
+  if (!gone.size || !Array.isArray(entry.params)) return false;
+  const { table, cols } = paramColumns(entry.sql);
+  return entry.params.some((v, i) => {
+    const col = cols[i];
+    if (!col) return false;
+    const target = col === 'id' ? table : FK_COLUMNS[col];
+    return !!(target && gone.get(target)?.has(v));
+  });
+}
+
 /**
  * 기록을 다른 DB(보통 OneDrive에서 새로 받은 최신 DB)에 다시 실행한다.
  * 같은 값을 양쪽에서 추가해 UNIQUE 제약에 걸리는 문장은 건너뛴다(이미 반영된 것으로 본다).
- * 반환: { entries: 대상 DB 기준으로 id를 고친 기록, skipped }
+ * 이 기기에서는 넣었지만 대상 DB에는 들어가지 않은 행(UNIQUE로 건너뜀, 조건부 INSERT…SELECT가 0행)은 기억해 두고,
+ * 그 행을 id나 참조 컬럼으로 가리키는 뒤 문장(수정·삭제·딸린 행, 딸린 행의 딸린 행까지)도 건너뛴다 — 옛 id 그대로 실행하면
+ * 대상 DB에서 같은 번호를 가진 다른 기기의 행을 고치거나 지운다 (B-091). 건너뛴 문장은 이어 갈 기록에도 남기지 않는다.
+ * 반환: { entries: 대상 DB 기준으로 id를 고친 기록, skipped: 이미 있어 건너뛴 문장(UNIQUE·OR IGNORE),
+ *        dropped: 대상 DB에 맞지 않아 뺀 문장(조건부 INSERT…SELECT가 0행, 들어가지 않은 행을 가리킴) }
  */
 export function replayChanges(targetDb, entries) {
   const remap = new Map();
+  const gone = new Map();
+  const markGone = (table, id) => {
+    if (!gone.has(table)) gone.set(table, new Set());
+    gone.get(table).add(id);
+  };
   const rewritten = [];
   let skipped = 0;
+  let dropped = 0;
   const raw = Object.getPrototypeOf(targetDb);
 
   raw.run.call(targetDb, 'SAVEPOINT replay_changes');
   try {
     entries.forEach(entry => {
+      if (refersToGone(entry, gone)) {
+        dropped += 1;
+        // 건너뛴 문장이 행을 넣는 것이었으면 그 행도 없는 것이다 — 그 행을 가리키는 더 뒤 문장도 건너뛴다
+        if (entry.insertTable && entry.insertId != null) markGone(entry.insertTable, entry.insertId);
+        return;
+      }
       const params = remapParams(entry, remap);
       try {
         if (entry.method === 'exec') raw.exec.call(targetDb, entry.sql, params);
         else raw.run.call(targetDb, entry.sql, params);
       } catch (e) {
-        if (/UNIQUE constraint failed/i.test(String(e.message || e))) { skipped += 1; return; }
+        if (/UNIQUE constraint failed/i.test(String(e.message || e))) {
+          skipped += 1;
+          if (entry.insertTable && entry.insertId != null) markGone(entry.insertTable, entry.insertId);
+          return;
+        }
         throw e;
       }
       const next = { ...entry, params };
-      if (entry.insertTable && entry.insertId != null && targetDb.getRowsModified() > 0) {
+      if (entry.insertTable && entry.insertId != null && targetDb.getRowsModified() === 0) {
+        // 이 기기에서는 넣었지만 대상 DB에는 들어가지 않았다 — OR IGNORE는 같은 행이 이미 있는 것, 조건부 INSERT…SELECT는 조건이 맞지 않은 것
+        if (/^\s*INSERT\s+OR\s+IGNORE\b/i.test(entry.sql)) skipped += 1;
+        else dropped += 1;
+        markGone(entry.insertTable, entry.insertId);
+        return;
+      }
+      if (entry.insertTable && entry.insertId != null) {
         const newId = raw.exec.call(targetDb, 'SELECT last_insert_rowid()')[0].values[0][0];
         if (newId !== entry.insertId) {
           if (!remap.has(entry.insertTable)) remap.set(entry.insertTable, new Map());
@@ -226,7 +265,7 @@ export function replayChanges(targetDb, entries) {
     raw.run.call(targetDb, 'RELEASE replay_changes');
     throw e;
   }
-  return { entries: rewritten, skipped };
+  return { entries: rewritten, skipped, dropped };
 }
 
 // ── 동기화 표식 ──────────────────────────────────────────────────

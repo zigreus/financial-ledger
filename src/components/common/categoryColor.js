@@ -12,6 +12,15 @@ export const DEFAULT_CATEGORY_COLORS = {
   '여행/문화': '#F0A500',
   '반려동물': '#A3C4F3',
   '기타': '#AAB7B8',
+  // 첫 실행 템플릿(src/data/starterTemplates.js)의 카테고리 — 이름에서 만든 색끼리 비슷하게 겹치지 않게 정해 둔다 (I-019)
+  '교통': '#5C7CFA',
+  '주거/통신': '#A1887F',
+  '생활': '#9CCC65',
+  '자기계발': '#FF8A65',
+  '경조사/선물': '#F06292',
+  '금융': '#607D8B',
+  '용돈': '#7E57C2',
+  '육아': '#F8BBD0',
 };
 
 const EMPTY_COLOR = '#AAB7B8';

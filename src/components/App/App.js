@@ -13,12 +13,15 @@ import CardStatementModal from '../CardStatement/CardStatementModal';
 import CalendarView from '../CalendarView/CalendarView';
 
 import AccountManagement from '../AccountManagement/AccountManagement';
-import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction } from '../../services/dbManager';
+import Onboarding from '../Onboarding/Onboarding';
+import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
 import { createOneDriveStorage } from '../../services/storage/oneDrive';
 import { resolveDeviceMember } from '../../services/deviceMember';
+import { isOnboardingPostponed, postponeOnboarding } from '../../services/onboardingPrefs';
+import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
@@ -47,6 +50,7 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showCardCheck, setShowCardCheck] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false); // 첫 실행 안내 (F-3)
   const [editingTx, setEditingTx] = useState(null);
   const [defaultFormDate, setDefaultFormDate] = useState(null);
   const [toast, setToast] = useState('');
@@ -68,7 +72,7 @@ function App() {
   const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
   const navRef = React.useRef({
-    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, editingTx: null,
+    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, showOnboarding: false, editingTx: null,
     summaryTab: 'monthly', summaryDrilldown: null,
     settingsSection: 'payment',
     settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
@@ -90,6 +94,7 @@ function App() {
     if ('showImport' in s) setShowImport(s.showImport);
     if ('showCardCheck' in s) setShowCardCheck(s.showCardCheck);
     if ('showEventForm' in s) setShowEventForm(s.showEventForm);
+    if ('showOnboarding' in s) setShowOnboarding(s.showOnboarding);
     if ('editingTx' in s) setEditingTx(s.editingTx);
     if ('summaryTab' in s) setSummaryTab(s.summaryTab);
     if ('summaryDrilldown' in s) setSummaryDrilldown(s.summaryDrilldown);
@@ -179,6 +184,53 @@ function App() {
     historyInitialized.current = true;
     window.history.replaceState(navRef.current, '');
   }, [db]);
+
+  // 첫 실행 안내 (F-3) — 처음 불러온 가계부가 비어 있으면(카테고리·결제수단·거래가 하나도 없음) 한 번 연다.
+  // 이 기기에서 '나중에'를 골랐으면 저절로 열지 않는다. 거래내역 빈 화면에서 언제든 다시 열 수 있다
+  const live = useDbSnapshot(db, dataVersion);
+  const blankLedger = useMemo(() => !!live.db && isBlankLedger(live.db), [live]);
+  const accountKey = storage?.accountKey || '';
+  const onboardingCheckedRef = React.useRef(false);
+  useEffect(() => {
+    if (!db) { onboardingCheckedRef.current = false; return; }
+    if (onboardingCheckedRef.current) return;
+    onboardingCheckedRef.current = true;
+    if (blankLedger && !isOnboardingPostponed(accountKey)) navigate({ showOnboarding: true });
+  }, [db, blankLedger, accountKey, navigate]);
+
+  const handleOnboardingDone = useCallback((counts) => {
+    setShowOnboarding(false);
+    window.history.back();
+    showToast(`✓ 카테고리 ${counts.categories}개·결제수단 ${counts.paymentMethods}개를 넣었습니다`);
+  }, [showToast]);
+
+  const handleOnboardingLater = useCallback(() => {
+    postponeOnboarding(accountKey);
+    setShowOnboarding(false);
+    window.history.back();
+  }, [accountKey]);
+
+  const handleOnboardingClose = useCallback(() => {
+    setShowOnboarding(false);
+    window.history.back();
+  }, []);
+
+  // 안내가 열려 있다고 기록된 채 가계부가 비지 않게 되면(가져오기를 마치고 돌아옴, 다른 기기의 변경이 합쳐짐) 그 기록을 지운다 —
+  // 보이지 않는 안내가 뒤로가기 한 번을 삼키거나, 이후 화면 이동마다 따라붙지 않게. 보이던 안내가 닫혔으면 이유를 알린다
+  const onboardingVisibleRef = React.useRef(false);
+  useEffect(() => {
+    if (showOnboarding && !blankLedger) {
+      setShowOnboarding(false);
+      if (window.history.state?.showOnboarding) {
+        window.history.back(); // 지금 항목이 안내를 연 기록이면 물린다 — 앞 항목(목록)으로 돌아간다
+      } else {
+        navRef.current = { ...navRef.current, showOnboarding: false };
+        window.history.replaceState(navRef.current, '');
+      }
+      if (onboardingVisibleRef.current) showToast('다른 기기에서 카테고리·결제수단을 만들어 첫 실행 안내를 닫았습니다');
+    }
+    onboardingVisibleRef.current = showOnboarding && blankLedger;
+  }, [showOnboarding, blankLedger, showToast]);
 
   // 저장은 자동으로 된다 — 여기서는 DB에 반영하고 결과만 알린다.
   // 저장 실패는 헤더의 '저장 안 됨' 표시와 오류 배너로 따로 보여준다 (B-003).
@@ -383,6 +435,14 @@ function App() {
             onDelete={handleDelete}
             onChanged={() => saveWithToast()}
             onOpenImport={() => navigate({ showImport: true })}
+            onOpenOnboarding={() => navigate({ showOnboarding: true })}
+            onOpenSettings={(section) => {
+              navigate({
+                activeTab: 'settings', settingsSection: section,
+                settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+              });
+              document.querySelector('.app-main')?.scrollTo(0, 0);
+            }}
             onOpenCardCheck={() => navigate({ showCardCheck: true })}
             onOpenAccount={(id) => {
               navigate({ activeTab: 'account', accountDrilldown: { id }, accountDetailTab: 'transactions' });
@@ -530,6 +590,18 @@ function App() {
           dataVersion={dataVersion}
           onChanged={() => saveNow()}
           onClose={() => { setShowCardCheck(false); window.history.back(); }}
+        />
+      )}
+
+      {/* 첫 실행 안내 — 가계부가 비어 있을 때만 (기본값을 넣으면 바로 닫힌다) */}
+      {showOnboarding && blankLedger && (
+        <Onboarding
+          db={db}
+          accountLabel={accounts[0]?.username ? `${accounts[0].username}의 OneDrive` : ''}
+          onDone={handleOnboardingDone}
+          onClose={handleOnboardingClose}
+          onLater={handleOnboardingLater}
+          onOpenImport={() => navigate({ showOnboarding: false, showImport: true })}
         />
       )}
 

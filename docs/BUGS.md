@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-091, I-019
+다음 번호: B-092, I-021
 
 ## 요약표
 
@@ -106,6 +106,7 @@
 | B-088 | ✅ | 높음 | 저장·동기화 | 업로드 응답을 못 받은 뒤 다시 저장하면 같은 입력이 두 번 들어감 |
 | B-089 | ✅ | 낮음 | 저장·동기화 | 연결이 끊긴 동안 0.4초마다 저장을 끝없이 다시 시도 |
 | B-090 | ✅ | 낮음 | 저장·동기화 | 불러오는 사이 이 기기 저장이 성공하면 옛 파일로 바꿔 방금 입력이 화면에서 사라짐 |
+| B-091 | ✅ | 중간 | 저장·동기화 | 합칠 때 들어가지 않은 내 행을 가리키는 수정이 같은 번호의 다른 기기 행을 고치거나 지움 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -124,6 +125,8 @@
 | I-016 | ✅ | - | 계좌 | 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임 |
 | I-017 | ✅ | - | AI | 말로 입력에서 정보가 모자라면 실패만 뜨고, 무엇이 빠졌는지 알려 주거나 덧붙여 말할 수 없음 |
 | I-018 | ✅ | - | 저장·동기화 | 저장소 추상화(StorageProvider) — 동기화가 OneDrive 함수를 직접 불러 다른 드라이브를 붙일 수 없음 (ROADMAP F-2) |
+| I-019 | ✅ | - | 첫 실행 | 새 가계부에 카테고리·결제수단이 없어 첫 거래를 입력할 수 없음 — 가구 유형별 기본값과 첫 거래 안내 (ROADMAP F-3) |
+| I-020 | ⬜ | - | 입력 | 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음 |
 
 
 ## 상세
@@ -938,6 +941,15 @@
 - 해결: 불러오기 바퀴를 시작할 때의 바탕 버전과 교체 직전 버전이 다르면 바꾸지 않고 처음부터 다시 확인하며(이미 최신이면 받지 않음), 기다린 저장이 실패하면 그 안내를 덮지 않고 멈춘다.
 - 파일: src/hooks/useLedgerSync.js, src/hooks/__tests__/useLedgerSync.merge.test.js
 
+### B-091 합칠 때 들어가지 않은 내 행을 가리키는 수정이 같은 번호의 다른 기기 행을 고치거나 지움
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 중간
+- 영역: 저장·동기화
+- 문제: 양쪽에서 같은 이름의 결제수단을 만들었거나(UNIQUE로 건너뜀) 첫 실행 기본값이 꾸며진 파일에서 0행이 되면, 그 행을 id로 숨기거나 지운 뒤 기록이 합칠 때 옛 id 그대로 실행돼 같은 번호를 가진 다른 기기의 결제수단·카테고리·일정을 고치거나 지운다.
+- 원인: replayChanges가 새로 넣은 행의 id만 바꿔 끼우고, 대상 DB에 들어가지 않은 행은 기억하지 않아 그 행을 가리키는 뒤 문장을 그대로 실행했다(F-3 리뷰에서 찾음).
+- 해결: 다시 실행 때 들어가지 않은 행(UNIQUE로 건너뜀·0행 INSERT)을 기억해, 그 행을 id나 참조 컬럼(FK_COLUMNS)으로 가리키는 뒤 문장(딸린 행의 딸린 행까지)은 건너뛰고 이어 갈 기록에서도 빼며, 병합 안내는 '이미 있는 N건'과 '넣지 않은 변경'을 나눠 알린다.
+- 파일: src/services/changeLog.js, src/hooks/useLedgerSync.js(병합 안내), src/services/__tests__/changeLog.test.js, src/services/__tests__/onboarding.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -1081,3 +1093,19 @@
 - 원인: 저장소의 읽기·조건부 저장·백업·설정 파일 동작을 묶은 경계(계약)가 없었다.
 - 해결: services/storage/provider.js에 read→{bytes,version}·write(bytes,version)(버전이 다르면 ConflictError)·백업·설정 파일 계약을 정하고, OneDrive 구현(storage/oneDrive.js)은 기존 eTag 코드를 옮기기만 했으며, 백업 이름·정리 규칙은 backups.js로 나누고, useLedgerSync·aiSettingsSync는 App이 만든 저장소만 받게 했다. 메모리 가짜(storage/memory.js)로 병합 시나리오 테스트를, 가짜 Graph 서버로 두 구현의 계약 테스트를 돌린다(동작 변경 없음).
 - 파일: src/services/storage/provider.js(새), src/services/storage/oneDrive.js(oneDriveService.js에서 옮김), src/services/storage/memory.js(새), src/services/backups.js(oneDriveBackup.js에서 옮김), src/hooks/useLedgerSync.js, src/services/aiSettingsSync.js, src/components/App/App.js, src/services/__tests__/storage.test.js(새), src/services/__tests__/backups.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js(새), src/hooks/__tests__/useLedgerSync.backup.test.js, src/services/__tests__/aiSettingsSync.test.js, src/components/AIEntry/__tests__/AISettingsForm.test.js, AGENTS.md, CLAUDE.md
+
+### I-019 새 가계부에 카테고리·결제수단이 없어 첫 거래를 입력할 수 없음 — 가구 유형별 기본값과 첫 거래 안내
+- 상태: ✅ 해결 (2026-11-08)
+- 영역: 첫 실행
+- 문제: 새 사용자는 첫 화면이 비어 있고, 카테고리·세부카테고리·결제수단을 설정에서 직접 만들어야 첫 거래를 저장할 수 있어 시작하다 그만두기 쉽다.
+- 원인: 새 DB에 기본 마스터 데이터가 없고(createDatabase는 넣지 않음), 처음 쓰는 사람을 위한 안내가 없었다.
+- 해결: 처음 불러온 가계부가 비어 있으면 첫 실행 안내(새 가계부가 만들어진 계정 표시)를 열어 1인 가구·맞벌이·아이 있는 집 템플릿을 고르고 다듬게 한 뒤 확정할 때만 applyStarterSetup으로 한 번에 넣고(병합 때 다시 실행돼도 그 파일이 비어 있을 때만 넣어 쓰던 가계부에는 넣지 않음, '나중에'는 기기에만 기억), 거래가 없으면 거래내역에 첫 거래 입력 3단계 안내와 모자란 설정 바로가기를 보여 준다.
+- 파일: src/data/starterTemplates.js(새), src/services/db/masterData.js, src/services/onboardingPrefs.js(새), src/components/Onboarding/Onboarding.js·Onboarding.css(새), src/components/TransactionList/FirstEntryGuide.js(새), TransactionList.js·TransactionList.css, src/components/common/categoryColor.js, src/components/App/App.js, src/services/__tests__/onboarding.test.js, src/components/Onboarding/__tests__/Onboarding.test.js, src/components/App/__tests__/App.onboarding.test.js, AGENTS.md, SETUP.md
+
+### I-020 영수증·카드 명세서 이미지를 파일로만 올릴 수 있어, 캡처한 이미지를 바로 붙여넣을 수 없음
+- 상태: ⬜ 대기 (I-019 다음 작업)
+- 영역: 입력
+- 문제: 영수증 사진(AI 빠른 입력)과 카드 명세서 대조는 파일 고르기로만 이미지를 받아, 화면을 캡처한 뒤 파일로 저장했다가 다시 골라야 한다.
+- 원인: 이미지 입력이 <input type="file">뿐이고 클립보드 붙여넣기(paste 이벤트)를 받지 않는다.
+- 해결: (예정) 캡처 직후 Ctrl+V·길게 눌러 붙여넣기로 클립보드 이미지를 받아 파일을 고른 것과 같은 흐름으로 올린다.
+- 파일: src/components/AIEntry/AIEntry.js, src/components/CardStatement/CardStatementModal.js

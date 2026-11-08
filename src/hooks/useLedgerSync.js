@@ -18,6 +18,8 @@ const SAVE_DEBOUNCE_MS = 400;
 const RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000]; // 저장에 실패한 뒤 다시 시도하기까지 — 실패할수록 길게 (B-089)
 const OLD_DB_CLOSE_DELAY_MS = 30000;
 const MAX_ATTEMPTS = 5;
+// 합칠 때 최신 파일과 맞지 않아 뺀 이 기기 변경이 있을 때 덧붙이는 안내 (B-091)
+const DROPPED_NOTE = '먼저 바뀐 내용과 맞지 않는 이 기기 변경 일부는 넣지 않았습니다';
 
 /**
  * 결과를 모르는 업로드 중 실제로 이 파일에 닿은 것 — 그 업로드의 변경(앞에서 n개)은 이미 들어 있다. 없으면 null.
@@ -161,11 +163,15 @@ export default function useLedgerSync({ storage }) {
     if (landed) entries = entries.slice(landed.n);
     inFlightRef.current = []; // 이 파일이 새 바탕이다
 
-    const { entries: rewritten, skipped } = replayChanges(fresh, entries);
+    const { entries: rewritten, skipped, dropped } = replayChanges(fresh, entries);
     attach(fresh, rewritten);
     swapDb(fresh, version);
     persist();
-    notify(`다른 기기에서 바뀐 내용을 받아 합쳤습니다${skipped ? ` (이미 있는 ${skipped}건 제외)` : ''}`);
+    const notes = [];
+    if (skipped) notes.push(`이미 있는 ${skipped}건 제외`);
+    // 문장 수라 숫자는 보이지 않는다(예: 다른 기기가 먼저 꾸민 가계부에는 이 기기에서 고른 첫 실행 기본값을 넣지 않음, B-091)
+    if (dropped) notes.push(DROPPED_NOTE);
+    notify(`다른 기기에서 바뀐 내용을 받아 합쳤습니다${notes.length ? ` (${notes.join(' · ')})` : ''}`);
   }, [storage, attach, swapDb, persist, notify]);
 
   /** 저장 안 된 변경을 저장소에 저장한다. 진행 중이면 그 저장에 합류한다. 성공 여부(boolean)를 돌려준다. */
@@ -324,11 +330,16 @@ export default function useLedgerSync({ storage }) {
 
         // ↓ 여기부터 교체까지는 동기 실행 — 그 사이 새 쓰기가 끼어들 수 없다
         let restored = [];
+        let restoredDropped = 0;
         if (!hadDb) {
           // 이전 세션에서 저장 못 한 변경 되살리기 (재로그인 리다이렉트·탭 종료)
           const pending = loadPending(accountKeyRef.current);
           const entries = takeRestorable(fresh, pending);
-          if (entries.length) restored = replayChanges(fresh, entries).entries;
+          if (entries.length) {
+            const replayed = replayChanges(fresh, entries);
+            restored = replayed.entries;
+            restoredDropped = replayed.dropped;
+          }
           else if (pending) clearPending(accountKeyRef.current);
         } else {
           // 불러오는 동안 생긴 변경은 새 DB에 다시 실행해 이어 간다
@@ -358,7 +369,7 @@ export default function useLedgerSync({ storage }) {
 
         if (auto.count > 0) notify(`✓ 정기지출 ${auto.count}건 자동 등록됨 (${auto.months.join(', ')})`);
         if (restored.length) {
-          if (!hadDb) notify(`저장되지 않았던 변경 ${restored.length}건을 되살려 저장합니다`);
+          if (!hadDb) notify(`저장되지 않았던 변경 ${restored.length}건을 되살려 저장합니다${restoredDropped ? ` (${DROPPED_NOTE})` : ''}`);
           saveNow();
         }
         return;

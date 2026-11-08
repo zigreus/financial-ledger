@@ -1,0 +1,145 @@
+/* ── 첫 실행 안내 (F-3, I-019) ─────────────────────────────── */
+.onboarding { overscroll-behavior: contain; }
+
+.onb-body {
+  padding: 16px 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.onb-lead {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.onb-templates { display: flex; flex-direction: column; gap: 10px; }
+
+.onb-template {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.onb-template:hover, .onb-template:focus-visible { border-color: var(--primary); }
+
+.onb-template-icon { font-size: 28px; line-height: 1; }
+.onb-template-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.onb-template-body strong { font-size: 16px; }
+.onb-template-desc { font-size: 13px; color: var(--text); }
+.onb-template-cats { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+.onb-alt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+.onb-link {
+  background: none;
+  border: none;
+  padding: 8px;
+  font-size: 14px;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.onb-section h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.onb-count { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+
+.onb-cat {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.onb-cat:last-child { border-bottom: none; }
+.onb-cat.off .onb-cat-head { color: var(--text-muted); }
+
+.onb-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.onb-cat-head input { width: 18px; height: 18px; }
+.onb-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+.onb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.onb-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: line-through;
+}
+.onb-chip.on {
+  background: #EFF6FF;
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  text-decoration: none;
+}
+.onb-chip:disabled { cursor: not-allowed; opacity: .6; }
+
+.onb-add { display: flex; gap: 8px; margin-top: 10px; }
+.onb-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+}
+.onb-add .btn-secondary { padding: 10px 16px; }
+.onb-add .btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
+
+.onb-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+
+.onb-account {
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+  word-break: break-all;
+}
+
+.onb-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.onb-problem {
+  font-size: 13px;
+  color: var(--danger);
+  line-height: 1.5;
+}
+.onb-actions { display: flex; gap: 8px; }

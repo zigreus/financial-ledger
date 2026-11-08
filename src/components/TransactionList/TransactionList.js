@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, MEMBER_NONE } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, MEMBER_NONE, isBlankLedger, getAllSubCategories } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
 import BalanceAlertBanner from './BalanceAlertBanner';
+import FirstEntryGuide from './FirstEntryGuide';
 import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
@@ -14,7 +15,7 @@ import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 const EMPTY_FILTERS = { month: '', payment_method: '', budget_category: '', member: '', search: '' };
 
-function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount }) {
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenOnboarding, onOpenSettings }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
   const [showIssueOnly, setShowIssueOnly] = useState(false);
@@ -89,6 +90,18 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   }, [live]);
 
   const budgetCategories = useMemo(() => getAllBudgetCategories(live.db), [live]);
+  // 새 가계부(카테고리·결제수단·거래가 하나도 없음)면 빈 화면에서 첫 실행 안내를 연다 (F-3)
+  const blankLedger = useMemo(() => isBlankLedger(live.db), [live]);
+  // 거래 입력 폼에서 고를 것이 없는 항목 — 결제수단, 카테고리, (보이는 카테고리에 딸린) 세부카테고리 (F-3)
+  const missingForEntry = useMemo(() => {
+    const visibleCats = budgetCategories.filter(c => !c.is_hidden).map(c => c.name);
+    const subs = getAllSubCategories(live.db).filter(s => !s.is_hidden);
+    return [
+      !paymentMethods.some(m => !m.is_hidden) && '결제수단',
+      !visibleCats.length && '카테고리',
+      visibleCats.length > 0 && !subs.some(s => visibleCats.includes(s.budget_category)) && '세부카테고리',
+    ].filter(Boolean);
+  }, [live, paymentMethods, budgetCategories]);
   const members = useMemo(() => getMemberNames(live.db), [live]);
   // 계좌 잔액이 위험선 아래로 내려가는 날 (B-066)
   const balanceAlerts = useMemo(() => getBalanceAlerts(live.db), [live]);
@@ -393,7 +406,17 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
       {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
 
       {/* 거래 목록 */}
-      {transactions.length === 0 ? (
+      {transactions.length === 0 && !hasFilters ? (
+        // 거래가 하나도 없다 — 새 가계부면 기본값 넣기, 아니면 첫 거래 입력 안내 (F-3)
+        <FirstEntryGuide
+          blank={blankLedger}
+          missing={missingForEntry}
+          onOpenOnboarding={onOpenOnboarding}
+          onOpenImport={onOpenImport}
+          onOpenSettings={onOpenSettings}
+          onAdd={onAdd}
+        />
+      ) : transactions.length === 0 ? (
         <div className="empty-state">
           <p>거래 내역이 없습니다.</p>
           <button className="btn-primary" onClick={onAdd}>+ 첫 거래 추가하기</button>

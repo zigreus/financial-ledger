@@ -27,6 +27,7 @@
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
 | `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
+| `src/data/starterTemplates.js` + `components/Onboarding` | 첫 실행 기본값(가구 유형별 카테고리·결제수단)과 안내. 빈 가계부(`isBlankLedger`)에만, 확정할 때 `applyStarterSetup`으로 한 번에 넣음 |
 | `src/components/*` | 화면 |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
 

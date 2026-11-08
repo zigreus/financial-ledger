@@ -5,6 +5,7 @@
 import initSqlJs from 'sql.js';
 import {
   createDatabase, addTransaction, addCalendarEvent, addEventCountry, withTransaction,
+  addPaymentMethod, setMasterItemHidden, getAllPaymentMethods, ensureSubCategoriesExist,
 } from '../dbManager';
 import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId, paramColumns, SYNC_LOG_KEEP,
@@ -157,4 +158,81 @@ test('백업으로 되돌린 파일에 다른 기기의 미저장 변경을 다�
   expect(skipped).toBe(0);
   expect(rows(restored, 'SELECT detail, amount FROM transactions ORDER BY id'))
     .toEqual([['백업 전', 1000], ['B 미저장', 3000]]);
+});
+
+describe('다시 실행 때 들어가지 않은 행을 가리키는 뒤 문장은 건너뛴다 (B-091)', () => {
+  const visibleMethods = (db) => getAllPaymentMethods(db).map(m => `${m.name}${m.is_hidden ? '(숨김)' : ''}`);
+
+  test('양쪽에서 같은 이름을 넣어 UNIQUE로 건너뛴 행을 숨기는 수정은, 같은 번호의 다른 행을 숨기지 않는다', () => {
+    const base = createDatabase(SQL, null).db.export();
+    const other = createDatabase(SQL, base).db;           // 다른 기기가 먼저 저장
+    addPaymentMethod(other, '우리카드');                   // id 1
+    addPaymentMethod(other, '토스');                       // id 2
+    const mine = createDatabase(SQL, base).db;
+    attachChangeLog(mine);
+    addPaymentMethod(mine, '토스');                        // 이 기기에서는 id 1
+    setMasterItemHidden(mine, 'payment_methods', 1, true); // 그 '토스'를 숨김
+
+    const merged = createDatabase(SQL, other.export()).db;
+    const { skipped, dropped, entries } = replayChanges(merged, getChangeLog(mine).entries);
+    expect(visibleMethods(merged)).toEqual(['우리카드', '토스']); // 우리카드(id 1)가 숨겨지지 않았다
+    expect(skipped).toBe(1); // '토스'는 이미 있다
+    expect(dropped).toBe(1); // 들어가지 않은 행을 숨기는 수정
+    expect(entries).toHaveLength(0); // 건너뛴 문장은 이어 갈 기록에도 남지 않는다
+  });
+
+  test('조건에 맞지 않아 0행이 된 INSERT를 가리키는 삭제·딸린 행도 건너뛰고, 상관없는 문장은 그대로 실행한다', () => {
+    const base = createDatabase(SQL, null).db.export();
+    const other = createDatabase(SQL, base).db;
+    const otherEvent = addCalendarEvent(other, { title: '다른 기기 일정', date_from: '2026-12-01', date_to: '2026-12-02', event_type: 'trip' });
+    const mine = createDatabase(SQL, base).db;
+    attachChangeLog(mine);
+    // 비어 있을 때만 넣는 일정(조건부 INSERT…SELECT) → 그 일정에 나라를 붙이고 → 거래 하나 추가
+    mine.run(`INSERT INTO calendar_events (title, date_from, date_to, event_type)
+              SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM calendar_events)`, ['내 일정', '2026-12-10', '2026-12-11', 'trip']);
+    const myEvent = mine.exec('SELECT MAX(id) FROM calendar_events')[0].values[0][0];
+    expect(myEvent).toBe(otherEvent); // 같은 번호
+    addEventCountry(mine, myEvent, '일본', 'JPY', 9.1);
+    addTransaction(mine, tx('2026-11-03', '상관없는 거래', 500));
+
+    const merged = createDatabase(SQL, other.export()).db;
+    const { skipped, dropped } = replayChanges(merged, getChangeLog(mine).entries);
+    expect(rows(merged, 'SELECT title FROM calendar_events').map(r => r[0])).toEqual(['다른 기기 일정']);
+    expect(rows(merged, 'SELECT COUNT(*) FROM event_countries')[0][0]).toBe(0); // 다른 기기 일정에 나라가 붙지 않았다
+    expect(rows(merged, 'SELECT detail FROM transactions').map(r => r[0])).toEqual(['상관없는 거래']);
+    expect(skipped).toBe(0);
+    expect(dropped).toBe(2);
+  });
+
+  test('INSERT OR IGNORE가 이미 있는 행 때문에 0행이면 "이미 있음"으로 센다 (조건부 INSERT…SELECT의 0행과 구분)', () => {
+    const base = createDatabase(SQL, null).db.export();
+    const other = createDatabase(SQL, base).db;
+    ensureSubCategoriesExist(other, [{ budget_category: '식비', name: '외식' }]);
+    const mine = createDatabase(SQL, base).db;
+    attachChangeLog(mine);
+    ensureSubCategoriesExist(mine, [{ budget_category: '식비', name: '외식' }]);
+    const merged = createDatabase(SQL, other.export()).db;
+    const { skipped, dropped } = replayChanges(merged, getChangeLog(mine).entries);
+    expect(skipped).toBe(1);
+    expect(dropped).toBe(0);
+    expect(rows(merged, 'SELECT COUNT(*) FROM sub_categories')[0][0]).toBe(1);
+  });
+
+  test('건너뛴 딸린 행을 다시 가리키는 문장(손자)도 건너뛴다 — 같은 번호의 다른 기기 행을 고치지 않는다', () => {
+    const base = createDatabase(SQL, null).db.export();
+    const other = createDatabase(SQL, base).db;
+    const otherEvent = addCalendarEvent(other, { title: '다른 기기 여행', date_from: '2026-12-01', date_to: '2026-12-02', event_type: 'trip' });
+    addEventCountry(other, otherEvent, '일본', 'JPY', 9.1);  // event_countries id 1
+    const mine = createDatabase(SQL, base).db;
+    attachChangeLog(mine);
+    mine.run(`INSERT INTO calendar_events (title, date_from, date_to, event_type)
+              SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM calendar_events)`, ['내 여행', '2026-12-10', '2026-12-11', 'trip']);
+    addEventCountry(mine, 1, '태국', 'THB', 38);             // 이 기기에서도 event_countries id 1
+    mine.run('UPDATE event_countries SET exchange_rate = ? WHERE id = ?', [40, 1]);
+
+    const merged = createDatabase(SQL, other.export()).db;
+    const { dropped } = replayChanges(merged, getChangeLog(mine).entries);
+    expect(rows(merged, 'SELECT country, exchange_rate FROM event_countries')).toEqual([['일본', 9.1]]);
+    expect(dropped).toBe(3);
+  });
 });

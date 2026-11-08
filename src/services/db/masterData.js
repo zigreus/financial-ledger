@@ -177,6 +177,90 @@ export function addSubCategory(db, budgetCategory, name) {
   db.run('INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) VALUES (?, ?, ?, 0)', [budgetCategory, name.trim(), nextSort]);
 }
 
+// ── 첫 실행 기본값 (ROADMAP F-3, I-019) ─────────────────────────
+
+export const STARTER_NAME_MAX = 20;
+
+// 새 가계부의 조건 — 카테고리·세부카테고리·결제수단·거래가 하나도 없다(숨긴 것도 있는 것으로 본다)
+const BLANK_TABLES = ['budget_categories', 'sub_categories', 'payment_methods', 'transactions'];
+const BLANK_SQL = BLANK_TABLES.map(table => `NOT EXISTS (SELECT 1 FROM ${table})`).join(' AND ');
+const STARTER_MARK = 'starter_setup_pending'; // 첫 실행 기본값을 넣는 동안만 있는 표식 (settings)
+
+/** 아직 아무것도 없는 새 가계부인지 — 카테고리·세부카테고리·결제수단·거래가 하나도 없다(숨긴 것도 있는 것으로 본다) */
+export function isBlankLedger(db) {
+  return BLANK_TABLES.every(table => countRows(db, `SELECT COUNT(*) FROM ${table}`) === 0);
+}
+
+const cleanName = (name) => String(name ?? '').trim();
+const uniqueNames = (names) => [...new Set(names.map(cleanName).filter(Boolean))];
+
+/**
+ * 첫 실행 안내에서 고른 것을 넣을 수 없는 이유(화면에 그대로 보인다). 없으면 [].
+ * setup: { categories: [{ name, subs: [이름] }], paymentMethods: [이름] }
+ */
+export function starterSetupProblems(setup) {
+  const categories = (setup?.categories || []).filter(c => cleanName(c?.name));
+  const paymentMethods = uniqueNames(setup?.paymentMethods || []);
+  const problems = [];
+  if (!categories.length) problems.push('카테고리를 하나 이상 고르세요');
+  const noSubs = categories.find(c => !uniqueNames(c.subs || []).length);
+  if (noSubs) problems.push(`'${cleanName(noSubs.name)}'의 세부카테고리를 하나 이상 남겨 주세요 — 거래를 입력할 때 세부카테고리를 고릅니다`);
+  if (!paymentMethods.length) problems.push('결제수단을 하나 이상 고르세요');
+  const names = [
+    ...categories.map(c => c.name), ...categories.flatMap(c => c.subs || []), ...paymentMethods,
+  ].map(cleanName);
+  const tooLong = names.find(n => n.length > STARTER_NAME_MAX);
+  if (tooLong) problems.push(`이름은 ${STARTER_NAME_MAX}자까지 쓸 수 있습니다: ${tooLong}`);
+  return problems;
+}
+
+/**
+ * 첫 실행 안내에서 고른 카테고리·세부카테고리·결제수단을 한 번에 넣는다(사용자가 확정할 때만 부른다, §2-3).
+ * 새 가계부(isBlankLedger)에만 넣는다 — 이미 쓰던 가계부에는 넣지 않는다(마이그레이션이 아님).
+ * 이름은 앞뒤 공백을 지우고, 같은 이름은 한 번만 넣으며, 고른 순서대로 정렬 순서를 매긴다.
+ *
+ * 비어 있는지는 SQL 문장 안에서도 다시 본다. 이 쓰기는 변경 기록에 남아, 다른 기기와 저장이 겹치면 최신 파일에
+ * 그대로 다시 실행된다(두 기기가 동시에 시작했거나, 오프라인에서 확정해 두었다가 나중에 저장할 때). 그때 그 파일이
+ * 이미 꾸며져 있으면 아무것도 넣지 않는다 — 먼저 저장한 쪽 하나만 남는다.
+ *  1) 파일이 비어 있을 때만 이번 실행의 표식(token)을 settings에 남기고  2) 표식이 있을 때만 넣고  3) 표식을 지운다
+ * 반환: { categories, subCategories, paymentMethods } — 넣은 개수
+ */
+export function applyStarterSetup(db, setup) {
+  const problems = starterSetupProblems(setup);
+  if (problems.length) throw new Error(problems[0]);
+  if (!isBlankLedger(db)) throw new Error('이미 카테고리·결제수단이나 거래가 있는 가계부입니다 — 설정에서 고치세요');
+
+  const seen = new Set();
+  const categories = setup.categories
+    .map(c => ({ name: cleanName(c.name), subs: uniqueNames(c.subs || []) }))
+    .filter(c => c.name && !seen.has(c.name) && seen.add(c.name));
+  const paymentMethods = uniqueNames(setup.paymentMethods);
+  const token = `s-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const marked = `EXISTS (SELECT 1 FROM settings WHERE key = '${STARTER_MARK}' AND value = ?)`;
+
+  withTransaction(db, () => {
+    db.run(`INSERT OR REPLACE INTO settings (key, value) SELECT '${STARTER_MARK}', ? WHERE ${BLANK_SQL}`, [token]);
+    categories.forEach((c, i) => {
+      db.run(`INSERT INTO budget_categories (name, sort_order, is_hidden) SELECT ?, ?, 0 WHERE ${marked}`, [c.name, i + 1, token]);
+      c.subs.forEach((sub, j) => {
+        db.run(
+          `INSERT INTO sub_categories (budget_category, name, sort_order, is_hidden) SELECT ?, ?, ?, 0 WHERE ${marked}`,
+          [c.name, sub, j + 1, token]
+        );
+      });
+    });
+    paymentMethods.forEach((name, i) => {
+      db.run(`INSERT INTO payment_methods (name, sort_order, is_hidden) SELECT ?, ?, 0 WHERE ${marked}`, [name, i + 1, token]);
+    });
+    db.run(`DELETE FROM settings WHERE key = '${STARTER_MARK}' AND value = ?`, [token]);
+  });
+  return {
+    categories: categories.length,
+    subCategories: categories.reduce((n, c) => n + c.subs.length, 0),
+    paymentMethods: paymentMethods.length,
+  };
+}
+
 // 카테고리·세부카테고리를 이름으로 참조하는 테이블 (이름 변경·삭제 시 함께 고친다)
 const CATEGORY_REF_TABLES = ['transactions', 'recurring_transactions', 'favorite_transactions', 'payment_method_discount_rules'];
 
