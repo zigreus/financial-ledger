@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-071, I-017
+다음 번호: B-072, I-017
 
 ## 요약표
 
@@ -86,6 +86,7 @@
 | B-068 | ✅ | 중간 | 여행 | 여행 일정의 환율을 잘못 입력하면 조용히 '환율 없음'으로 저장됨 |
 | B-069 | ✅ | 낮음 | 금액 입력 | 월 목표 금액을 잘못 입력하면 오류 없이 편집이 닫히고 값이 버려짐 |
 | B-070 | ✅ | 낮음 | 여행 | 여행 일정에서 국가 이름을 지우고 저장해도 그 국가·환율이 그대로 남음 |
+| B-071 | ✅ | 중간 | AI | AI 키 공유가 다른 공급자·다른 계정의 키를 덮어쓰거나 지우고, 방금 저장한 키를 되돌릴 수 있음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -736,6 +737,15 @@
 - 해결: 이름이 빈 줄은 ✕로 지운 것과 같이 삭제한다(`keepIds`에 이름이 있는 줄만 넣음).
 - 파일: src/components/CalendarView/CalendarView.js
 
+### B-071 AI 키 공유가 다른 공급자·다른 계정의 키를 덮어쓰거나 지우고, 방금 저장한 키를 되돌릴 수 있음
+- 상태: ✅ 해결 (2026-11-08)
+- 심각도: 중간
+- 영역: AI
+- 문제: PC에서 Gemini를 저장하면 휴대폰에서 넣은 Claude 키가 모든 기기에서 지워지고, 다른 계정으로 로그인하면 이전 계정의 키가 새 계정 OneDrive에 올라가거나 그 계정 키가 지워지며, 앱을 열자마자 저장한 키가 동기화로 되돌아갈 수 있었다.
+- 원인: I-015가 설정 전체를 기기 시계(updatedAt)로 비교해 통째로 덮어썼고, 이 기기 설정이 어느 계정 것인지 기록하지 않았으며, OneDrive를 읽는 동안의 저장을 고려하지 않았다.
+- 해결: 이 기기에서 바꾼 항목(공급자별)만 OneDrive 파일 위에 덮어쓰고 지운 기록을 남기며(시각 비교 없음), eTag로 저장해 동시 저장은 다시 읽어 합치고, 설정을 계정에 묶어 다른 계정 것은 버리며, 동기화를 한 줄로 세우고 로그아웃 정리 뒤 늦게 끝난 동기화는 버리고(epoch), 로그인 화면으로 넘어가지 않고 15초 뒤 포기하며, 열린 설정 화면은 손대지 않은 칸만 새 값으로 바꾸고 손댄 칸만 저장한다.
+- 파일: src/services/aiSettingsSync.js, src/services/aiClient.js, src/services/oneDriveService.js, src/components/AIEntry/AISettingsForm.js, src/components/App/App.js, src/components/SettingsView/sections/AISection.js, src/services/__tests__/aiSettingsSync.test.js, src/components/AIEntry/__tests__/AISettingsForm.test.js
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -853,7 +863,7 @@
 - 영역: AI
 - 문제: API 키가 기기의 localStorage에만 있어, PC에서 설정해도 휴대폰에서는 긴 키를 다시 입력하라고 나온다.
 - 원인: 키를 가족 공용 DB에 넣지 않으려고 기기별로만 저장했고 기기 간 전달 방법이 없었다.
-- 해결: 같은 계정 OneDrive의 별도 파일 Apps/financial-ledger/ai-settings.json으로 앱을 열 때·저장·삭제할 때 최신 쪽으로 맞추고(예전에 넣어 둔 키도 자동으로 올림), 로그아웃 때 이 기기만 지운 키는 수정 시각을 바꾸지 않아 다시 로그인하면 돌아오게 했다. ledger.db에는 여전히 넣지 않는다.
+- 해결: 같은 계정 OneDrive의 별도 파일 Apps/financial-ledger/ai-settings.json으로 앱을 열 때·돌아올 때·저장·삭제할 때 맞추고(예전에 넣어 둔 키도 자동으로 올림, 맞추는 방식은 B-071에서 공급자별 병합으로 바꿈), 로그아웃 때 이 기기만 지운 키는 다시 로그인하면 돌아온다. ledger.db에는 여전히 넣지 않는다.
 - 파일: src/services/aiSettingsSync.js, src/services/aiClient.js, src/services/oneDriveService.js, src/components/AIEntry/AISettingsForm.js, src/components/App/App.js, AGENTS.md
 
 ### I-016 카드 결제 자동 금액이 할인을 빼지 않는 근거가 없어 순지출 규칙·설계 문서와 어긋나 보임

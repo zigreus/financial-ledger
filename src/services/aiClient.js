@@ -28,19 +28,27 @@ export const PROVIDERS = {
 
 // ── 설정 (이 기기 + 같은 계정 기기끼리 공유) ─────────────────────────
 
-/** 저장된 설정 모양을 바로잡는다 — 모르는 공급자·문자열이 아닌 키는 버린다 */
+/** 기기끼리 맞추는 단위 — 고른 공급자('provider'), 그리고 공급자마다 키·모델 한 묶음 */
+export const AI_FIELDS = ['provider', ...Object.keys(PROVIDERS)];
+
+const pickProviders = obj => Object.fromEntries(Object.keys(PROVIDERS).map(p => (
+  [p, obj && typeof obj[p] === 'string' ? obj[p] : '']
+)));
+
+/** 저장된 설정 모양을 바로잡는다 — 모르는 공급자·문자열이 아닌 값은 버린다 */
 export function normalizeAIConfig(saved) {
   const src = saved && typeof saved === 'object' ? saved : {};
-  const pick = obj => Object.fromEntries(Object.keys(PROVIDERS).map(p => {
-    const v = obj && typeof obj[p] === 'string' ? obj[p] : '';
-    return [p, v];
-  }));
+  const pending = src.pending && typeof src.pending === 'object' ? src.pending : {};
   return {
     provider: PROVIDERS[src.provider] ? src.provider : 'gemini',
-    keys: pick(src.keys),
-    models: pick(src.models),
-    // 마지막으로 사용자가 바꾼 시각 — 기기끼리 어느 쪽이 최신인지 가린다 (0 = 모름)
-    updatedAt: Number(src.updatedAt) || 0,
+    keys: pickProviders(src.keys),
+    models: pickProviders(src.models),
+    // 이 설정을 마지막으로 맞춘 Microsoft 계정(homeAccountId). '' = 아직 맞춘 적 없음(예전 버전에서 넣은 키 등)
+    owner: typeof src.owner === 'string' ? src.owner : '',
+    // 이 기기에서 사용자가 바꿨지만 아직 OneDrive에 올리지 못한 항목 (AI_FIELDS 중)
+    pending: Object.fromEntries(AI_FIELDS.filter(f => pending[f] === true).map(f => [f, true])),
+    // 이 기기에서만 키를 지울 때(로그아웃·계정 바꿈)마다 1씩 오른다 — 그 전에 시작한 동기화가 키를 되살리지 않게
+    epoch: Number.isInteger(src.epoch) && src.epoch > 0 ? src.epoch : 0,
   };
 }
 
@@ -50,24 +58,48 @@ export function getAIConfig() {
   return normalizeAIConfig(saved);
 }
 
-/**
- * touch: 사용자가 바꾼 것이면 true(기본) — 수정 시각을 지금으로 찍어 다른 기기에 이 설정이 퍼지게 한다.
- * 동기화로 받아 온 값이나 로그아웃 정리처럼 "사용자의 새 결정"이 아니면 false.
- */
-export function saveAIConfig(config, { touch = true } = {}) {
-  const next = { ...normalizeAIConfig(config), updatedAt: touch ? Date.now() : (Number(config.updatedAt) || 0) };
+/** 그대로 저장한다 (동기화 모듈용). 사용자가 바꾼 설정은 updateAIConfig로 저장한다. */
+export function storeAIConfig(config) {
+  const next = normalizeAIConfig(config);
   try { window.localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); } catch (e) { /* 저장 불가 환경 */ }
   return next;
 }
 
+const effectiveModel = (p, m) => m || PROVIDERS[p].defaultModel;
+
+/**
+ * 사용자가 바꾼 설정을 저장한다. patch: { provider?, keys?: { [공급자]: 키 }, models?: { [공급자]: 모델 } }
+ * 실제로 달라진 항목만 '올릴 것'(pending)으로 표시한다 — 다음 동기화가 OneDrive 파일 위에 그 항목만 덮어써,
+ * 다른 기기에서 넣은 다른 공급자의 키는 건드리지 않는다. 키를 ''로 바꾸면 모든 기기에서 지우는 것이다.
+ * pickProvider: 사용자가 공급자를 직접 골랐으면 이 기기 값과 같아도 모든 기기의 선택으로 올린다
+ * (이 기기만 따로 쓰던 공급자를 함께 쓰는 선택으로 정하는 경우).
+ */
+export function updateAIConfig(patch = {}, { pickProvider = false } = {}) {
+  const cur = getAIConfig();
+  const next = { ...cur, keys: { ...cur.keys }, models: { ...cur.models }, pending: { ...cur.pending } };
+  if (PROVIDERS[patch.provider] && (patch.provider !== cur.provider || pickProvider)) {
+    next.provider = patch.provider;
+    next.pending.provider = true;
+  }
+  for (const p of Object.keys(PROVIDERS)) {
+    const key = patch.keys && typeof patch.keys[p] === 'string' ? patch.keys[p].trim() : cur.keys[p];
+    const model = patch.models && typeof patch.models[p] === 'string' ? patch.models[p] : cur.models[p];
+    if (key !== cur.keys[p] || effectiveModel(p, model) !== effectiveModel(p, cur.models[p])) {
+      next.keys[p] = key;
+      next.models[p] = model;
+      next.pending[p] = true;
+    }
+  }
+  return storeAIConfig(next);
+}
+
 /**
  * 이 기기에 저장된 모든 공급자의 API 키를 지운다 (로그아웃). 공급자·모델 선택은 남긴다.
- * 이 기기에서만 지우는 것이라 수정 시각을 바꾸지 않는다 — 다시 로그인하면 OneDrive에서 다시 받아 온다.
+ * 이 기기에서만 지우는 것이라 OneDrive에 알리지 않는다(올릴 것도 비움) — 다시 로그인하면 OneDrive 값을 받아 온다.
  */
 export function clearAIKeys() {
   const config = getAIConfig();
-  const keys = Object.fromEntries(Object.keys(config.keys).map(p => [p, '']));
-  saveAIConfig({ ...config, keys }, { touch: false });
+  storeAIConfig({ ...config, keys: pickProviders({}), pending: {}, epoch: config.epoch + 1 });
 }
 
 /** 지금 선택된 공급자로 바로 호출할 수 있는 상태인지 */

@@ -122,23 +122,44 @@ function App() {
     }
   }, [isAuthenticated, accounts, db, loadDb]);
 
-  // AI 설정(API 키)을 같은 계정의 기기끼리 맞춘다 — 가계부를 불러온 뒤 한 번.
-  // 다른 기기에서 넣은 키가 있으면 이 기기에서 다시 입력하지 않아도 된다.
+  // AI 설정(API 키)을 같은 계정의 기기끼리 맞춘다 — 가계부를 불러온 뒤 한 번, 그리고 앱으로 돌아오거나
+  // 다시 온라인이 될 때. 다른 기기에서 넣은 키가 있으면 이 기기에서 다시 입력하지 않아도 되고,
+  // 다른 기기에서 지운 키는 열어 둔 앱에서도 지워진다. 실패하면 다음 기회에 다시 한다.
   useEffect(() => {
     setAISyncAccount(isAuthenticated ? instance : null, accounts);
     if (!isAuthenticated) aiSyncedRef.current = false;
   }, [isAuthenticated, instance, accounts]);
 
-  useEffect(() => {
-    if (!db || aiSyncedRef.current) return;
-    aiSyncedRef.current = true;
+  const lastAISyncRef = React.useRef(0);
+  const runAISync = useCallback(() => {
+    lastAISyncRef.current = Date.now();
     const hadKey = !!activeAI();
     syncAISettings()
       .then(result => {
         if (result === 'pulled' && !hadKey && activeAI()) showToast('✓ 다른 기기에서 저장한 AI 설정을 불러왔습니다');
       })
-      .catch(() => { aiSyncedRef.current = false; /* 다음에 다시 시도 */ });
-  }, [db, showToast]);
+      .catch(() => { /* 오프라인·재로그인 필요 등 — 다음 기회에 다시 */ });
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!db || aiSyncedRef.current) return;
+    aiSyncedRef.current = true;
+    runAISync();
+  }, [db, runAISync]);
+
+  useEffect(() => {
+    if (!db) return undefined;
+    const onVisible = () => {
+      // 화면을 빠르게 껐다 켤 때 겹쳐 부르지 않게 10초에 한 번까지만
+      if (document.visibilityState === 'visible' && Date.now() - lastAISyncRef.current > 10 * 1000) runAISync();
+    };
+    window.addEventListener('online', runAISync);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', runAISync);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [db, runAISync]);
 
   // 동기화 안내(병합·자동등록 등)는 토스트로 보여준다
   useEffect(() => {
@@ -236,18 +257,45 @@ function App() {
     return ok;
   }, [saveNow, showToast]);
 
+  const loggingOutRef = React.useRef(false); // 로그아웃 진행 중 — 두 번 눌러도 한 번만
   const handleLogout = useCallback(async () => {
-    if (dirty) {
-      const ok = await saveNow();
-      if (!ok && !window.confirm(`저장되지 않은 변경 ${pendingCount}건이 있습니다.\n로그아웃하면 이 변경은 사라집니다. 그래도 로그아웃할까요?`)) return;
+    if (loggingOutRef.current) return;
+    loggingOutRef.current = true;
+    try {
+      if (dirty) {
+        const ok = await saveNow();
+        if (!ok && !window.confirm(`저장되지 않은 변경 ${pendingCount}건이 있습니다.\n로그아웃하면 이 변경은 사라집니다. 그래도 로그아웃할까요?`)) {
+          loggingOutRef.current = false;
+          return;
+        }
+      }
+      if (Object.values(getAIConfig().keys).some(k => String(k || '').trim())) {
+        // 키를 지울지 묻기 전에 OneDrive와 맞춰 본다 — 이 기기에서 바꾼 것이 올라가 있어야 지워도 다른 기기·다시 로그인에 남는다.
+        // 신호가 약해도 로그아웃이 멈추지 않게 5초까지만 기다린다
+        showToast('로그아웃하는 중…');
+        let synced = false;
+        let timer;
+        try {
+          const result = await Promise.race([
+            syncAISettings(),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 5000); }),
+          ]);
+          synced = result !== 'offline' && result !== 'cancelled';
+        } catch (e) { /* 맞추지 못함 — 아래 안내로 알린다 */ }
+        clearTimeout(timer);
+        const ai = getAIConfig();
+        const note = synced && !Object.keys(ai.pending).length
+          ? '다른 사람도 쓰는 기기라면 지우는 것을 권장합니다. OneDrive에 저장된 키는 그대로라, 다시 로그인하면 자동으로 불러옵니다'
+          : '지금 OneDrive와 맞추지 못했습니다. 지우면 이 기기에만 있던 키나 바꾼 설정은 사라질 수 있습니다. 다시 로그인하면 OneDrive에 있는 설정을 불러옵니다';
+        if (window.confirm(`이 기기에 저장된 AI API 키도 지울까요?\n(${note})`)) clearAIKeys();
+      }
+      resetForLogout();
+      await instance.logoutRedirect({ account: accounts[0] });
+    } catch (e) {
+      loggingOutRef.current = false;
+      setError(`로그아웃 실패: ${e.message}`);
     }
-    const hasAIKey = Object.values(getAIConfig().keys).some(k => String(k || '').trim());
-    if (hasAIKey && window.confirm('이 기기에 저장된 AI API 키도 지울까요?\n(다른 사람도 쓰는 기기라면 지우는 것을 권장합니다. 다시 로그인하면 OneDrive에서 자동으로 불러옵니다)')) {
-      clearAIKeys();
-    }
-    resetForLogout();
-    instance.logoutRedirect({ account: accounts[0] }).catch(e => setError(`로그아웃 실패: ${e.message}`));
-  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError]);
+  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast]);
 
   const openAdd = (date) => {
     setDefaultFormDate(typeof date === 'string' ? date : null);
