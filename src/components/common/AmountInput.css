@@ -18,6 +18,9 @@
   font-weight: 600;
 }
 .formula-error { font-size: calc(12px * var(--fs)); color: var(--danger); }
+/* 금액 읽어 주기 (U-4) — 125만 원 */
+.amount-words { font-weight: 500; color: var(--text-muted); }
+.amount-words--alone { font-size: calc(12px * var(--fs)); }
 
 /* 키보드 바로 위에 붙는 연산자 툴바 (터치 기기) — 모든 팝업보다 위 */
 .formula-toolbar {

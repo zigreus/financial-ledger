@@ -81,6 +81,7 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
             <AmountInput
               className="settings-inline-input"
               containerStyle={{ flex: 1 }}
+              words={false}
               value={defaultGoalInput}
               onChange={setDefaultGoalInput}
               onKeyDown={e => { if (e.key === 'Enter') handleSaveDefaultGoal(); if (e.key === 'Escape') setEditingDefaultGoal(false); }}

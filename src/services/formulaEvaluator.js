@@ -109,6 +109,32 @@ export function formatAmount(amount) {
   return n.toLocaleString('ko-KR');
 }
 
+/** 만 원부터 읽어 준다 — 그보다 작으면 숫자만으로 충분하다 */
+export const AMOUNT_WORDS_MIN = 10000;
+
+/**
+ * 원화 금액을 만·억·조 단위로 읽기 (ROADMAP U-4) — 0을 하나 더/덜 넣은 것을 입력하며 바로 보게.
+ *   1,250,000 → '125만 원', 12,345 → '1만 2,345원', 125,000,000 → '1억 2,500만 원', 3,000,000,000,000 → '3조 원'
+ * 만 원보다 작거나 숫자가 아니면 ''. 소수는 반올림한다(원화는 정수).
+ */
+export function amountInWords(amount) {
+  const value = Math.round(Number(amount));   // 원화는 정수 — 수식 계산(evaluateFormula)과 같게 반올림
+  if (!Number.isFinite(value)) return '';
+  const n = Math.abs(value);
+  if (n < AMOUNT_WORDS_MIN) return '';
+  const units = [[1e12, '조'], [1e8, '억'], [1e4, '만']];
+  const parts = [];
+  let left = n;
+  units.forEach(([size, name]) => {
+    const q = Math.floor(left / size);
+    if (q) parts.push(`${q.toLocaleString('ko-KR')}${name}`);
+    left %= size;
+  });
+  if (left) parts.push(left.toLocaleString('ko-KR'));
+  const sign = value < 0 ? '-' : '';
+  return `${sign}${parts.join(' ')}${left ? '원' : ' 원'}`;
+}
+
 /** 오늘 날짜를 YYYY-MM-DD 형식으로 반환 (dateUtils.todayStr) */
 export function today() {
   return todayStr();

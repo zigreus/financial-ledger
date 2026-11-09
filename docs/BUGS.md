@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-041
+다음 번호: B-094, I-045
 
 ## 요약표
 
@@ -149,6 +149,10 @@
 | I-038 | ✅ | - | 출시 준비 | 처리방침·약관이 없고, 로그인 화면에 앱 소개가 없으며, 문제가 생겨도 알릴 길이 없음 (ROADMAP M-5 중 바로 할 수 있는 것) |
 | I-039 | ✅ | - | 화면 | 글씨 크기가 15px 등으로 고정돼 부모님·작은 휴대폰에서 읽기 어렵고 키울 방법이 없음 (ROADMAP U-1) |
 | I-040 | ✅ | - | 화면 | 밝은 화면뿐이라 밤에 적을 때 눈부시고 휴대폰의 다크 모드를 따르지 않음 (ROADMAP U-2) |
+| I-041 | ✅ | - | 거래 | 거래를 지우면 확인창 뒤 바로 사라져 잘못 지운 것을 되살릴 수 없음 (ROADMAP U-3) |
+| I-042 | ✅ | - | 입력 | 큰 금액에서 0을 하나 더/덜 넣어도 입력하는 동안 알아보기 어려움 (ROADMAP U-4) |
+| I-043 | ✅ | - | 입력 | 영수증을 몰아 적을 때 날짜마다 달력을 열어야 함 (ROADMAP U-5) |
+| I-044 | ✅ | - | 입력 | 같은 곳에서 또 쓴 거래를 처음부터 다시 입력해야 함 (ROADMAP U-6) |
 
 
 ## 상세
@@ -1309,3 +1313,35 @@
 - 원인: 화면 CSS에 색을 직접 적은 곳이 약 300곳이라 테마로 바꿀 수 없었다.
 - 해결: 하드코딩 색을 테마 토큰(--c-*, 밝은 값은 원래 색 그대로)으로 바꾸고 index.css에 어두운 값을 두어, 설정 › 앱 › 이 기기 화면에서 밝게(기본)·어둡게·기기 설정 따라를 고르면 기기별로 적용(위쪽 막대 색 포함), 흰 글씨를 얹는 채움 색과 그 위 글씨는 그대로, 강조색 글씨는 글씨 전용 토큰(--primary-text)으로 어두운 화면에서 밝게, 배경에 밝은 색·글씨에 직접 색을 쓰면 테스트가 막는다.
 - 파일: src/index.css, src/services/displayPrefs.js, index.html, 화면 CSS(색 토큰), src/components/SettingsView/sections/RecurringSection.js, src/components/TransactionList/TransactionList.css(쓰지 않던 .dark 규칙 삭제), src/services/__tests__/displayPrefs.test.js, AGENTS.md, SETUP.md
+
+### I-041 거래를 지우면 확인창 뒤 바로 사라져 잘못 지운 것을 되살릴 수 없음 (ROADMAP U-3)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 거래
+- 문제: 거래를 잘못 지우면 확인창을 지난 뒤에는 되살릴 방법이 없어 다시 입력해야 한다(사용자 요청).
+- 원인: 삭제가 바로 행을 지우고 끝났고, 지운 행이나 그 연결(여행 정산 나눔, 재환전 기록)을 남기지 않았다.
+- 해결: deleteTransactionsForUndo가 지울 행과 연결을 기록해 두고 화면 위 알림에 '되돌리기'(10초)를 두며, restoreDeletedTransactions가 새 번호로 되살리고 나눔 설정·재환전 기록·정기지출 등록 기록을 새 번호로 잇는다(분할 몫은 같은 묶음으로, 칸 이름은 테이블 칸 목록으로만, 변경 기록으로 합칠 때도 같은 결과) — 그사이 가계부를 다시 불러왔으면 되살리지 않고 알리며, 캘린더의 삭제도 같은 길(분할 몫 함께)로 바꿨다.
+- 파일: src/services/db/transactions.js, src/components/App/App.js, src/components/CalendarView/CalendarView.js, src/services/__tests__/deleteUndo.test.js, src/components/App/__tests__/App.quickWins.test.js, AGENTS.md, SETUP.md
+
+### I-042 큰 금액에서 0을 하나 더/덜 넣어도 입력하는 동안 알아보기 어려움 (ROADMAP U-4)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 입력
+- 문제: 1250000과 125000처럼 0 개수가 다른 금액을 입력하는 동안 숫자만 보여 실수를 알아보기 어렵다(사용자 요청).
+- 원인: 금액 칸은 수식 결과만 보여 주고 만·억 단위로 읽어 주지 않았다.
+- 해결: amountInWords(formulaEvaluator)로 만 원 이상 원화를 '125만 원'·'1억 2,500만 원'처럼 읽어 금액 칸(AmountInput) 아래에, 수식이면 결과 옆에 보인다(칸을 떠나도 남아 아래 버튼이 밀리지 않게, 외화·소수 칸과 한 줄에 붙은 좁은 칸(목표 금액·예산 칸·필터 범위)은 끔).
+- 파일: src/services/formulaEvaluator.js, src/components/common/AmountInput.js·AmountInput.css, src/components/TransactionList/TransactionList.js·FilterPanel.js, src/services/__tests__/deleteUndo.test.js, src/components/App/__tests__/App.quickWins.test.js, SETUP.md
+
+### I-043 영수증을 몰아 적을 때 날짜마다 달력을 열어야 함 (ROADMAP U-5)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 입력
+- 문제: 며칠 치 영수증을 한꺼번에 적을 때마다 날짜 칸의 달력을 열어 어제·그제를 골라야 한다(사용자 요청).
+- 원인: 날짜는 달력 입력 칸 하나뿐이었다.
+- 해결: 입력 창 날짜 옆에 오늘·어제·그제 버튼을 두어 누르면 그 날짜가 되고, 지금 날짜와 같은 버튼은 눌린 것으로 보인다.
+- 파일: src/components/TransactionForm/BasicFields.js·TransactionForm.css, src/components/App/__tests__/App.quickWins.test.js, SETUP.md
+
+### I-044 같은 곳에서 또 쓴 거래를 처음부터 다시 입력해야 함 (ROADMAP U-6)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 입력
+- 문제: 같은 가게·같은 금액으로 또 쓴 거래도 결제수단·분류·내용을 처음부터 다시 골라야 한다(사용자 요청).
+- 원인: 거래 상세 창에는 삭제·수정만 있고 그 거래로 새로 입력하는 길이 없었다.
+- 해결: 거래 상세 창의 '복사해 입력'이 내용·분류·결제수단·금액(분할이면 합계)으로 오늘 날짜의 새 거래 입력 창을 연다('누가'는 이 기기 사용자, 할인은 규칙으로 다시, 숨긴 결제수단·카테고리는 옮기지 않고, 여행 연결·외화·분할은 새로 고름).
+- 파일: src/components/TransactionForm/TransactionForm.js, src/components/TransactionList/TransactionList.js, src/components/App/App.js, src/components/App/__tests__/App.quickWins.test.js, SETUP.md

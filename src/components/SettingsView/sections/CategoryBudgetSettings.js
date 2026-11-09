@@ -92,6 +92,7 @@ export default function CategoryBudgetSettings({ db, dataVersion, onChanged, set
                       <AmountInput
                         className="settings-inline-input"
                         containerStyle={{ flex: 1, minWidth: 0 }}
+                        words={false}
                         value={input}
                         onChange={setInput}
                         onKeyDown={e => { if (e.key === 'Enter') save(cat); if (e.key === 'Escape') setEditing(null); }}

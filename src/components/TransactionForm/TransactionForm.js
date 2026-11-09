@@ -36,7 +36,7 @@ const EMPTY_FORM = {
   member: '',
 };
 
-function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, aiStart = null, onSave, onBulkAdd, onQuickAdd, onCancel }) {
+function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, defaultDate, aiStart = null, onSave, onBulkAdd, onQuickAdd, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -116,6 +116,29 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, aiStart 
         foreign_amounts,
         member: editingTx.member || '',
       });
+    } else if (copyFromTx) {
+      // 이 거래로 새로 입력 (ROADMAP U-6) — 내용·분류·결제수단·금액(분할이면 묶음 합계)만 옮긴다. 날짜는 오늘,
+      // '누가'는 이 기기 사용자, 할인은 결제수단 규칙으로 다시 — 여행 연결·외화·분할은 새로 고른다(날짜가 달라 맞지 않을 수 있다).
+      // 숨긴(쓰지 않는) 결제수단·카테고리는 옮기지 않는다 — 수정과 달리 새 거래에 옛 카드를 고르게 하지 않게
+      discount.recalc();
+      const shown = (list, v) => (v && list.includes(v) ? v : '');
+      const category = shown(getBudgetCategories(dbRef.current), copyFromTx.budget_category);
+      const subCategory = category ? shown(getSubCategories(dbRef.current, category), copyFromTx.sub_category) : '';
+      skipSubResetRef.current = category || null;
+      resetSplit();
+      const group = copyFromTx.split_group_id
+        ? getSplitGroupTransactions(dbRef.current, copyFromTx.split_group_id) : [];
+      const total = group.length ? group.reduce((sum, t) => sum + (Number(t.amount) || 0), 0) : Number(copyFromTx.amount) || 0;
+      setForm({
+        ...EMPTY_FORM,
+        payment_method: shown(getPaymentMethods(dbRef.current), copyFromTx.payment_method),
+        date: defaultDate || today(),
+        budget_category: category,
+        sub_category: subCategory,
+        detail: copyFromTx.detail || '',
+        amount: total ? String(total) : '',
+        member: resolveDeviceMember(dbRef.current),
+      });
     } else {
       skipSubResetRef.current = null;
       resetSplit();
@@ -123,7 +146,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, aiStart 
       setForm({ ...EMPTY_FORM, date: defaultDate || today(), member: resolveDeviceMember(dbRef.current) });
     }
     setAddedCount(0);
-  }, [editingTx, defaultDate, discount, loadSplit, resetSplit]);
+  }, [editingTx, copyFromTx, defaultDate, discount, loadSplit, resetSplit]);
 
   // 세부카테고리 목록 — 앱 어디서든 DB가 바뀌면(dataVersion) 다시 읽는다
   useEffect(() => {

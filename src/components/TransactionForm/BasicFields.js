@@ -1,4 +1,8 @@
 import React from 'react';
+import { addDays, todayStr } from '../../services/dateUtils';
+
+/** 날짜 빠른 선택 (ROADMAP U-5) — 영수증을 몰아 적을 때 달력을 열지 않게 */
+const QUICK_DATES = [['오늘', 0], ['어제', -1], ['그제', -2]];
 
 /**
  * 거래의 기본 칸 — 날짜, 결제수단, 카테고리·세부카테고리, 세부내역, 일정 연결.
@@ -12,8 +16,27 @@ export default function BasicFields({
     <>
       {/* 날짜 */}
       <div className="form-group">
-        <label>날짜<span className="required">*</span></label>
+        <div className="txf-date-head">
+          <label htmlFor="txf-date">날짜<span className="required">*</span></label>
+          <div className="txf-date-quick" role="group" aria-label="날짜 빠르게 고르기">
+            {QUICK_DATES.map(([label, offset]) => {
+              const date = addDays(todayStr(), offset);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  className={form.date === date ? 'txf-date-chip txf-date-chip--on' : 'txf-date-chip'}
+                  aria-pressed={form.date === date}
+                  onClick={() => onChange('date', date)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <input
+          id="txf-date"
           type="date"
           value={form.date}
           onChange={e => onChange('date', e.target.value)}

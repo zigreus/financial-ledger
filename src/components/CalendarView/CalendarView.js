@@ -12,6 +12,7 @@ import {
   updateEventCountry,
   deleteEventCountry,
   deleteTransaction,
+  getSplitGroupTransactions,
   getCalendarEventTypes,
   getSetting,
   getCalendarEventLinkCounts,
@@ -393,7 +394,7 @@ export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete,
 }
 
 // ── 메인 컴포넌트 ──────────────────────────────────────────
-export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChanged, showEventForm, onCloseEventForm, onAddTransaction, onEditTransaction }) {
+export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChanged, showEventForm, onCloseEventForm, onAddTransaction, onEditTransaction, onDeleteTransaction }) {
   const today = todayStr();
   const [currentMonth, setCurrentMonth] = useState(() => today.slice(0, 7));
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -512,10 +513,21 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
     setInternalEventForm(true);
   }
 
-  async function handleTxDelete(txId) {
-    if (!window.confirm('이 거래를 삭제할까요?')) return;
-    deleteTransaction(db, txId);
+  // 거래내역과 같게 — 분할 결제는 묶인 몫을 함께 지우고, App의 삭제(화면 위 '되돌리기', U-3)를 쓴다
+  async function handleTxDelete(tx) {
+    const group = tx.split_group_id ? getSplitGroupTransactions(db, tx.split_group_id) : [];
+    const ids = group.length > 1 ? group.map(t => t.id) : [tx.id];
+    const msg = ids.length > 1
+      ? `이 거래는 분할 결제로 묶여 있습니다. 묶인 ${ids.length}건을 모두 삭제하시겠습니까?\n`
+        + group.map(t => `· ${t.payment_method} ${formatAmount(t.amount)}원`).join('\n')
+      : '이 거래를 삭제할까요?';
+    if (!window.confirm(msg)) return;
     setSelectedTx(null);
+    if (onDeleteTransaction) {
+      onDeleteTransaction(ids.length === 1 ? ids[0] : ids);
+      return;
+    }
+    withTransaction(db, () => ids.forEach(id => deleteTransaction(db, id)));
     await onChanged();
   }
 
@@ -847,7 +859,7 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
               )}
             </div>
             <div className="cv-tx-modal-footer">
-              <button className="cv-form-delete-btn" onClick={() => handleTxDelete(selectedTx.id)}>삭제</button>
+              <button className="cv-form-delete-btn" onClick={() => handleTxDelete(selectedTx)}>삭제</button>
               <button className="cv-form-cancel-btn" onClick={() => setSelectedTx(null)}>닫기</button>
               {onEditTransaction && (
                 <button className="cv-form-save-btn" onClick={() => { setSelectedTx(null); setSelectedDate(null); onEditTransaction(selectedTx); }}>수정</button>

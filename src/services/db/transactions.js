@@ -1,6 +1,6 @@
 // 가계부 거래(transactions) 조회·추가·수정·삭제와 분할 결제 묶음 조회.
 
-import { dbRowsToObjects, withTransaction } from './common';
+import { columnsOf, dbRowsToObjects, withTransaction } from './common';
 
 /** 거래 목록 필터에서 '누가'를 지정하지 않은 거래만 고를 때 쓰는 값 */
 export const MEMBER_NONE = '__none__';
@@ -131,6 +131,69 @@ export function deleteTransaction(db, id) {
     // 여행 정산(I-030)의 이 거래 나눔 설정도 지운다 — 남아도 쓰이지는 않지만 일정 삭제 확인창 수에 섞이지 않게
     db.run('DELETE FROM trip_split_entries WHERE transaction_id = ?', [id]);
   });
+}
+
+// ── 삭제 되돌리기 (ROADMAP U-3) ─────────────────────────────────
+
+/** 행 하나를 새로 넣는다(id 없이 — 새 번호). 칸 이름은 테이블의 칸 목록(columnsOf)으로만 고른다(AGENTS §2.9). 넣은 행의 id */
+function reinsert(db, table, row, overrides = {}) {
+  const allowed = columnsOf(db, table);
+  const data = { ...row, ...overrides };
+  const cols = Object.keys(data).filter(c => c !== 'id' && allowed.has(c));
+  db.run(
+    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+    cols.map(c => data[c] ?? null),
+  );
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+}
+
+/**
+ * 거래를 지우고 되돌리기에 쓸 기록을 돌려준다 — 하나의 트랜잭션 (U-3).
+ * 지우는 것은 deleteTransaction과 같다(거래 + 여행 정산의 나눔 설정). 기록에는 지운 행 그대로와,
+ * 그 거래를 가리키던 것(지워도 그대로 남는 번호) — 재환전 기록(event_cash_flows.linked_tx_id),
+ * 정기지출 등록 기록(recurring_registration_log.transaction_id — 연간 결제 달을 옮길 때 이 번호로 찾는다, I-037)을 담는다.
+ * 거래 번호를 담는 칸을 새로 만들면 여기와 restoreDeletedTransactions에 함께 더한다(AGENTS §3).
+ * 반환: { transactions: [행], splitEntries: [행], cashFlowLinks: [{ flowId, txId }], registrationLinks: [{ logId, txId }] }
+ */
+export function deleteTransactionsForUndo(db, ids) {
+  const list = [...new Set(ids.map(Number))];
+  const marks = list.map(() => '?').join(', ');
+  const undo = {
+    transactions: dbRowsToObjects(db.exec(`SELECT * FROM transactions WHERE id IN (${marks}) ORDER BY id`, list)),
+    splitEntries: dbRowsToObjects(db.exec(`SELECT * FROM trip_split_entries WHERE transaction_id IN (${marks}) ORDER BY id`, list)),
+    cashFlowLinks: dbRowsToObjects(db.exec(`SELECT id, linked_tx_id FROM event_cash_flows WHERE linked_tx_id IN (${marks})`, list))
+      .map(r => ({ flowId: r.id, txId: r.linked_tx_id })),
+    registrationLinks: dbRowsToObjects(db.exec(`SELECT id, transaction_id FROM recurring_registration_log WHERE transaction_id IN (${marks})`, list))
+      .map(r => ({ logId: r.id, txId: r.transaction_id })),
+  };
+  withTransaction(db, () => list.forEach(id => deleteTransaction(db, id)));
+  return undo;
+}
+
+/**
+ * 지운 거래를 되살린다 — 하나의 트랜잭션 (U-3). 새 번호로 넣고(다른 기기와 합칠 때 번호가 겹치지 않게 —
+ * 변경 기록이 새 행의 번호를 맞춘다), 여행 정산 나눔 설정·재환전 기록·정기지출 등록 기록의 연결을 새 번호로 이어 준다.
+ * 지운 때와 같은 가계부(DB 객체)에만 써야 한다 — 기록의 번호는 그 가계부의 것이다(App이 다시 불러왔으면 막는다).
+ * 분할 결제 몫은 같은 묶음(split_group_id)으로 돌아온다.
+ * 그사이 그 재환전 기록이 다른 거래를 가리키게 됐으면(또는 지워졌으면) 연결은 건드리지 않는다.
+ * 반환: 되살린 거래 수
+ */
+export function restoreDeletedTransactions(db, undo) {
+  if (!undo?.transactions?.length) return 0;
+  withTransaction(db, () => {
+    const newId = new Map();
+    undo.transactions.forEach(row => newId.set(row.id, reinsert(db, 'transactions', row)));
+    undo.splitEntries.forEach(row => reinsert(db, 'trip_split_entries', row, { transaction_id: newId.get(row.transaction_id) }));
+    undo.cashFlowLinks.forEach(({ flowId, txId }) => {
+      if (!newId.has(txId)) return;
+      db.run('UPDATE event_cash_flows SET linked_tx_id = ? WHERE id = ? AND linked_tx_id = ?', [newId.get(txId), flowId, txId]);
+    });
+    (undo.registrationLinks || []).forEach(({ logId, txId }) => {
+      if (!newId.has(txId)) return;
+      db.run('UPDATE recurring_registration_log SET transaction_id = ? WHERE id = ? AND transaction_id = ?', [newId.get(txId), logId, txId]);
+    });
+  });
+  return undo.transactions.length;
 }
 
 // 바로 넣은 거래를 알아보는 칸 — 되돌릴 때 이 값이 모두 같아야 지운다

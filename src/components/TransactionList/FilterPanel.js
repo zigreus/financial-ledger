@@ -107,6 +107,7 @@ export default function FilterPanel({
         <AmountInput
           className="filter-amount"
           containerClassName="filter-amount-wrap"
+          words={false}
           allowNegative
           value={filters.amountMin}
           onChange={v => set('amountMin', v)}
@@ -117,6 +118,7 @@ export default function FilterPanel({
         <AmountInput
           className="filter-amount"
           containerClassName="filter-amount-wrap"
+          words={false}
           allowNegative
           value={filters.amountMax}
           onChange={v => set('amountMax', v)}

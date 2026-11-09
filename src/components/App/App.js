@@ -12,7 +12,7 @@ import {
   SummaryView, SettingsView, CalendarView, AccountManagement, ImportModal, CardStatementModal, Onboarding, preloadScreens,
 } from './screens';
 import { ModalLoading } from '../common/lazyScreen';
-import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
+import { addTransaction, updateTransaction, deleteTransaction, deleteTransactionsForUndo, restoreDeletedTransactions, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
@@ -83,6 +83,7 @@ function App() {
   const [showEventForm, setShowEventForm] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false); // 첫 실행 안내 (F-3)
   const [editingTx, setEditingTx] = useState(null);
+  const [copyFromTx, setCopyFromTx] = useState(null); // 이 거래로 새로 입력 (U-6)
   const [defaultFormDate, setDefaultFormDate] = useState(null);
   // 입력 창을 열 때 AI 입력을 바로 시작할 것 (I-024) — 바로가기 'AI 입력' { quick: true }, 공유 받기 { text, files }
   const [aiStart, setAiStart] = useState(null);
@@ -105,7 +106,7 @@ function App() {
   const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
   const navRef = React.useRef({
-    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, showOnboarding: false, editingTx: null,
+    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, showOnboarding: false, editingTx: null, copyFromTx: null,
     summaryTab: 'monthly', summaryDrilldown: null,
     settingsSection: 'payment',
     settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
@@ -132,6 +133,7 @@ function App() {
     if ('showEventForm' in s) setShowEventForm(s.showEventForm);
     if ('showOnboarding' in s) setShowOnboarding(s.showOnboarding);
     if ('editingTx' in s) setEditingTx(s.editingTx);
+    if ('copyFromTx' in s) setCopyFromTx(s.copyFromTx);
     if ('summaryTab' in s) setSummaryTab(s.summaryTab);
     if ('summaryDrilldown' in s) setSummaryDrilldown(s.summaryDrilldown);
     if ('settingsSection' in s) setSettingsSection(s.settingsSection);
@@ -276,10 +278,10 @@ function App() {
       if (!dbRef.current || blankLedgerRef.current) return;
       if (shared) {
         setAiStart({ text: shared.text, files: shared.files });
-        navigate({ showForm: true, editingTx: null });
+        navigate({ showForm: true, editingTx: null, copyFromTx: null });
       } else if (action === 'add' || action === 'ai') {
         setAiStart(action === 'ai' ? { quick: true } : null);
-        navigate({ showForm: true, editingTx: null });
+        navigate({ showForm: true, editingTx: null, copyFromTx: null });
       }
     })();
   }, [db, navigate]);
@@ -432,12 +434,28 @@ function App() {
       : `✓ ${rows[0].budget_category} ${amt}원 수정됨`);
   }, [db, editingTx, showToast]);
 
-  // id 하나 또는 id 배열(분할 묶음 전체 삭제 등)
+  // id 하나 또는 id 배열(분할 묶음 전체 삭제 등) — 화면 위 알림의 '되돌리기'로 되살릴 수 있다 (ROADMAP U-3)
   const handleDelete = useCallback((idOrIds) => {
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
-    withTransaction(db, () => ids.forEach(id => deleteTransaction(db, id)));
-    showToast(ids.length > 1 ? `✓ 거래 ${ids.length}건이 삭제되었습니다` : '✓ 거래가 삭제되었습니다');
-  }, [db, showToast]);
+    const target = db;
+    const undoRecord = deleteTransactionsForUndo(target, ids);
+    const count = undoRecord.transactions.length;
+    if (!count) return;
+    let restored = false;
+    const undo = () => {
+      if (restored) return;
+      restored = true;
+      // 지운 때와 같은 가계부에만 — 그사이 다시 불러왔으면(다른 기기와 합침·파일로 바꾸기·백업 되돌리기·다시 로그인)
+      // 기록의 번호가 새 가계부의 다른 행을 가리킬 수 있어 되살리지 않는다
+      if (dbRef.current !== target) {
+        showTopToast('그사이 가계부를 다시 불러와 되돌리지 못했습니다 — 필요하면 다시 입력해 주세요');
+        return;
+      }
+      const n = restoreDeletedTransactions(target, undoRecord);
+      showTopToast(n > 1 ? `✓ 지운 거래 ${n}건을 되살렸습니다` : '✓ 지운 거래를 되살렸습니다');
+    };
+    showTopToast(count > 1 ? `✓ 거래 ${count}건이 삭제되었습니다` : '✓ 거래가 삭제되었습니다', { label: '되돌리기', onClick: undo });
+  }, [db, showTopToast]);
 
   /** 화면이 변경 후 부르는 콜백 — 바로 저장하고, 성공하면 안내한다 */
   const saveWithToast = useCallback(async (msg = '✓ 저장됨') => {
@@ -450,6 +468,7 @@ function App() {
   const handleLogout = useCallback(async () => {
     if (loggingOutRef.current) return;
     loggingOutRef.current = true;
+    hideTopToast(); // '되돌리기'가 다음 계정의 가계부에 남지 않게
     try {
       if (dirty) {
         const ok = await saveNow();
@@ -494,20 +513,27 @@ function App() {
       loggingOutRef.current = false;
       setError(`로그아웃 실패: ${e.message}`);
     }
-  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast, provider, driveName]);
+  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast, hideTopToast, provider, driveName]);
 
   const openAdd = (date) => {
     setDefaultFormDate(typeof date === 'string' ? date : null);
-    navigate({ showForm: true, editingTx: null });
+    navigate({ showForm: true, editingTx: null, copyFromTx: null });
   };
 
   const openEdit = (tx) => {
-    navigate({ showForm: true, editingTx: tx });
+    navigate({ showForm: true, editingTx: tx, copyFromTx: null });
+  };
+
+  // 이 거래로 새로 입력 (U-6) — 거래 상세 창에서
+  const openCopy = (tx) => {
+    setDefaultFormDate(null);
+    navigate({ showForm: true, editingTx: null, copyFromTx: tx });
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditingTx(null);
+    setCopyFromTx(null);
     setDefaultFormDate(null);
     window.history.back();
   };
@@ -611,6 +637,7 @@ function App() {
             goTodayKey={listGoTodayKey}
             onAdd={openAdd}
             onEdit={openEdit}
+            onCopy={openCopy}
             onDelete={handleDelete}
             onChanged={() => saveWithToast()}
             onOpenImport={() => navigate({ showImport: true })}
@@ -670,6 +697,7 @@ function App() {
             onCloseEventForm={() => { setShowEventForm(false); window.history.back(); }}
             onAddTransaction={openAdd}
             onEditTransaction={openEdit}
+            onDeleteTransaction={handleDelete}
           />
         )}
         {activeTab === 'account' && (
@@ -776,8 +804,9 @@ function App() {
           db={db}
           dataVersion={dataVersion}
           editingTx={editingTx}
+          copyFromTx={editingTx ? null : copyFromTx}
           defaultDate={defaultFormDate}
-          aiStart={editingTx ? null : aiStart}
+          aiStart={editingTx || copyFromTx ? null : aiStart}
           onSave={editingTx ? handleUpdate : handleAdd}
           onBulkAdd={handleBulkAdd}
           onQuickAdd={handleQuickAdd}

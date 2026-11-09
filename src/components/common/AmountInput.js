@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { evaluateExpression, formatAmount, isIncompleteFormula } from '../../services/formulaEvaluator';
+import { amountInWords, evaluateExpression, formatAmount, isIncompleteFormula } from '../../services/formulaEvaluator';
 import './AmountInput.css';
 
 /**
@@ -17,6 +17,8 @@ import './AmountInput.css';
  *   allowNegative  수식 결과의 음수 허용 (계좌 잔액 등)
  *   unit           미리보기 단위 ('원' 기본, 'JPY' 등)
  *   preview        수식 미리보기 표시 여부
+ *   words          원화 금액을 '125만 원'처럼 읽어 줌(기본 켬, U-4) — 칸 아래(수식이면 결과 옆). 외화·소수(decimal)에는 안 함.
+ *                  좁은 칸(목표 금액·필터 범위 등 한 줄에 붙은 칸)은 false — 줄이 하나 더 생겨 모양이 흐트러진다
  *   containerClassName / containerStyle  감싸는 div용
  *   나머지 props(className, style, placeholder, autoFocus, onKeyDown…)는 input에 전달
  */
@@ -77,6 +79,7 @@ export default function AmountInput({
   allowNegative = false,
   unit = '원',
   preview = true,
+  words = true,
   containerClassName = '',
   containerStyle,
   className = '',
@@ -90,6 +93,8 @@ export default function AmountInput({
   const isValid = result !== null && !isNaN(result);
   const showError = trimmed !== '' && !isValid && !isIncompleteFormula(trimmed);
   const showPreview = preview && isValid && trimmed !== '' && !isPlainNumber(trimmed);
+  // 만 원이 넘는 원화는 만·억 단위로 읽어 준다 — 0을 하나 더/덜 넣은 것을 입력하며 바로 보게 (U-4)
+  const wordsText = words && !decimal && unit === '원' && isValid ? amountInWords(result) : '';
 
   const [focused, setFocused] = useState(false);
   const [toolbarBottom, setToolbarBottom] = useState(0);
@@ -209,7 +214,13 @@ export default function AmountInput({
         </div>
       )}
       {showPreview && (
-        <span className="formula-preview">= {formatResult(result, decimal)}{unitLabel}</span>
+        <span className="formula-preview">
+          = {formatResult(result, decimal)}{unitLabel}{wordsText && <span className="amount-words"> · {wordsText}</span>}
+        </span>
+      )}
+      {/* 포커스와 관계없이 보인다 — 칸을 떠나는 순간 줄이 사라져 아래 버튼이 밀려 올라가 누르던 것을 놓치지 않게 */}
+      {!showPreview && wordsText && (
+        <span className="amount-words amount-words--alone">{wordsText}</span>
       )}
       {showError && (
         <span className="formula-error">올바른 숫자 또는 수식을 입력하세요</span>

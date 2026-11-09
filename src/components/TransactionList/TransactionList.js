@@ -21,7 +21,7 @@ import { currentYearMonth, todayStr as todayDateStr, addMonths } from '../../ser
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 
-function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenReport, onOpenOnboarding, onOpenSettings }) {
+function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCopy, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenReport, onOpenOnboarding, onOpenSettings }) {
   // 탭을 옮겼다 와도(설정 › AI에 다녀오는 등) 걸던 조건을 이어 쓴다 — 그사이 없어진 이름은 뺀다
   const [filters, setFilters] = useState(() => fitSavedFilters(loadSessionFilters(), {
     paymentMethods: getAllPaymentMethods(db).map(m => m.name),
@@ -557,6 +557,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                           <AmountInput
                             className="month-goal-input"
                             containerStyle={{ flex: '0 0 100px' }}
+                            words={false}
                             value={editingGoalValue}
                             onChange={v => { setEditingGoalValue(v); setGoalError(''); }}
                             onKeyDown={e => {
@@ -793,7 +794,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                 </div>
               )}
             </div>
-            <div className="form-actions" style={{ padding: '0 20px 20px' }}>
+            <div className="form-actions" style={{ padding: '0 20px 20px', flexWrap: 'wrap' }}>
               <button
                 className="btn-danger"
                 style={{ marginRight: 'auto', flex: 'none', padding: '8px 14px', fontSize: 'calc(13px * var(--fs))' }}
@@ -802,6 +803,16 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                 삭제
               </button>
               <button className="btn-secondary" onClick={() => setSelectedDetail(null)}>닫기</button>
+              {onCopy && (
+                <button
+                  className="btn-secondary"
+                  style={{ padding: '8px 12px', fontSize: 'calc(13px * var(--fs))' }}
+                  title="이 거래의 내용·분류·결제수단·금액으로 오늘 날짜의 새 거래를 입력합니다"
+                  onClick={() => { onCopy(selectedDetail); setSelectedDetail(null); }}
+                >
+                  복사해 입력
+                </button>
+              )}
               <button className="btn-primary" onClick={() => { onEdit(selectedDetail); setSelectedDetail(null); }}>
                 수정
               </button>

@@ -423,3 +423,12 @@
   color: #fff;
   font-weight: 600;
 }
+
+/* 날짜 빠른 선택 (U-5) — 오늘·어제·그제 */
+.txf-date-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.txf-date-quick { display: flex; gap: 6px; }
+.txf-date-chip {
+  min-height: 32px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-muted);
+  font-size: calc(12px * var(--fs)); cursor: pointer; white-space: nowrap;
+}
+.txf-date-chip--on { border-color: var(--primary); background: var(--c-blue-50); color: var(--primary-text); font-weight: 700; }
