@@ -316,6 +316,42 @@ export function hasWriteId(db, id) {
   return readWriteId(db) === id || readWriteLog(db).includes(id);
 }
 
+// ── 가계부 세대 (I-035, ROADMAP F-5) ──────────────────────────────
+// 가계부를 다른 파일로 통째로 바꾸면(설정 › 데이터 › 가계부 파일로 바꾸기) 새 세대 표시를 남긴다.
+// 저장하지 못한 변경은 그 변경의 바탕이 된 가계부와 세대가 같을 때만 다시 실행한다 — 바꾼 가계부에서 같은 번호의 행은
+// 전혀 다른 거래라, 다른 기기의 밀린 수정·삭제가 엉뚱한 행에 들어간다. 세대 표시가 없는 가계부는 ''(처음 세대).
+// 백업으로 되돌리기는 같은 가계부의 옛 모습이라 세대를 바꾸지 않는다(되돌린 가계부에 밀린 변경을 이어서 저장).
+// 표시는 SQLite 파일 머리의 application_id(32비트 정수, 0 = 처음 세대)에 둔다 — 늘 읽혀 있는 첫 페이지라 쓸 때마다
+// 읽어도 비용이 없고, 표(settings)에 섞이지 않아 병합·내보내기에 끼지 않는다. (user_version은 스키마 버전이 쓴다)
+
+export function readGeneration(db) {
+  if (!db) return 0;
+  try {
+    return Number(Object.getPrototypeOf(db).exec.call(db, 'PRAGMA application_id')[0]?.values[0]?.[0]) || 0;
+  } catch (e) {
+    return 0; // 닫힌 DB 등
+  }
+}
+
+/**
+ * 파일 바이트에서 바로 읽는 세대 — SQLite 파일 머리 68~71바이트(application_id, 큰 쪽이 앞). 파일이 없으면 0.
+ * 저장·병합 경로는 DB에 질의하지 않고 이것으로 견준다(받은 파일·올린 파일의 바이트가 늘 있다)
+ */
+export function generationOfBytes(bytes) {
+  if (!bytes || bytes.length < 100) return 0;
+  // eslint-disable-next-line no-bitwise
+  return ((bytes[68] << 24) | (bytes[69] << 16) | (bytes[70] << 8) | bytes[71]) | 0;
+}
+
+/** 새 세대 표시를 남긴다(변경 기록에 남지 않게 — 파일째 올리는 DB에만 쓴다). 반환: 새 표시(0이 아닌 정수) */
+export function stampGeneration(db) {
+  let id = 0;
+  while (!id) id = Math.floor(Math.random() * 0x7fffffff);
+  // PRAGMA는 값을 ?로 묶을 수 없다 — 여기서 만든 정수만 넣는다 (AGENTS §2-9)
+  rawRun(db, `PRAGMA application_id = ${id}`);
+  return id;
+}
+
 // ── 브라우저 보관 ────────────────────────────────────────────────
 
 const PENDING_PREFIX = 'ledger_pending_changes:';

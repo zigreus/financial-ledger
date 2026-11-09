@@ -7,7 +7,9 @@ import { buildTransactionsCSV } from '../../../services/exportData';
 import { isValidDateStr, todayStr } from '../../../services/dateUtils';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import { downloadText, downloadBytes } from '../../common/download';
-import { currentBackupPath } from '../../../services/storage/driveName';
+import { currentBackupPath, currentDriveName } from '../../../services/storage/driveName';
+import { inspectLedgerFile, ledgerSummary } from '../../../services/ledgerFile';
+import { readFileBytes } from '../../../services/sheetFile';
 import { AddItemRow } from '../MasterItemList';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
 
@@ -15,13 +17,14 @@ const blockStyle = { marginBottom: '24px', paddingBottom: '20px', borderBottom: 
 const titleStyle = { fontSize: '14px', fontWeight: '600', marginBottom: '6px' };
 const descStyle = { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 };
 
-/** 설정 › 데이터 — 가족 구성원, 내보내기, 백업·되돌리기 */
+/** 설정 › 데이터 — 가족 구성원, 내보내기, 백업·되돌리기, 가계부 파일로 바꾸기 */
 export default function DataSection({ db, dataVersion, onChanged, setError, backup }) {
   return (
     <div>
       <MembersBlock db={db} dataVersion={dataVersion} onChanged={onChanged} setError={setError} />
       <ExportBlock db={db} setError={setError} />
       {backup && <BackupBlock backup={backup} setError={setError} />}
+      {backup?.replaceWithFile && <ReplaceBlock db={db} dataVersion={dataVersion} backup={backup} setError={setError} />}
     </div>
   );
 }
@@ -294,6 +297,99 @@ function BackupBlock({ backup, setError }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// ── 가계부 파일로 바꾸기 (I-035, ROADMAP F-5) ────────────────────
+
+const won = n => Number(n || 0).toLocaleString();
+function summaryText(s) {
+  const period = s.from ? ` (${s.from} ~ ${s.to})` : '';
+  return `거래 ${won(s.transactions)}건${period} · 카테고리 ${won(s.categories)} · 결제수단 ${won(s.paymentMethods)} · 계좌 ${won(s.accounts)} · 일정 ${won(s.events)} · 정기지출 ${won(s.recurring)}`;
+}
+
+/**
+ * 다른 계정·드라이브에서 쓰던 가계부(.db)를 이 계정의 가계부로 통째로 옮겨 온다.
+ * 파일을 고르면 이 앱의 가계부인지 살펴 지금 가계부와 견줘 보이고, 확정할 때만 바꾼다(B-029).
+ * 바꾸기 전 지금 가계부는 백업 목록에 남는다(되돌리기로 돌아올 수 있음).
+ */
+function ReplaceBlock({ db, dataVersion, backup, setError }) {
+  const live = useDbSnapshot(db, dataVersion);
+  const current = useMemo(() => ledgerSummary(live.db), [live]);
+  const [picked, setPicked] = useState(null);   // { name, bytes, summary }
+  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [fileError, setFileError] = useState('');
+  const seqRef = useRef(0);
+  useEffect(() => () => { seqRef.current += 1; }, []);
+
+  const choose = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const seq = ++seqRef.current;
+    setPicked(null);
+    setMessage('');
+    setFileError('');
+    setChecking(true);
+    try {
+      const bytes = await readFileBytes(file);
+      const summary = await inspectLedgerFile(bytes);
+      if (seq === seqRef.current) setPicked({ name: file.name, bytes, summary });
+    } catch (err) {
+      if (seq === seqRef.current) setFileError(err.message);
+    } finally {
+      if (seq === seqRef.current) setChecking(false);
+    }
+  };
+
+  const replace = async () => {
+    if (!picked) return;
+    const ok = window.confirm(
+      `지금 가계부를 "${picked.name}"의 내용으로 통째로 바꿉니다.\n\n`
+      + `· 지금 가계부(거래 ${won(current.transactions)}건)는 바꾸기 전에 백업 목록에 남깁니다 — 되돌리기로 돌아올 수 있습니다.\n`
+      + '· 이 계정을 쓰는 다른 기기에서 아직 저장하지 않은 입력은 바뀐 가계부에 들어가지 않습니다(그 기기에 알림).\n'
+      + '· 가족 구성원 이름·카테고리·계좌·일정·설정도 모두 파일의 것으로 바뀝니다.',
+    );
+    if (!ok) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await backup.replaceWithFile(picked.bytes);
+      setMessage(`✓ 가계부를 "${picked.name}"로 바꿨습니다. 바꾸기 전 가계부는 위 백업 목록에 있습니다.`);
+      setPicked(null);
+      setError('');
+    } catch (err) {
+      setError(`바꾸기 실패: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+      <div style={titleStyle}>가계부 파일로 바꾸기</div>
+      <div style={descStyle}>
+        다른 계정({currentDriveName() === 'Google Drive' ? 'OneDrive' : 'Google Drive'} 등)에서 쓰던 가계부를 옮겨 올 때 씁니다.
+        그 계정에서 위 &apos;가계부 파일(.db) 내려받기&apos;로 받은 파일을 고르세요. 거래뿐 아니라 카테고리·결제수단·계좌·정기지출·일정·설정까지 그대로 옮겨집니다.
+        엑셀·CSV는 거래내역 › 가져오기를 쓰세요.
+      </div>
+      <input type="file" accept=".db,.sqlite,application/octet-stream" onChange={choose} disabled={busy || checking} className="data-file-input" aria-label="가계부 파일 고르기" />
+      {checking && <div className="data-muted">파일을 살펴보는 중…</div>}
+      {fileError && <div className="error-msg" style={{ fontSize: '13px' }}>{fileError}</div>}
+      {picked && (
+        <div className="data-replace-compare">
+          <div><b>고른 파일</b><span>{summaryText(picked.summary)}</span></div>
+          <div><b>지금 가계부</b><span>{summaryText(current)}</span></div>
+          <div className="data-actions">
+            <button className="btn-primary" onClick={replace} disabled={busy}>{busy ? '바꾸는 중…' : '이 파일로 바꾸기'}</button>
+            <button className="btn-secondary" onClick={() => setPicked(null)} disabled={busy}>취소</button>
+          </div>
+        </div>
+      )}
+      {message && <div className="data-message">{message}</div>}
     </div>
   );
 }

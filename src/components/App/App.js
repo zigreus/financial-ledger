@@ -63,15 +63,15 @@ function App() {
   const {
     db, dataVersion, loading, saving, error, setError, notice, offline,
     dirty, pendingCount, loadDb, saveNow, resetForLogout,
-    listBackups, createBackup, restoreBackup,
+    listBackups, createBackup, restoreBackup, replaceWithFile,
   } = useLedgerSync({ storage });
   // 늦게 끝나는 일(AI 입력의 바로 넣기·되돌리기)이 그 순간의 DB를 쓰게 — 저장소에서 다시 받으면 DB 객체가 바뀐다
   const dbRef = React.useRef(db);
   dbRef.current = db;
-  // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
+  // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014)·가계부 파일로 바꾸기 (I-035) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
   const backupApi = useMemo(
-    () => ({ list: listBackups, create: createBackup, restore: restoreBackup }),
-    [listBackups, createBackup, restoreBackup],
+    () => ({ list: listBackups, create: createBackup, restore: restoreBackup, replaceWithFile }),
+    [listBackups, createBackup, restoreBackup, replaceWithFile],
   );
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
@@ -784,6 +784,14 @@ function App() {
             onClose={handleOnboardingClose}
             onLater={handleOnboardingLater}
             onOpenImport={() => navigate({ showOnboarding: false, showImport: true })}
+            onOpenReplace={() => {
+              // 이 기기에서 저절로 열지 않게 하고 설정 › 데이터의 '가계부 파일로 바꾸기'로 (F-5)
+              postponeOnboarding(accountKey);
+              navigate({
+                showOnboarding: false, activeTab: 'settings', settingsSection: 'data',
+                settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+              });
+            }}
           />
         </Suspense>
       )}

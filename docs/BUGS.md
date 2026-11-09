@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-034
+다음 번호: B-093, I-036
 
 ## 요약표
 
@@ -141,6 +141,8 @@
 | I-031 | ✅ | - | 로그인·저장 | Microsoft 계정·OneDrive가 없으면 쓸 수 없음 — Google 계정·Google Drive로도 쓰게 (ROADMAP M-1) |
 | I-032 | ✅ | - | 설정 | 선택 기능을 켜는 자리가 예산·정기지출·캘린더로 흩어져 어떤 기능이 있는지 찾기 어려움 (ROADMAP Q-2) |
 | I-033 | ✅ | - | 성능 | 앱 코드가 한 파일로 커져 휴대폰에서 첫 화면 전에 읽고 실행할 양이 많음 (ROADMAP Q-3) |
+| I-034 | ✅ | - | 가져오기 | 쓰던 엑셀 가계부·은행·카드·다른 앱 내역은 양식이 제각각이라 이 앱 양식으로 고쳐야만 가져올 수 있음 (ROADMAP M-7) |
+| I-035 | ✅ | - | 데이터·저장 | 다른 계정(OneDrive ↔ Google Drive)으로 옮길 때 거래 CSV뿐이라 카테고리·계좌·정기지출·일정·설정이 빠짐 (ROADMAP F-5) |
 
 
 ## 상세
@@ -1236,3 +1238,19 @@
 - 원인: 연결 없이 열기(I-024)를 위해 서비스 워커가 index.html이 가리키는 파일만 받아 두므로, 늦게 불러오는 나누기를 쓰지 않았다.
 - 해결: 요약·캘린더·계좌·설정·가져오기·카드 대조·첫 실행 안내와 입력 창의 AI 입력을 열 때 불러오는 파일로 나누고(lazyScreen — 불러온 화면은 기다림 없이, 창은 기다림 창, 못 불러오면 다시 시도·새로 고침, 다시 열면 저절로 다시 받기) 로그인 뒤 쉬는 틈에 미리 불러 두며, 빌드가 나눈 파일을 index.html에 prefetch로 적어 서비스 워커가 함께 받아 두게 하고(CSS는 한 파일·탭 선택자 범위를 좁혀 순서에 기대지 않음, 받아 둔 빌드 파일은 Vary를 보지 않고 찾고 바로 전 배포 것도 한 번 남김) 메인 파일을 631kB에서 273kB(gzip 188→84kB)로 줄였다(ROADMAP Q-3, 사용자 요청).
 - 파일: src/components/common/lazyScreen.js·lazyScreen.css(새), src/components/App/screens.js(새)·App.js·App.css, src/components/AIEntry/lazyAIEntry.js(새), src/components/TransactionForm/TransactionForm.js, src/components/SummaryView/summaryState.js(새)·SummaryView.js·SummaryView.css, src/components/SettingsView/SettingsView.css, vite.config.mjs, public/sw.js, src/components/common/__tests__/lazyScreen.test.js(새), src/components/App/__tests__/App.google·launch·onboarding·quickAdd.test.js, src/components/TransactionForm/__tests__/member·refactor.test.js, AGENTS.md, docs/ROADMAP.md
+
+### I-034 쓰던 엑셀 가계부·은행·카드·다른 앱 내역은 양식이 제각각이라 이 앱 양식으로 고쳐야만 가져올 수 있음 (ROADMAP M-7)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 가져오기
+- 문제: 가져오기는 이 앱의 칸 이름(payment_method, date …)으로 된 CSV·JSON만 받아, 사람마다 다른 엑셀 가계부나 은행·카드사 내역을 옮기려면 손으로 양식을 고쳐야 한다(.xlsx·EUC-KR CSV·HTML 표 .xls는 읽지도 못함).
+- 원인: 파일 읽기가 UTF-8 CSV 하나뿐이고, 칸 이름이 정확히 같아야 읽으며, 수입·이체 줄·카테고리별 금액 열 같은 흔한 모양을 다룰 단계가 없다.
+- 해결: 표 파일 읽기(CSV 인코딩·구분 문자 자동, xlsx는 브라우저 내장 압축 풀기, HTML 표·엑셀 2003 XML, 예전 .xls는 안내, 10만 줄 넘으면 알림)와 열·분류 맞추기 단계(규칙으로 짐작 — 수입·이체·승인 취소·환불·합계 줄 건너뛰기, 거래 종류 열 구별, 카테고리별 금액 열, 병합한 날짜 채우기, 연도·일만 있는 날짜, 월별 시트 함께, 분류 열이 없으면 내용별로 입력 습관 먼저, 같은 양식은 기기에 기억)를 기존 검사·중복 표시·가져오기 앞에 두고, AI는 앞줄(번호 가림)·이름 목록만 보내 맞추기만 추천하게 했다(ROADMAP M-7, 사용자 요청).
+- 파일: src/services/sheetFile.js·sheetImport.js·importAI.js(새), src/services/csv.js, src/components/ImportModal/SheetMapper.js(새)·ImportModal.js·ImportModal.css, src/components/Onboarding/Onboarding.js, src/services/__tests__/sheetFile.test.js·sheetImport.test.js·importAI.test.js(새), src/components/ImportModal/__tests__/SheetMapper.ui.test.js(새), SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-035 다른 계정(OneDrive ↔ Google Drive)으로 옮길 때 거래 CSV뿐이라 카테고리·계좌·정기지출·일정·설정이 빠짐 (ROADMAP F-5)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 데이터·저장
+- 문제: 가계부 파일(.db)은 내려받을 수 있지만 다른 계정에 올리는 길이 없고, Google은 drive.file 범위라 드라이브에 직접 올린 ledger.db도 앱이 보지 못한다.
+- 원인: 가계부를 통째로 바꾸는 길이 백업으로 되돌리기뿐이고, 되돌리기는 다른 기기의 밀린 변경을 이어서 저장하는데 다른 가계부라면 같은 번호의 엉뚱한 행을 고치게 된다.
+- 해결: 설정 › 데이터에 '가계부 파일로 바꾸기'(고른 파일을 살펴 지금 가계부와 견주고 확정할 때만, 되돌리기와 같은 절차로 지금 파일을 먼저 백업)를 두고, 바꾼 가계부에 SQLite application_id로 새 세대를 찍어 저장 안 된 변경은 세대가 같을 때만 다시 실행하며(병합·다시 열기·바꾸는 동안 입력), 다르면 그 변경이 담긴 그 기기의 가계부를 백업으로 남기고 알린다 — 세대는 파일 바이트에서 읽는다(ROADMAP F-5, 사용자 요청).
+- 파일: src/services/ledgerFile.js(새), src/services/changeLog.js, src/hooks/useLedgerSync.js, src/components/SettingsView/sections/DataSection.js·SettingsView.css, src/components/App/App.js, src/components/Onboarding/Onboarding.js, src/hooks/__tests__/useLedgerSync.replace.test.js(새), src/components/__tests__/ReplaceLedger.ui.test.js(새), SETUP.md, AGENTS.md, docs/ROADMAP.md

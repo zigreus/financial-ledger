@@ -17,9 +17,10 @@ const toItems = (names) => names.map(name => ({ name, on: true }));
  * onDone(counts): 넣은 뒤 — { categories, subCategories, paymentMethods }
  * onClose(): 이번만 닫는다(✕·뒤로가기) — 다음에 열 때 다시 보여 준다
  * onLater(): 이 기기에서 다음부터 저절로 열지 않는다(거래내역 빈 화면에서 다시 열 수 있다)
- * onOpenImport(): 이미 쓰던 가계부를 CSV로 가져온다
+ * onOpenImport(): 이미 쓰던 가계부(엑셀·CSV·카드·은행 내역)를 가져온다 (M-7)
+ * onOpenReplace(): 다른 계정에서 쓰던 이 앱의 가계부 파일(.db)로 바꾸러 설정 › 데이터로 간다 (F-5)
  */
-export default function Onboarding({ db, accountLabel, onDone, onClose, onLater, onOpenImport }) {
+export default function Onboarding({ db, accountLabel, onDone, onClose, onLater, onOpenImport, onOpenReplace }) {
   const [template, setTemplate] = useState(null);
   const [categories, setCategories] = useState([]); // [{ name, on, subs: [{ name, on }] }]
   const [payments, setPayments] = useState([]);     // [{ name, on }]
@@ -104,7 +105,10 @@ export default function Onboarding({ db, accountLabel, onDone, onClose, onLater,
             ))}
           </div>
           <div className="onb-alt">
-            <button type="button" className="onb-link" onClick={onOpenImport}>이미 쓰던 가계부(CSV)가 있어요 — 가져오기</button>
+            <button type="button" className="onb-link" onClick={onOpenImport}>쓰던 엑셀·CSV 가계부나 카드·은행 내역이 있어요 — 가져오기</button>
+            {onOpenReplace && (
+              <button type="button" className="onb-link" onClick={onOpenReplace}>다른 계정에서 이 앱을 쓰던 가계부 파일(.db)이 있어요 — 옮겨 오기</button>
+            )}
             <button type="button" className="onb-link" onClick={onLater}>나중에 할게요</button>
           </div>
         </div>

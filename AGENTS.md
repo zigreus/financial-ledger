@@ -22,10 +22,12 @@
 | `src/services/storage/oneDrive.js` + memory | OneDrive 구현(Graph, eTag 조건부 저장) / 테스트용 메모리 가짜(같은 버전 규칙) |
 | `src/services/storage/googleDrive.js` + `src/auth/googleAuth.js` | Google Drive 구현(Drive v3, 버전은 headRevisionId — 원자적 조건부 저장이 없어 저장 직전 확인 + 저장 뒤 리비전 확인·되돌리기로 대신) / Google 로그인(서버 없는 토큰 방식, 약 1시간마다 만료 → `ReconnectRequiredError`, 앱의 '다시 연결'). 테스트는 `__tests__/fakeDrive.js` |
 | `src/services/backups.js` | 백업 이름 규칙·목록·정리(저장소와 무관). 실제 파일은 저장소의 백업 폴더(OneDrive는 `backups/`) |
+| `src/services/ledgerFile.js` | 가계부 파일로 바꾸기 전 살피기(이 앱의 가계부인지·더 새 버전인지, 거래 수·기간 등). 바꾸기는 useLedgerSync의 `replaceWithFile` (I-035) |
 | `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 계정별) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
 | `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
+| `src/services/sheetFile.js` + sheetImport·importAI + `components/ImportModal/SheetMapper.js` | 아무 양식의 표 가져오기(I-034): 파일 읽기(CSV 인코딩·구분 문자, xlsx는 내장 압축 풀기, HTML 표 .xls) / 열·분류 맞추기(규칙 짐작·입력 습관·기기에 기억한 양식) → ImportModal의 기존 검사·가져오기 / AI는 맞추기 추천만(앞줄·이름 목록만 보냄) |
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
 | `src/services/quickEntry.js` + `components/AIEntry` | 'AI 입력' 하나로 사진·카드 문자·말을 갈래 지어 읽고, 늘 넣던 거래만 바로 넣기(`familiarity`). 바로 넣은 것은 App 알림·확인 화면의 되돌리기(`removeAddedTransactions`, 그 순간의 DB에서 넣은 그대로인 행만) |
 | `src/services/txFilters.js` + txSummary | 거래내역 필터(기간·여러 개 선택·순지출 금액 범위·저장한 필터)와 걸러진 결과의 집계·AI 요약(집계만 보냄) |
@@ -47,6 +49,7 @@
    - 동기화 코드는 어느 저장소인지 모릅니다. 저장소별 코드는 `services/storage/`에만 두고, 새 저장소는 `storage.test.js`의 계약 테스트를 함께 통과해야 합니다. (I-018)
    - `onChanged()`는 "지금 저장하고 토스트를 보여 줘"라는 뜻입니다. 부르지 않아도 저장은 됩니다. (B-001, B-003, B-037)
    - 저장소에 연결이 없으면 `OfflineError`를 던집니다(그때는 로그인 화면으로 넘기지 않음). useLedgerSync는 이 기기의 사본(`offlineCache`)으로 열고, 연결되면 사본 버전으로 저장해 기존 병합 경로로 합칩니다. 저장소와 맞춘 순간(불러오기·저장·병합·되돌리기)마다 사본을 새로 남기고, 로그아웃하면 지웁니다. 사본으로 연 동안에는 자동등록을 하지 않습니다. (I-024, B-004)
+   - 가계부를 다른 파일로 통째로 바꾸면(`replaceWithFile`) SQLite 머리의 `application_id`에 새 **세대**를 찍습니다. 저장 안 된 변경(병합·다시 열기·바꾸는 동안 입력)은 바탕 가계부와 세대가 같을 때만 다시 실행하고, 다르면 넣지 않고 알립니다 — 바뀐 가계부의 같은 번호 행은 다른 거래입니다. 세대는 파일 바이트에서 읽습니다(`generationOfBytes`, 쓰기 경로에서 DB에 질의하지 않게). `application_id`는 세대 전용, `user_version`은 스키마 버전입니다. (I-035)
 3. **확정 전에는 DB에 쓰지 않습니다.**
    - 미리보기, 마법사 중간 단계, 취소 가능한 화면에서 쓰면 바로 저장됩니다.
    - 사용자가 확정할 때 한 번에 씁니다. (B-029)

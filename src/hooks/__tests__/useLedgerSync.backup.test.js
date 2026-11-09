@@ -92,7 +92,7 @@ test('그날 처음 받으면 받은 파일 그대로 매일 백업을 만들고
   const again = await opened();
   expect(create).toHaveBeenCalledTimes(1);
   again.unmount();
-});
+}, 20000); // 백업 30개를 만드는 무거운 준비 — 전체 테스트를 함께 돌리는 부하에서 5초를 넘길 수 있다
 
 test('매일 백업이 실패해도 앱은 열리고, 다음에 받을 때 다시 시도한다', async () => {
   const create = vi.spyOn(storage, 'createBackup').mockRejectedValueOnce(new Error('네트워크 오류'));

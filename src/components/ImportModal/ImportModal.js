@@ -7,14 +7,17 @@ import {
   withTransaction,
 } from '../../services/dbManager';
 import { buildValidationContext, detectIssues } from '../../services/txValidator';
-import { parseCSV, unescapeSpreadsheetText } from '../../services/csv';
+import { unescapeSpreadsheetText } from '../../services/csv';
 import {
   normalizeDateStr, parseImportAmount, markDuplicates, txDuplicateKey, countExistingTransactions,
   loadTripEvents, findTripEvent, createTripEvent,
 } from '../../services/importHelpers';
+import { readSheetFile, readFileBytes, decodeText, MAX_ROWS } from '../../services/sheetFile';
+import { appTemplateHeaderRow, templateEntries } from '../../services/sheetImport';
 import './ImportModal.css';
 import ModalOverlay from '../common/ModalOverlay';
 import { downloadText } from '../common/download';
+import SheetMapper from './SheetMapper';
 
 // ── 템플릿 ────────────────────────────────────────────────────────────
 // JSON: _no 필드로 행 번호를 명시 → 오류 발생 시 해당 행을 즉시 찾을 수 있음
@@ -231,26 +234,19 @@ function analyze(db, entries) {
   return { rows, hardErrors };
 }
 
-/** 파일 → [{ label, raw }]. label은 오류 표시에 쓰는 행 위치 */
-function readEntries(fileName, text) {
-  const name = fileName.toLowerCase();
-  if (name.endsWith('.json')) {
-    const data = JSON.parse(text.replace(/^﻿/, ''));
-    if (!Array.isArray(data)) throw new Error('JSON은 배열 형식이어야 합니다.');
-    return data.map((raw, idx) => {
-      const no = raw && typeof raw === 'object' ? cellText(raw._no) : '';
-      return { label: no ? `_no ${no}` : `${idx + 1}번째 항목`, raw };
-    });
-  }
-  if (name.endsWith('.csv')) {
-    // rowNumber: 스프레드시트에서 보이는 행 번호 (헤더가 1행)
-    return parseCSV(text).map(({ rowNumber, fields }) => ({ label: `${rowNumber}행`, raw: fields }));
-  }
-  throw new Error('JSON 또는 CSV 파일을 업로드해주세요.');
+/** JSON 파일 → [{ label, raw }]. label은 오류 표시에 쓰는 행 위치 */
+function readJsonEntries(text) {
+  const data = JSON.parse(text.replace(/^﻿/, ''));
+  if (!Array.isArray(data)) throw new Error('JSON은 배열 형식이어야 합니다.');
+  return data.map((raw, idx) => {
+    const no = raw && typeof raw === 'object' ? cellText(raw._no) : '';
+    return { label: no ? `_no ${no}` : `${idx + 1}번째 항목`, raw };
+  });
 }
 
 // ── 컴포넌트 ─────────────────────────────────────────────────────────
-function ImportModal({ db, onImport, onClose }) {
+// step: upload → (앱 양식이 아니면) map: 열·분류 맞추기(SheetMapper, M-7) → conflict(오류·없는 항목) → preview → done
+function ImportModal({ db, dataVersion, onImport, onClose }) {
   const [step, setStep] = useState('upload');
   const [rows, setRows] = useState([]);
   const [hardErrors, setHardErrors] = useState([]);
@@ -258,6 +254,10 @@ function ImportModal({ db, onImport, onClose }) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const [importedCount, setImportedCount] = useState(0);
+  const [reading, setReading] = useState(false);
+  // 아무 양식의 표(엑셀·CSV·은행 내역) — 열·분류 맞추기 단계가 쓴다. 검사 단계에서 돌아와 다시 맞출 수 있게 남겨 둔다
+  const [workbook, setWorkbook] = useState(null);
+  const [rememberFormat, setRememberFormat] = useState(null);   // 가져오기를 마치면 부를 '이 양식 기억하기'
 
   const rowsToImport = includeDuplicates ? rows : rows.filter(r => !r.isDuplicate);
   const duplicateCount = rows.filter(r => r.isDuplicate).length;
@@ -265,37 +265,65 @@ function ImportModal({ db, onImport, onClose }) {
   const missingAll = step === 'conflict' ? findMissing(db, rows) : null;
   const missingToAdd = step === 'preview' ? findMissing(db, rowsToImport) : null;
 
-  const handleFileChange = (e) => {
+  // 행들을 검사하고 오류·없는 항목이 있으면 conflict, 아니면 preview로
+  const review = (entries) => {
+    if (entries.length === 0) { setError('데이터가 없습니다.'); return; }
+    const result = analyze(db, entries);
+    setRows(result.rows);
+    setHardErrors(result.hardErrors);
+    setIncludeDuplicates(false);
+    if (result.rows.length === 0 && result.hardErrors.length === 0) {
+      setError('데이터를 인식할 수 없습니다. 파일 형식을 확인해주세요.');
+      return;
+    }
+    // 유효 행이 0개여도 충돌 단계로 이동해 어떤 행이 왜 실패했는지 표시한다
+    const needsReview = result.hardErrors.length > 0 || hasAnyMissing(findMissing(db, result.rows));
+    setError('');
+    setStep(needsReview ? 'conflict' : 'preview');
+  };
+
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';   // 같은 파일을 다시 골라도 읽게
     if (!file) return;
     setError('');
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const text = evt.target?.result;
-        if (typeof text !== 'string') { setError('파일을 읽을 수 없습니다.'); return; }
-
-        const entries = readEntries(file.name, text);
-        if (entries.length === 0) { setError('데이터가 없습니다.'); return; }
-
-        const result = analyze(db, entries);
-        setRows(result.rows);
-        setHardErrors(result.hardErrors);
-        setIncludeDuplicates(false);
-
-        if (result.rows.length === 0 && result.hardErrors.length === 0) {
-          setError('데이터를 인식할 수 없습니다. 파일 형식(JSON/CSV)을 확인해주세요.');
+    setWorkbook(null);
+    setRememberFormat(null);
+    setReading(true);
+    try {
+      if (/\.json$/i.test(file.name)) {
+        review(readJsonEntries(decodeText(await readFileBytes(file))));
+        return;
+      }
+      // CSV·엑셀·은행 내역(HTML 표) — 이 앱의 양식(내보내기와 같은 칸)이면 바로, 아니면 열·분류 맞추기로 (M-7)
+      const book = await readSheetFile(file);
+      const only = book.sheets.length === 1 ? book.sheets[0] : null;
+      const templateRow = only ? appTemplateHeaderRow(only.rows) : -1;
+      if (templateRow >= 0) {
+        // 너무 커서 앞부분만 읽었으면 조용히 자르지 않고 나눠 올리게 한다
+        if (only.totalRows > only.rows.length) {
+          setError(`파일이 ${only.totalRows.toLocaleString()}줄이라 한 번에 가져올 수 없습니다 — ${MAX_ROWS.toLocaleString()}줄씩 나눠 올려 주세요.`);
           return;
         }
-        // 유효 행이 0개여도 충돌 단계로 이동해 어떤 행이 왜 실패했는지 표시한다
-        const needsReview = result.hardErrors.length > 0 || hasAnyMissing(findMissing(db, result.rows));
-        setStep(needsReview ? 'conflict' : 'preview');
-      } catch (err) {
-        setError(`파일 읽기 오류: ${err.message}`);
+        review(templateEntries(only.rows, templateRow, { date1904: book.date1904 }));
+        return;
       }
-    };
-    reader.readAsText(file, 'UTF-8');
+      if (!book.sheets.some(s => s.rows.some(r => r && r.some(v => v !== '' && v !== undefined && v !== null)))) {
+        setError('파일에 내용이 없습니다.');
+        return;
+      }
+      setWorkbook(book);
+      setStep('map');
+    } catch (err) {
+      setError(`파일 읽기 오류: ${err.message}`);
+    } finally {
+      setReading(false);
+    }
+  };
+
+  const handleMapped = (entries, remember) => {
+    setRememberFormat(() => remember);
+    review(entries);
   };
 
   const handleImport = async () => {
@@ -325,6 +353,7 @@ function ImportModal({ db, onImport, onClose }) {
         })));
       });
       setImportedCount(rowsToImport.length);
+      if (rememberFormat) rememberFormat();   // 맞춘 양식을 기억 — 실제로 가져왔을 때만
       onImport();
       setStep('done');
     } catch (err) {
@@ -340,7 +369,14 @@ function ImportModal({ db, onImport, onClose }) {
     setHardErrors([]);
     setIncludeDuplicates(false);
     setImporting(false);
+    setWorkbook(null);
+    setRememberFormat(null);
   };
+
+  // 검사·미리보기에서 열·분류 맞추기로 돌아간다(맞춘 것은 그대로 남아 있다)
+  const backToMapping = workbook && (
+    <button className="btn-secondary" onClick={() => { setError(''); setStep('map'); }}>← 다시 맞추기</button>
+  );
 
   const hasTrip = rowsToImport.some(r => r.trip_name);
 
@@ -355,8 +391,23 @@ function ImportModal({ db, onImport, onClose }) {
         {step === 'upload' && (
           <div className="tx-form">
             <p className="import-info">
-              <strong>JSON</strong> 또는 <strong>CSV</strong> 파일을 업로드하세요.<br />
-              양식을 먼저 다운로드해 작성하시면 편리합니다.
+              쓰던 <strong>엑셀(.xlsx)</strong>·<strong>CSV</strong> 가계부, 은행·카드사 내역, 다른 가계부 앱에서 내보낸 파일을 그대로 올리세요.
+              어떤 열이 날짜·금액·내용인지 맞춘 뒤 가져옵니다(AI 키가 있으면 AI가 대신 맞춰 줘요).<br />
+              아래 양식으로 만든 파일과 이 앱에서 내보낸 CSV는 바로 가져옵니다.
+            </p>
+
+            <input
+              type="file"
+              accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt,.htm,.html,.json"
+              onChange={handleFileChange}
+              disabled={reading}
+              className="import-file-input"
+            />
+            {reading && <p className="import-info">파일을 읽는 중…</p>}
+            {error && <p className="error-msg">{error}</p>}
+            <p className="import-template-note">
+              예전 엑셀 형식(.xls)은 엑셀에서 &quot;다른 이름으로 저장 › Excel 통합 문서(.xlsx)&quot;로 저장해 올려 주세요.
+              표가 아닌 메모·문자 글은 거래 입력 창의 &apos;AI 입력&apos;에 붙여 넣으면 거래로 나눠 줍니다.
             </p>
 
             <div className="import-template-section">
@@ -401,14 +452,14 @@ function ImportModal({ db, onImport, onClose }) {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
 
-            <input
-              type="file"
-              accept=".json,.csv"
-              onChange={handleFileChange}
-              className="import-file-input"
-            />
-            {error && <p className="error-msg">{error}</p>}
+        {/* ── 열·분류 맞추기 (아무 양식의 표, M-7) — 검사 단계에서 돌아올 수 있게 숨겨 둔 채 남긴다 ── */}
+        {workbook && (
+          <div style={step === 'map' ? undefined : { display: 'none' }}>
+            <SheetMapper db={db} dataVersion={dataVersion} workbook={workbook} onBack={resetToUpload} onDone={handleMapped} />
+            {step === 'map' && error && <p className="error-msg">{error}</p>}
           </div>
         )}
 
@@ -484,7 +535,7 @@ function ImportModal({ db, onImport, onClose }) {
             {error && <p className="error-msg">{error}</p>}
 
             <div className="form-actions">
-              <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>
+              {backToMapping || <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>}
               {rows.length > 0 && (
                 <button className="btn-primary" onClick={() => setStep('preview')}>
                   미리보기
@@ -567,7 +618,7 @@ function ImportModal({ db, onImport, onClose }) {
             {error && <p className="error-msg">{error}</p>}
 
             <div className="form-actions">
-              <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>
+              {backToMapping || <button className="btn-secondary" onClick={resetToUpload}>다시 선택</button>}
               <button className="btn-primary" onClick={handleImport} disabled={importing || rowsToImport.length === 0}>
                 {importing ? '가져오는 중...' : rowsToImport.length === 0 ? '새 거래 없음' : `${rowsToImport.length}건 가져오기`}
               </button>

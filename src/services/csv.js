@@ -8,8 +8,9 @@
 /**
  * CSV 텍스트를 레코드(칸 문자열 배열) 목록으로 나눈다.
  * 따옴표 안의 줄바꿈은 레코드를 나누지 않는다 — 한 레코드가 여러 줄일 수 있다.
+ * delimiter: 칸 구분 문자 — 기본은 쉼표, 엑셀 '유니코드 텍스트'·TSV는 탭 (M-7)
  */
-export function parseCSVRecords(text) {
+export function parseCSVRecords(text, delimiter = ',') {
   const s = String(text ?? '').replace(/^﻿/, '');
   const records = [];
   let record = [];
@@ -27,7 +28,7 @@ export function parseCSVRecords(text) {
       }
     } else if (c === '"') {
       inQuotes = true;
-    } else if (c === ',') {
+    } else if (c === delimiter) {
       record.push(field);
       field = '';
     } else if (c === '\r' || c === '\n') {
@@ -46,6 +47,31 @@ export function parseCSVRecords(text) {
     records.push(record);
   }
   return records;
+}
+
+/**
+ * 칸 구분 문자를 고른다 — 앞 몇 줄에서 따옴표 밖의 쉼표·탭·세미콜론 수를 세어 가장 고르게 많은 것 (M-7)
+ */
+export function detectDelimiter(text) {
+  const lines = String(text ?? '').replace(/^﻿/, '').split(/\r\n|\n|\r/).filter(l => l.trim()).slice(0, 20);
+  let best = ',';
+  let bestScore = 0;
+  [',', '\t', ';'].forEach((d) => {
+    const counts = lines.map((line) => {
+      let n = 0;
+      let quoted = false;
+      for (const c of line) {
+        if (c === '"') quoted = !quoted;
+        else if (c === d && !quoted) n += 1;
+      }
+      return n;
+    });
+    // 여러 줄에 걸쳐 나타나는 수(대부분의 줄에 있는 것)를 본다 — 내용 속 쉼표 하나에 흔들리지 않게
+    const withIt = counts.filter(n => n > 0);
+    const score = withIt.length >= Math.ceil(lines.length / 2) ? Math.min(...withIt) * withIt.length : 0;
+    if (score > bestScore) { best = d; bestScore = score; }
+  });
+  return best;
 }
 
 /**
