@@ -2,6 +2,9 @@
  * OneDrive 저장소 (Microsoft Graph) — ./provider.js의 계약을 구현한다 (ROADMAP F-2, I-018).
  *
  *  - 가계부: Apps/financial-ledger/ledger.db. 버전은 OneDrive eTag이고, 저장은 If-Match로만 한다 (B-001).
+ *    다른 계정이 공유한 가계부(M-2)는 /drives/{driveId}/items/{itemId} — 같은 버전 규칙. 매일 백업은 주인 기기만 만들고,
+ *    넣지 못한 이 기기의 변경이 담긴 사본(I-035)은 내 앱 폴더의 shared-backups/<가계부>에 둔다.
+ *    주인은 자기 가계부 파일을 이메일로 초대해 공유한다(invite, 구성원 목록·빼기 — 앱 폴더는 공유하지 않는다).
  *  - 백업: Apps/financial-ledger/backups/ (I-014)
  *  - 설정: Apps/financial-ledger/<이름>.json (I-015) — 가계부 DB와 섞지 않는다
  *
@@ -56,10 +59,26 @@ async function graphFetch(url, init) {
 
 // ── 가계부 파일 ──────────────────────────────────────────────────
 
+/**
+ * 가계부 파일이 있는 곳 — 내 가계부(앱 폴더의 ledger.db)이거나 다른 계정이 공유한 파일(M-2).
+ * metaUrl: 파일 정보, contentUrl: 내용, shared: 공유받은 파일(없으면 새로 만들지 않고 '열 수 없음'으로 알린다)
+ */
+const OWN_TARGET = { metaUrl: ITEM_URL, contentUrl: `${ITEM_URL}:/content`, shared: false };
+function sharedTarget({ driveId, itemId }) {
+  const metaUrl = `${GRAPH_BASE}/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
+  return { metaUrl, contentUrl: `${metaUrl}/content`, shared: true };
+}
+/** 공유받은 가계부에 닿지 못함 — 주인이 공유를 끊었거나 파일을 옮겼다(404·403) */
+export const SHARED_GONE_MESSAGE = '공유받은 가계부를 열 수 없습니다 — 주인이 공유를 끊었거나 가계부 파일을 지웠을 수 있어요. 내 가계부로 돌아가거나 주인에게 다시 초대를 부탁하세요';
+function sharedGone(target, res) {
+  return target.shared && (res.status === 404 || res.status === 403);
+}
+
 /** OneDrive 파일의 현재 eTag. 파일이 없으면 null. */
-async function getRemoteETag(instance, accounts) {
+async function getRemoteETag(instance, accounts, target = OWN_TARGET) {
   const token = await getToken(instance, accounts);
-  const res = await graphFetch(`${ITEM_URL}?$select=eTag`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await graphFetch(`${target.metaUrl}?$select=eTag`, { headers: { Authorization: `Bearer ${token}` } });
+  if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`OneDrive 확인 오류: ${res.status} ${res.statusText}`);
   return (await res.json()).eTag || null;
@@ -70,9 +89,10 @@ async function getRemoteETag(instance, accounts) {
  * 메타데이터(eTag)를 먼저 읽고 내용을 받는다 — 그 사이 파일이 바뀌면 내용이 eTag보다 새것일 수 있지만,
  * 그 경우 다음 저장이 412로 거절되어 다시 합치므로 안전하다.
  */
-async function readDb(instance, accounts) {
+async function readDb(instance, accounts, target = OWN_TARGET) {
   const token = await getToken(instance, accounts);
-  const metaRes = await graphFetch(ITEM_URL, { headers: { Authorization: `Bearer ${token}` } });
+  const metaRes = await graphFetch(target.metaUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (sharedGone(target, metaRes)) throw new Error(SHARED_GONE_MESSAGE);
   if (metaRes.status === 404) return { bytes: null, version: null };
   if (!metaRes.ok) throw new Error(`OneDrive 읽기 오류: ${metaRes.status} ${metaRes.statusText}`);
   const meta = await metaRes.json();
@@ -80,7 +100,7 @@ async function readDb(instance, accounts) {
   const downloadUrl = meta['@microsoft.graph.downloadUrl'];
   const res = downloadUrl
     ? await graphFetch(downloadUrl)
-    : await graphFetch(`${ITEM_URL}:/content`, { headers: { Authorization: `Bearer ${token}` } });
+    : await graphFetch(target.contentUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`OneDrive 읽기 오류: ${res.status} ${res.statusText}`);
   const buffer = await res.arrayBuffer();
   return { bytes: new Uint8Array(buffer), version: meta.eTag || null };
@@ -93,18 +113,21 @@ async function readDb(instance, accounts) {
  * 파일이 사라진 뒤의 If-Match 저장은 412(→ ConflictError)로 온다고 본다(HTTP 규칙). 실제 Graph로는 확인하지 않았다 —
  * 404로 온다면 '저장 오류'가 되어 다시 합치지 못하므로, 그때는 여기서 404도 ConflictError로 바꾼다.
  */
-async function writeDb(instance, accounts, dbBytes, eTag) {
+async function writeDb(instance, accounts, dbBytes, eTag, target = OWN_TARGET) {
+  // 공유받은 가계부는 주인 드라이브의 그 파일에만 쓴다 — 없으면 새로 만들지 않는다(다른 곳에 새 가계부가 생기지 않게)
+  if (target.shared && !eTag) throw new Error(SHARED_GONE_MESSAGE);
   const token = await getToken(instance, accounts);
   const headers = {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/octet-stream',
   };
-  let url = `${ITEM_URL}:/content`;
+  let url = target.contentUrl;
   if (eTag) headers['If-Match'] = eTag;
   else url += '?@microsoft.graph.conflictBehavior=fail';
 
   const res = await graphFetch(url, { method: 'PUT', headers, body: dbBytes });
   if (res.status === 412 || res.status === 409) throw new ConflictError();
+  if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
   if (!res.ok) throw new Error(`OneDrive 저장 오류: ${res.status} ${res.statusText}`);
   const item = await res.json().catch(() => ({}));
   return item.eTag || null;
@@ -112,12 +135,20 @@ async function writeDb(instance, accounts, dbBytes, eTag) {
 
 // ── 백업 폴더 (I-014) ────────────────────────────────────────────
 
+/**
+ * 공유받은 가계부(M-2)의 남긴 사본 폴더 — 내 OneDrive 앱 폴더 안에 가계부마다 따로(주인의 백업 목록이 아니다).
+ * 매일 백업은 주인 기기만 만들고(useLedgerSync), 여기에는 다른 기기가 가계부를 통째로 바꿔 넣지 못한 이 기기의 변경이 담긴
+ * 사본만 남는다(I-035)
+ */
+const safeName = v => String(v).replace(/[^A-Za-z0-9]/g, '_').slice(0, 80);
+const sharedBackupDirUrl = ({ driveId, itemId }) => `${GRAPH_BASE}/me/drive/root:/${APP_FOLDER}shared-backups/${safeName(driveId)}_${safeName(itemId)}`;
+
 /** 백업 폴더의 파일 — 하위 폴더는 뺀다. 폴더가 아직 없으면 []. 200개씩 최대 5쪽. */
-async function listBackupFiles(instance, accounts) {
+async function listBackupFiles(instance, accounts, dirUrl = BACKUP_DIR_URL) {
   const token = await getToken(instance, accounts);
   const headers = { Authorization: `Bearer ${token}` };
   const out = [];
-  let url = `${BACKUP_DIR_URL}:/children?$top=200`;
+  let url = `${dirUrl}:/children?$top=200`;
   for (let page = 0; url && page < 5; page += 1) {
     const res = await graphFetch(url, { headers });
     if (res.status === 404) return []; // 아직 백업 폴더가 없음
@@ -132,9 +163,9 @@ async function listBackupFiles(instance, accounts) {
 }
 
 /** 백업 파일을 만든다. 같은 이름이 이미 있으면 덮어쓰지 않고 false. */
-async function createBackupFile(instance, accounts, name, bytes) {
+async function createBackupFile(instance, accounts, name, bytes, dirUrl = BACKUP_DIR_URL) {
   const token = await getToken(instance, accounts);
-  const res = await graphFetch(`${BACKUP_DIR_URL}/${name}:/content?@microsoft.graph.conflictBehavior=fail`, {
+  const res = await graphFetch(`${dirUrl}/${name}:/content?@microsoft.graph.conflictBehavior=fail`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
     body: bytes,
@@ -230,23 +261,156 @@ async function writeSettingsFile(instance, accounts, name, data, eTag) {
   if (!res.ok) throw new Error(`OneDrive 설정 저장 오류: ${res.status} ${res.statusText}`);
 }
 
+// ── 다른 계정과 함께 쓰기 (M-2) — 주인 쪽 ──────────────────────
+
+const OWN_ITEM_SELECT = `${ITEM_URL}?$select=id,parentReference`;
+
+/** 내 가계부 파일의 번호 — { driveId, itemId }. 파일이 아직 없으면 null */
+async function ownLedgerRef(instance, accounts) {
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(OWN_ITEM_SELECT, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`OneDrive 확인 오류: ${res.status} ${res.statusText}`);
+  const item = await res.json();
+  return { driveId: item.parentReference?.driveId || '', itemId: item.id || '' };
+}
+
+/**
+ * 이메일로 초대 — 그 Microsoft 계정에 내 가계부 파일 하나의 쓰기 권한을 준다(앱 폴더·AI 설정 파일은 공유하지 않는다).
+ * Microsoft가 초대 메일도 보낸다(그 메일의 링크는 OneDrive로 열리므로, 앱의 참여 링크를 따로 보낸다). 반환: { driveId, itemId }
+ */
+async function inviteMember(instance, accounts, email, message) {
+  const ref = await ownLedgerRef(instance, accounts);
+  if (!ref?.itemId) throw new Error('가계부 파일이 아직 없습니다 — 가계부를 한 번 저장한 뒤 초대하세요');
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(ref.itemId)}/invite`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipients: [{ email }], message, requireSignIn: true, sendInvitation: true, roles: ['write'],
+    }),
+  });
+  if (res.status === 400) throw new Error('초대하지 못했습니다 — 이메일 주소를 확인하세요(Microsoft 계정이어야 해요)');
+  if (!res.ok) throw new Error(`초대하지 못했습니다: ${res.status} ${res.statusText}`);
+  return ref;
+}
+
+/** 가계부 파일을 함께 쓰는 사람 — [{ id, name, email, owner }] (주인 자신은 owner: true) */
+async function listMembers(instance, accounts) {
+  const ref = await ownLedgerRef(instance, accounts);
+  if (!ref?.itemId) return [];
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(ref.itemId)}/permissions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`함께 쓰는 사람을 불러오지 못했습니다: ${res.status} ${res.statusText}`);
+  const body = await res.json();
+  // 위 폴더에서 물려받은 것은 여기서 다루지 않는다. 링크 권한은 특정 사람에게 준 것(초대·사람이 붙은 것)만 —
+  // 개인 계정의 초대가 어떤 모양으로 오는지 실제 계정으로 확인하기 전이라(SETUP 5-6) 예전 모양(grantedTo·grantedToIdentities)도 본다
+  const personOf = p => p.grantedToV2?.user || p.grantedToV2?.siteUser || p.grantedTo?.user
+    || p.grantedToIdentitiesV2?.[0]?.user || p.grantedToIdentitiesV2?.[0]?.siteUser || p.grantedToIdentities?.[0]?.user || null;
+  return (body.value || [])
+    .filter(p => !p.inheritedFrom && (!p.link || p.invitation || personOf(p)))
+    .map((p) => {
+      const user = personOf(p) || {};
+      return {
+        id: p.id,
+        name: user.displayName || '',
+        email: user.email || p.invitation?.email || '',
+        owner: (p.roles || []).includes('owner'),
+      };
+    });
+}
+
+/** 함께 쓰는 사람에서 뺀다 — 그 계정은 더 이상 이 가계부에 닿지 못한다 */
+async function removeMember(instance, accounts, permissionId) {
+  const ref = await ownLedgerRef(instance, accounts);
+  if (!ref?.itemId) return;
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(
+    `${GRAPH_BASE}/me/drive/items/${encodeURIComponent(ref.itemId)}/permissions/${encodeURIComponent(permissionId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok && res.status !== 404) throw new Error(`빼지 못했습니다: ${res.status} ${res.statusText}`);
+}
+
+/**
+ * 공유받은 가계부를 열 수 있는지 미리 본다(참여 링크를 열 때) — { name, ownerName }.
+ * 닿지 못하면(초대받지 않은 계정·공유를 끊음) SHARED_GONE_MESSAGE로 던진다
+ */
+async function inspectShared(instance, accounts, ref) {
+  const target = sharedTarget(ref);
+  const token = await getToken(instance, accounts);
+  const res = await graphFetch(`${target.metaUrl}?$select=id,name,eTag,createdBy,shared`, { headers: { Authorization: `Bearer ${token}` } });
+  if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
+  if (!res.ok) throw new Error(`공유받은 가계부를 확인하지 못했습니다: ${res.status} ${res.statusText}`);
+  const item = await res.json();
+  const ownerName = item.shared?.owner?.user?.displayName || item.createdBy?.user?.displayName || '';
+  return { name: item.name || '', ownerName };
+}
+
+/** Microsoft 개인 계정인지 — 회사·학교 계정은 공유받은 파일에 관리자 동의가 필요해 1단계에서 빼었다(M-2 결정) */
+const CONSUMER_TENANT = '9188040d-6c67-4c5b-b112-36a304b66dad';
+export function isPersonalMicrosoftAccount(account) {
+  const tid = account?.tenantId || account?.idTokenClaims?.tid || '';
+  return tid === CONSUMER_TENANT || (account?.homeAccountId || '').endsWith(`.${CONSUMER_TENANT}`);
+}
+
+/** 공유받은 가계부의 열쇠 — 미저장 변경·연결 없이 열 사본·백업 표식을 가계부마다 따로 둔다(계정 열쇠와 다르게) */
+export const sharedLedgerKey = (accountKey, { driveId, itemId }) => `${accountKey}#ms:${driveId}:${itemId}`;
+
 /**
  * 로그인한 Microsoft 계정의 OneDrive 저장소 (./provider.js의 LedgerStorage).
  * @param {import('@azure/msal-browser').IPublicClientApplication} instance
  * @param {Array<{ homeAccountId?: string }>} accounts — MSAL 계정 목록(첫 계정을 쓴다)
+ * @param {{ ledger?: { driveId: string, itemId: string } | null }} [options]
+ *   ledger: 다른 계정이 공유한 가계부(M-2) — 없으면 내 가계부. 설정 파일(AI 설정 등)은 늘 내 앱 폴더
  * @returns {import('./provider').LedgerStorage}
  */
-export function createOneDriveStorage(instance, accounts) {
+export function createOneDriveStorage(instance, accounts, { ledger = null } = {}) {
+  const accountKey = accounts?.[0]?.homeAccountId || '';
+  const target = ledger ? sharedTarget(ledger) : OWN_TARGET;
+  const settings = {
+    readSettings: name => readSettingsFile(instance, accounts, name),
+    writeSettings: (name, data, version) => writeSettingsFile(instance, accounts, name, data, version),
+  };
+  const file = {
+    read: () => readDb(instance, accounts, target),
+    getVersion: () => getRemoteETag(instance, accounts, target),
+    write: (bytes, version) => writeDb(instance, accounts, bytes, version, target),
+  };
+  if (ledger) {
+    return {
+      accountKey,
+      ledgerKey: sharedLedgerKey(accountKey, ledger),
+      isShared: true,
+      ...file,
+      // 공유받은 가계부의 매일 백업은 주인 기기만 만든다(M-2 결정 — useLedgerSync가 건너뛴다). 이 폴더는 내 OneDrive 앱 폴더의
+      // shared-backups/<가계부> — 다른 기기가 가계부를 통째로 바꿔 넣지 못한 이 기기의 변경이 담긴 사본만 남는다(I-035)
+      listBackups: () => listBackupFiles(instance, accounts, sharedBackupDirUrl(ledger)),
+      createBackup: (name, bytes) => createBackupFile(instance, accounts, name, bytes, sharedBackupDirUrl(ledger)),
+      readBackup: (id, accept) => readBackupFile(instance, accounts, id, accept),
+      deleteBackup: id => deleteBackupFile(instance, accounts, id),
+      ...settings,
+    };
+  }
   return {
-    accountKey: accounts?.[0]?.homeAccountId || '',
-    read: () => readDb(instance, accounts),
-    getVersion: () => getRemoteETag(instance, accounts),
-    write: (bytes, version) => writeDb(instance, accounts, bytes, version),
+    accountKey,
+    isShared: false,
+    ...file,
     listBackups: () => listBackupFiles(instance, accounts),
     createBackup: (name, bytes) => createBackupFile(instance, accounts, name, bytes),
     readBackup: (id, accept) => readBackupFile(instance, accounts, id, accept),
     deleteBackup: id => deleteBackupFile(instance, accounts, id),
-    readSettings: name => readSettingsFile(instance, accounts, name),
-    writeSettings: (name, data, version) => writeSettingsFile(instance, accounts, name, data, version),
+    ...settings,
+    // 다른 계정과 함께 쓰기(M-2) — 내 가계부 파일을 공유한다. 공유받은 사람은 참여 링크로 연다
+    sharing: {
+      provider: 'ms',
+      ownLedgerRef: () => ownLedgerRef(instance, accounts),
+      invite: (email, message) => inviteMember(instance, accounts, email, message),
+      listMembers: () => listMembers(instance, accounts),
+      removeMember: id => removeMember(instance, accounts, id),
+      inspectShared: ref => inspectShared(instance, accounts, ref),
+    },
   };
 }

@@ -12,19 +12,35 @@ import { inspectLedgerFile, ledgerSummary } from '../../../services/ledgerFile';
 import { readFileBytes } from '../../../services/sheetFile';
 import { AddItemRow } from '../MasterItemList';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
+import LedgerShareBlock from './LedgerShareBlock';
 
 const blockStyle = { marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' };
 const titleStyle = { fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '6px' };
 const descStyle = { fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 };
 
-/** 설정 › 데이터 — 가족 구성원, 내보내기, 백업·되돌리기, 가계부 파일로 바꾸기 */
-export default function DataSection({ db, dataVersion, onChanged, setError, backup }) {
+/**
+ * 설정 › 데이터 — 가족 구성원, 다른 계정과 함께 쓰기(M-2), 내보내기, 백업·되돌리기, 가계부 파일로 바꾸기.
+ * 다른 계정이 공유한 가계부를 보는 중이면(backup.shared) 백업·되돌리기·파일로 바꾸기는 공유한 사람의 기기에서 한다
+ */
+export default function DataSection({ db, dataVersion, onChanged, setError, backup, ledgers }) {
   return (
     <div>
       <MembersBlock db={db} dataVersion={dataVersion} onChanged={onChanged} setError={setError} />
+      {ledgers && (
+        <div style={blockStyle}>
+          <LedgerShareBlock ledgers={ledgers} setError={setError} />
+        </div>
+      )}
       <ExportBlock db={db} setError={setError} />
-      {backup && <BackupBlock backup={backup} setError={setError} />}
-      {backup?.replaceWithFile && <ReplaceBlock db={db} dataVersion={dataVersion} backup={backup} setError={setError} />}
+      {backup && (backup.shared ? (
+        <div style={{ marginBottom: '8px' }}>
+          <div style={titleStyle}>백업·되돌리기</div>
+          <div style={descStyle}>공유받은 가계부의 매일 백업과 되돌리기는 공유한 사람의 기기에서 해요(그 사람의 드라이브에 남아요).</div>
+        </div>
+      ) : <BackupBlock backup={backup} setError={setError} />)}
+      {backup?.replaceWithFile && !backup.shared && (
+        <ReplaceBlock db={db} dataVersion={dataVersion} backup={backup} setError={setError} />
+      )}
     </div>
   );
 }

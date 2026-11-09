@@ -378,3 +378,30 @@ export function loadPending(accountKey) {
 export function clearPending(accountKey) {
   savePending(accountKey, null);
 }
+
+/** 이 계정의 가계부들(내 가계부 + 공유받은 가계부의 열쇠 '<계정>#…', M-2)에 보관한 미저장 변경 열쇠 */
+function pendingKeysOf(accountKey) {
+  if (!accountKey) return [];
+  const out = [];
+  try {
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const k = window.localStorage.key(i) || '';
+      if (!k.startsWith(PENDING_PREFIX)) continue;
+      const key = k.slice(PENDING_PREFIX.length);
+      if (key === accountKey || key.startsWith(`${accountKey}#`)) out.push(key);
+    }
+  } catch (e) { /* 비공개 모드 */ }
+  return out;
+}
+
+/** 로그아웃 — 이 계정의 모든 가계부에 보관한 미저장 변경을 지운다 */
+export function clearPendingForAccount(accountKey) {
+  pendingKeysOf(accountKey).forEach(key => clearPending(key));
+}
+
+/** 이 계정의 다른 가계부(exceptKey가 아닌 것)에 보관한 미저장 변경 수 — 로그아웃 전에 묻는다 */
+export function countPendingForAccount(accountKey, exceptKey = '') {
+  return pendingKeysOf(accountKey)
+    .filter(key => key !== exceptKey)
+    .reduce((n, key) => n + (loadPending(key)?.entries.length || 0), 0);
+}

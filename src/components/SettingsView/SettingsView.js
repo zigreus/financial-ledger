@@ -21,7 +21,7 @@ import { featureAnchorId } from './optionalFeatures';
  *  - 결제수단·카테고리: 상단 탭·서브탭을 누를 때마다 (예전 switchSection이 입력·편집·드래그 상태를 비우던 것)
  *  - 즐겨찾기: '즐겨찾기' 서브탭을 누를 때 / 정기지출: '정기지출' 서브탭이나 '지출계획' 탭을 누를 때
  */
-function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
+function SettingsView({ db, dataVersion, onChanged, backup, ledgers, activeSection, drilldownCategory, drilldownTrip, drilldownPayment, onSectionChange, onDrilldownCategoryChange, onDrilldownTripChange, onDrilldownPaymentChange }) {
   const [error, setError] = useState('');
   // 지출계획 섹션
   const [financeSubTab, setFinanceSubTab] = useState('favorites');
@@ -127,7 +127,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
 
         {activeSection === 'features' && <FeaturesSection {...sectionProps} onOpenPlace={openFeaturePlace} />}
         {activeSection === 'ai' && <AISection />}
-        {activeSection === 'data' && <DataSection key={masterKey} {...sectionProps} backup={backup} />}
+        {activeSection === 'data' && <DataSection key={masterKey} {...sectionProps} backup={backup} ledgers={ledgers} />}
         {activeSection === 'about' && <AboutSection key={masterKey} />}
 
         {activeSection === 'calendar' && (

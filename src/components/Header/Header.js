@@ -6,8 +6,9 @@ import './Header.css';
 // userLabel: Microsoft가 아닌 계정(Google, M-1)으로 로그인했을 때 보일 이름
 // offlineLabel·offlineTitle: 저장소에 닿지 못하는 이유가 연결이 아니라 로그인 만료일 때(Google, M-1) 바꿔 보인다
 // onCover: '가계부를 열 때 가리기'(U-7)를 켰을 때 — 지금 바로 화면을 가리는 버튼
+// ledgerName·onSwitchLedger: 다른 계정이 공유한 가계부(M-2) — 제목 자리에 지금 가계부 이름, 누르면 가계부 바꾸기
 function Header({
-  onRefresh, onSave, onLogout, onCover, loading, saving, dirty, offline = false, pendingCount = 0, onSettings, settingsActive, userLabel,
+  onRefresh, onSave, onLogout, onCover, ledgerName = '', onSwitchLedger = null, loading, saving, dirty, offline = false, pendingCount = 0, onSettings, settingsActive, userLabel,
   offlineLabel = '오프라인', offlineTitle = '연결이 없습니다 — 입력한 내용은 이 기기에 보관했다가 연결되면 저장합니다',
 }) {
   const { accounts } = useMsal();
@@ -18,7 +19,13 @@ function Header({
     <header className="app-header">
       <div className="header-left">
         <img src="/favicon_b2.ico" alt="" className="header-logo" />
-        <span className="header-title">지금 가계부</span>
+        {onSwitchLedger ? (
+          <button type="button" className="header-title header-title-btn" onClick={onSwitchLedger} title="가계부 바꾸기">
+            {ledgerName || '지금 가계부'} <span className="header-title-caret" aria-hidden="true">▾</span>
+          </button>
+        ) : (
+          <span className="header-title">{ledgerName || '지금 가계부'}</span>
+        )}
       </div>
       <div className="header-right">
         {offline && (

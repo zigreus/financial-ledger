@@ -8,12 +8,16 @@ import { registerServiceWorker } from './services/serviceWorker';
 import { installErrorLog } from './services/errorLog';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { applyDisplayPrefs } from './services/displayPrefs';
+import { capturePendingJoin } from './services/ledgers';
 import {
   completeGoogleRedirect, rememberGoogleResult, shouldReconnectAtStart, startGoogleLogin,
 } from './auth/googleAuth';
 
 // 이 기기의 글씨 크기·화면 테마 (U-1·U-2) — index.html이 먼저 적용했고, 위쪽 막대 색·기기 모드 따라가기를 여기서 맞춘다
 applyDisplayPrefs();
+
+// 다른 계정이 보낸 참여 링크(?join=…, M-2) — 로그인하러 다녀와도 남게 이 기기에 받아 두고 주소에서 지운다. 로그인 뒤 App이 묻는다
+capturePendingJoin();
 
 // 처리하지 못한 오류를 이 기기에만 남긴다 — 설정 › 앱의 '문제 알리기'에서 사용자가 보고 직접 보낸다(I-038)
 installErrorLog();

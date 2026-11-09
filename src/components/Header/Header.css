@@ -43,3 +43,6 @@
 .btn-cover { font-size: calc(16px * var(--fs)); padding: 6px 10px; } /* 지금 바로 가리기 (U-7) */
 .btn-settings.active { background: var(--primary); border-color: var(--primary); }
 .btn-user { max-width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: calc(12px * var(--fs)); }
+/* 가계부 바꾸기 (M-2) — 제목을 누르면 내 가계부·공유받은 가계부 목록 */
+.header-title-btn { border: none; background: none; padding: 0; color: var(--text); cursor: pointer; font-weight: 700; text-align: left; }
+.header-title-caret { font-size: calc(12px * var(--fs)); color: var(--text-muted); }

@@ -28,6 +28,13 @@
  * @typedef {object} LedgerStorage
  * @property {string} accountKey
  *   이 저장소를 쓰는 계정. 기기에 보관하는 미저장 변경·매일 백업 표식·AI 설정을 이 계정에 묶는다. 없으면 ''.
+ * @property {string} [ledgerKey]
+ *   (선택, M-2) 다른 계정이 공유한 가계부일 때 — 미저장 변경·연결 없이 열 사본·백업 표식은 이 열쇠로(가계부마다 따로).
+ *   AI 설정은 그대로 accountKey. 없으면 accountKey를 쓴다.
+ * @property {boolean} [isShared]
+ *   (선택, M-2) 공유받은 가계부 — 백업 폴더는 없는 것으로(목록 [], 만들기 false), 파일이 없으면 새로 만들지 않고 던진다.
+ * @property {object} [sharing]
+ *   (선택, M-2) 내 가계부를 다른 계정과 함께 쓰기 — { ownLedgerRef, invite, listMembers, removeMember, inspectShared }.
  *
  * ── 가계부 파일 ────────────────────────────────────────────────
  * @property {() => Promise<{ bytes: Uint8Array|null, version: string|null }>} read

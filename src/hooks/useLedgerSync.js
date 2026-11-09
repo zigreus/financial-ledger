@@ -7,7 +7,7 @@ import { ConflictError, OfflineError, ReauthRedirectError, ReconnectRequiredErro
 import { defaultOfflineCache } from '../services/offlineCache';
 import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId,
-  savePending, loadPending, clearPending, stampGeneration, generationOfBytes,
+  savePending, loadPending, clearPending, clearPendingForAccount, stampGeneration, generationOfBytes,
 } from '../services/changeLog';
 import {
   listBackups as listBackupFiles, uploadBackup, uploadNewBackup, downloadBackup, pruneBackups, backupName,
@@ -23,7 +23,9 @@ const MAX_ATTEMPTS = 5;
 const DROPPED_NOTE = '먼저 바뀐 내용과 맞지 않는 이 기기 변경 일부는 넣지 않았습니다';
 // 가계부가 통째로 바뀌어(다른 기기가 파일로 바꾸기, 바꾸기 전 백업으로 되돌리기) 옛 가계부에 하던 이 기기의 저장 안 된
 // 변경을 넣지 않았을 때 (I-035) — 그 변경이 담긴 이 기기의 가계부는 백업 목록에 남긴다(keepDropped)
-const replacedNote = n => `가계부가 다른 기기에서 통째로 바뀌어, 이 기기에서 저장하지 못한 변경 ${n}건은 넣지 않았습니다 — 그 변경이 담긴 이 기기의 가계부를 백업 목록에 남기는 중입니다`;
+const replacedNote = (n, shared = false) => (shared
+  ? `공유받은 가계부가 다른 기기에서 통째로 바뀌어, 이 기기에서 저장하지 못한 변경 ${n}건은 넣지 않았습니다 — 그 변경이 담긴 이 기기의 가계부를 내 OneDrive(Apps/financial-ledger/shared-backups)에 남기는 중입니다`
+  : `가계부가 다른 기기에서 통째로 바뀌어, 이 기기에서 저장하지 못한 변경 ${n}건은 넣지 않았습니다 — 그 변경이 담긴 이 기기의 가계부를 백업 목록에 남기는 중입니다`);
 
 /** 사본을 남긴 때 — "11/8 14:05" */
 function shortTime(iso) {
@@ -115,12 +117,17 @@ export default function useLedgerSync({
   const [notice, setNotice] = useState(null); // { text, seq } — 토스트로 보여줄 안내
   const [offline, setOfflineState] = useState(false); // 연결이 없어 저장소에 닿지 못하는 중 (I-024)
 
-  const accountKey = storage?.accountKey || '';
+  // 이 기기에 두는 것(미저장 변경·연결 없이 열 사본·매일 백업 표식)의 열쇠 — 가계부마다 따로(M-2: 공유받은 가계부는 ledgerKey).
+  // 열쇠가 바뀌면(계정 전환, 가계부 바꾸기) 지금 DB를 버리고 그 가계부를 새로 연다. AI 설정은 저장소의 accountKey를 그대로 쓴다
+  const accountKey = storage?.ledgerKey || storage?.accountKey || '';
   const dbRef = useRef(null);
   const versionRef = useRef(null); // 지금 DB가 바탕으로 한 저장소 파일 버전 (OneDrive eTag)
   // 지금 DB가 바탕으로 한 가계부의 세대 (I-035) — 화면 DB를 바꿀 때 그 파일 바이트에서 읽어 둔다(쓸 때마다 질의하지 않게)
   const generationRef = useRef(0);
   const accountKeyRef = useRef(accountKey);
+  // 계정 열쇠(가계부와 관계없이) — 로그아웃 때 이 계정의 모든 가계부 보관분을 지운다(M-2)
+  const baseAccountKeyRef = useRef(storage?.accountKey || '');
+  baseAccountKeyRef.current = storage?.accountKey || '';
   const loadedForRef = useRef('');
   const loopRef = useRef(null);
   const loadingRef = useRef(false);
@@ -155,10 +162,14 @@ export default function useLedgerSync({
    * 기다리지 않는다. 그 백업으로 되돌리면 바뀌기 전 가계부와 이 기기의 입력을 함께 볼 수 있다
    */
   const keepDropped = useCallback((bytes, count) => {
-    notify(replacedNote(count));
+    const shared = !!storage?.isShared;
+    notify(replacedNote(count, shared));
     if (!bytes || !storage) return;
     uploadNewBackup(storage, bytes)
-      .then(name => notify(`넣지 못한 변경 ${count}건이 담긴 이 기기의 가계부를 백업(${name})으로 남겼습니다 — 필요한 거래는 다시 입력해 주세요(그 백업으로 되돌리면 가족 모두의 가계부가 그때로 바뀝니다)`))
+      .then(name => notify(shared
+        // 공유받은 가계부의 남긴 사본은 내 OneDrive에만 둔다(주인의 백업 목록이 아니다) — 필요한 거래를 보고 다시 입력한다
+        ? `넣지 못한 변경 ${count}건이 담긴 이 기기의 가계부를 내 OneDrive의 Apps/financial-ledger/shared-backups 폴더(${name})에 남겼습니다 — 필요한 거래는 다시 입력해 주세요`
+        : `넣지 못한 변경 ${count}건이 담긴 이 기기의 가계부를 백업(${name})으로 남겼습니다 — 필요한 거래는 다시 입력해 주세요(그 백업으로 되돌리면 가족 모두의 가계부가 그때로 바뀝니다)`))
       .catch(() => notify(`넣지 못한 변경 ${count}건이 담긴 이 기기의 가계부를 백업으로 남기지 못했습니다 — 연결을 확인하세요`));
   }, [storage, notify]);
 
@@ -178,6 +189,8 @@ export default function useLedgerSync({
 
   // 보관하는 미저장 변경 — base: 이 변경이 바탕으로 한 저장소 버전(사본으로 열 때 맞는지 본다)
   const persist = useCallback(() => {
+    // 열린 가계부가 없으면(닫는 중·바꾸는 중) 아무것도 하지 않는다 — 늦게 온 부름이 다른 가계부 열쇠의 보관분을 지우지 않게
+    if (!dbRef.current) return;
     const log = getChangeLog(dbRef.current);
     savePending(accountKeyRef.current, log
       ? { entries: log.entries, inFlight: inFlightRef.current, base: versionRef.current, generation: generationRef.current }
@@ -338,11 +351,12 @@ export default function useLedgerSync({
         } else setError(`저장 실패: ${e.message} — 변경 내용은 이 기기에 보관되어 있고, 연결되면 다시 저장합니다`);
         return false;
       } finally {
-        setSaving(false);
+        if (session === sessionRef.current) setSaving(false);   // 닫은 뒤 끝난 옛 저장이 새 가계부의 '저장 중'을 끄지 않게
       }
     };
 
-    loopRef.current = run().finally(() => {
+    const loop = run().finally(() => {
+      if (loopRef.current !== loop) return;   // 가계부를 닫은 뒤 끝난 옛 고리 — 새 가계부의 고리를 건드리지 않는다
       loopRef.current = null;
       if (unmountedRef.current) return;
       // 남은 변경이 있으면 다시 예약 — 마지막 확인 직후 들어온 쓰기는 곧바로,
@@ -354,7 +368,8 @@ export default function useLedgerSync({
         saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, delay);
       }
     });
-    return loopRef.current;
+    loopRef.current = loop;
+    return loop;
   }, [storage, mergeRemote, persist, keepCopy, setOffline]);
   // saveNow가 예약된 다시 시도를 지우고 시작한다 — 온라인·앱 복귀 때 불러도 예약이 겹치지 않는다
   saveNowRef.current = saveNow;
@@ -365,6 +380,7 @@ export default function useLedgerSync({
    * 백업 실패는 가계부 사용을 막지 않는다(다음에 열 때 다시 시도).
    */
   const runDailyBackup = useCallback(async (bytes) => {
+    if (storage?.isShared) return;   // 공유받은 가계부의 매일 백업은 주인 기기만 만든다(M-2)
     const today = todayStr();
     const doneKey = `ledger_last_backup:${accountKeyRef.current}`;
     let doneDay = '';
@@ -488,6 +504,8 @@ export default function useLedgerSync({
     } else if (loopRef.current) {
       await loopRef.current;
     }
+    // 기다리는 사이 가계부를 닫았으면(바꾸기·로그아웃) 여기서 그만 — 새 불러오기의 표시(loadingRef)를 덮지 않게
+    if (session !== sessionRef.current) return;
 
     // 지난 세션에 보관한 변경이 있으면, 그 바탕일 수 있는 이 기기의 사본을 미리 읽어 둔다 — 가계부가 통째로 바뀌어
     // 그 변경을 넣지 못하면 사본에 다시 실행해 백업으로 남긴다(사본은 곧 새 파일로 바뀐다) (I-035)
@@ -495,7 +513,8 @@ export default function useLedgerSync({
       ? offlineCacheRef.current.load(accountKeyRef.current).catch(() => null)
       : null;
 
-    loadingRef.current = true;
+    const loadToken = {};
+    loadingRef.current = loadToken;
     if (!silent) setLoading(true);
     try {
       const store = required(storage);
@@ -505,6 +524,7 @@ export default function useLedgerSync({
         // 이미 최신이면 다시 받지 않는다 — 사본으로 연 세션은 한 번 새로 받아 자동등록·매일 백업을 한다
         if (hadDb && versionRef.current && !offlineStartRef.current) {
           const remoteVersion = await store.getVersion();
+          if (session !== sessionRef.current) return;   // 그 사이 닫았다 — 옛 파일을 통째로 받지 않는다
           setOffline(false);
           if (remoteVersion === versionRef.current) return;
         }
@@ -651,8 +671,10 @@ export default function useLedgerSync({
       } else if (e instanceof ReauthRedirectError) setError(e.message);
       else setError(`불러오기 실패: ${e.message}`);
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (loadingRef.current === loadToken) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
   }, [storage, saveNow, attach, swapDb, persist, takeRestorable, notify, runDailyBackup, keepCopy, setOffline, openOfflineCopy, firstLoadTimeoutMs, keepDropped]);
 
@@ -820,6 +842,8 @@ export default function useLedgerSync({
     firstReadRef.current = null; // 다음 로그인(다른 계정일 수 있다)이 이 계정의 받기를 이어 쓰지 않게
     clearTimeout(saveTimerRef.current);
     clearPending(accountKeyRef.current);
+    // 이 계정의 다른 가계부(공유받은 가계부, M-2)에 남은 미저장 변경도 — 로그아웃하면 이 기기에서 지운다(처리방침 4항)
+    clearPendingForAccount(baseAccountKeyRef.current);
     // 앞서 쓰던 사본 쓰기가 끝난 뒤에 지운다 — 늦게 끝난 쓰기가 사본을 되살리지 않게
     copyQueueRef.current = copyQueueRef.current
       .then(() => offlineCacheRef.current.clearAll())
@@ -839,6 +863,38 @@ export default function useLedgerSync({
     if (old) { try { old.close(); } catch (e) { /* 이미 닫힘 */ } }
     return cleared;
   }, [setOffline]);
+
+  /**
+   * 가계부 바꾸기 전에 (M-2) — 지금 가계부를 바로 닫는다. 미저장 변경·연결 없이 열 사본은 그 가계부 열쇠에 남겨 둔다
+   * (돌아오면 이어서 저장). 진행 중인 불러오기·저장·다시 시도의 결과는 버린다(세션 번호) — 바꾼 가계부의 열쇠로 남거나
+   * 새 가계부의 불러오기가 옛 불러오기를 기다리다 열리지 않는 일이 없게. 부른 뒤에 저장소를 바꾼다(App).
+   */
+  const closeLedger = useCallback(() => {
+    persist();   // 지금 열쇠로 마지막 보관
+    sessionRef.current += 1;
+    firstReadRef.current = null;
+    loadPromiseRef.current = null;
+    loadingRef.current = false;
+    loopRef.current = null;
+    restoringRef.current = false;   // 되돌리는 중에 바꿨어도 새 가계부는 불러온다(옛 되돌리기는 세션 번호로 결과를 버린다)
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    const old = dbRef.current;
+    dbRef.current = null;
+    versionRef.current = null;
+    inFlightRef.current = [];
+    failuresRef.current = 0;
+    loadedForRef.current = '';
+    offlineStartRef.current = false;
+    setOffline(false);
+    setLoading(false);
+    setSaving(false);
+    setDb(null);
+    setPendingCount(0);
+    setError('');
+    // 끝나지 않은 옛 저장이 아직 쓰고 있을 수 있어 잠시 뒤 닫는다(swapDb와 같게)
+    if (old) setTimeout(() => { try { old.close(); } catch (e) { /* 이미 닫힘 */ } }, OLD_DB_CLOSE_DELAY_MS);
+  }, [persist, setOffline]);
 
   // 다른 계정으로 바뀌면 이전 계정의 DB를 즉시 버린다 (B-004). 진행 중이던 작업의 결과도 버린다(세션 번호)
   const prevAccountRef = useRef(accountKey);
@@ -918,7 +974,7 @@ export default function useLedgerSync({
   return {
     db, dataVersion, loading, saving, error, setError, notice, offline,
     pendingCount, dirty: pendingCount > 0,
-    loadDb, saveNow, resetForLogout,
+    loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,
   };
 }

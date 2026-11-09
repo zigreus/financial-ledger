@@ -17,9 +17,15 @@ import { addTransaction, updateTransaction, deleteTransaction, deleteTransaction
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
-import { createOneDriveStorage } from '../../services/storage/oneDrive';
+import { createOneDriveStorage, isPersonalMicrosoftAccount, sharedLedgerKey, SHARED_GONE_MESSAGE } from '../../services/storage/oneDrive';
+import { clearPending, countPendingForAccount, loadPending } from '../../services/changeLog';
+import {
+  OWN_LEDGER, addSharedLedger, clearPendingJoin, getCurrentLedgerId, getSharedLedgers, peekPendingJoin,
+  removeSharedLedger, setCurrentLedgerId, syncLedgerList,
+} from '../../services/ledgers';
+import { JoinLedgerDialog, LedgerSwitcher } from './LedgerDialogs';
 import { createGoogleDriveStorage } from '../../services/storage/googleDrive';
-import { ReconnectRequiredError } from '../../services/storage/provider';
+import { OfflineError, ReconnectRequiredError } from '../../services/storage/provider';
 import { getGoogleSession, isGoogleTokenValid, markGoogleTokenExpired, googleLogout } from '../../auth/googleAuth';
 import { useGoogleSession } from '../../hooks/useGoogleSession';
 import GoogleReconnectBanner from './GoogleReconnectBanner';
@@ -36,6 +42,20 @@ import PrivacyCurtain from './PrivacyCurtain';
 import { collectOpenNotices, hasVisibleNotices } from '../TransactionList/OpenNotices';
 import { HIDE_AGAIN_AFTER_MS, getHideOnOpen, getStartTab, onDisplayPrefsChange } from '../../services/displayPrefs';
 
+/** 참여 링크를 열었는데 그 가계부에 닿지 못할 때 — 대개 초대받지 않은 계정으로 로그인했거나 초대를 아직 받지 않았다 */
+const JOIN_DENIED_MESSAGE = '이 가계부를 열 수 없어요 — 초대받은 Microsoft 계정으로 로그인했는지 확인해 주세요. 초대 메일을 한 번 열어 본 뒤 참여 링크를 다시 누르면 열릴 수도 있어요.';
+
+// 처음 화면 상태 — 뒤로가기 기록(history)에 담는다. epoch: 어느 가계부에서 쌓인 기록인지(M-2)
+const INITIAL_NAV = {
+  activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, showOnboarding: false, editingTx: null, copyFromTx: null,
+  summaryTab: 'monthly', summaryDrilldown: null,
+  settingsSection: 'payment',
+  settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
+  accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
+  showLedgerSwitcher: false,
+  epoch: 0,
+};
+
 function App() {
   const msalAuthenticated = useIsAuthenticated();
   const { instance, accounts } = useMsal();
@@ -48,7 +68,7 @@ function App() {
   setCurrentDrive(provider);   // 화면 문구(머리글·AI 설정·백업 안내)가 쓰는 저장소 이름
 
   // 가계부·백업·AI 설정 파일을 두는 저장소 (F-2) — 로그인한 계정의 OneDrive 또는 Google Drive. 로그인 전에는 null
-  const storage = useMemo(() => {
+  const baseStorage = useMemo(() => {
     if (googleSub) {
       return createGoogleDriveStorage({
         accountKey: `google:${googleSub}`,
@@ -64,11 +84,36 @@ function App() {
     return accounts.length ? createOneDriveStorage(instance, accounts) : null;
   }, [googleSub, instance, accounts]);
 
+  // 다른 계정과 함께 쓰기 (M-2, 1단계 Microsoft 개인 계정) — 공유받은 가계부 목록과 이 기기에서 지금 보는 가계부
+  const msAccount = provider === 'microsoft' ? accounts[0] : null;
+  const msAccountKey = msAccount?.homeAccountId || '';
+  const canShare = !!msAccount && isPersonalMicrosoftAccount(msAccount);
+  const [ledgerVersion, setLedgerVersion] = useState(0);   // 목록·지금 가계부가 바뀌면 올린다
+  const sharedLedgers = useMemo(
+    () => (canShare ? getSharedLedgers(msAccountKey) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canShare, msAccountKey, ledgerVersion],
+  );
+  const currentLedgerId = useMemo(
+    () => (canShare ? getCurrentLedgerId(msAccountKey) : OWN_LEDGER),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canShare, msAccountKey, ledgerVersion],
+  );
+  const currentLedger = sharedLedgers.find(l => l.id === currentLedgerId) || null;
+  // 지금 쓰는 가계부의 저장소 — 공유받은 가계부면 그 파일(백업 없음), 아니면 내 가계부. AI 설정 파일은 늘 내 앱 폴더
+  const ownStorage = baseStorage;
+  const storage = useMemo(() => (
+    currentLedger && ownStorage && !googleSub
+      ? createOneDriveStorage(instance, accounts, { ledger: { driveId: currentLedger.driveId, itemId: currentLedger.itemId } })
+      : ownStorage
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [ownStorage, currentLedger?.id, googleSub]);
+
   // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
   // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
   const {
     db, dataVersion, loading, saving, error, setError, notice, offline,
-    dirty, pendingCount, loadDb, saveNow, resetForLogout,
+    dirty, pendingCount, loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,
   } = useLedgerSync({ storage });
   // 늦게 끝나는 일(AI 입력의 바로 넣기·되돌리기)이 그 순간의 DB를 쓰게 — 저장소에서 다시 받으면 DB 객체가 바뀐다
@@ -76,14 +121,15 @@ function App() {
   dbRef.current = db;
   // 설정 › 데이터의 백업 목록·직접 백업·되돌리기 (I-014)·가계부 파일로 바꾸기 (I-035) — 같은 객체를 유지해 목록을 매번 다시 부르지 않게
   const backupApi = useMemo(
-    () => ({ list: listBackups, create: createBackup, restore: restoreBackup, replaceWithFile }),
-    [listBackups, createBackup, restoreBackup, replaceWithFile],
+    () => ({ list: listBackups, create: createBackup, restore: restoreBackup, replaceWithFile, shared: !!storage?.isShared }),
+    [listBackups, createBackup, restoreBackup, replaceWithFile, storage],
   );
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'summary' | 'calendar' | 'account' | 'settings'
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCardCheck, setShowCardCheck] = useState(false);
   const [showLoadReport, setShowLoadReport] = useState(false); // 가계부를 불러오지 못한 화면의 '문제 알리기' (I-038)
+  const [showLedgerSwitcher, setShowLedgerSwitcher] = useState(false); // 가계부 바꾸기 창 (M-2) — 뒤로가기 흐름(navigate)
   // 가계부를 열 때 가리기 (U-7) — 이 기기 설정을 켰으면 앱을 열 때 덮어 두고, 누르면 걷는다
   const [curtain, setCurtain] = useState(() => getHideOnOpen());
   // 설정에서 '가계부를 열 때 가리기'를 켜고 끄면 머리글의 🔒도 바로 따라간다
@@ -116,13 +162,10 @@ function App() {
   const [calendarGoTodayKey, setCalendarGoTodayKey] = useState(0);
   const [listGoTodayKey, setListGoTodayKey] = useState(0);
 
-  const navRef = React.useRef({
-    activeTab: 'list', showForm: false, showImport: false, showCardCheck: false, showEventForm: false, showOnboarding: false, editingTx: null, copyFromTx: null,
-    summaryTab: 'monthly', summaryDrilldown: null,
-    settingsSection: 'payment',
-    settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
-    accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
-  });
+  // 가계부를 바꿀 때마다 올린다(M-2) — 그 전 가계부에서 쌓인 뒤로가기 기록(계좌·여행 번호 등)은 새 가계부에서 처음 화면으로 연다.
+  // 페이지를 새로 열 때마다 다른 값에서 시작한다 — 지난번에 연 페이지의 기록(다른 가계부였을 수 있다)도 쓰지 않게
+  const ledgerEpochRef = React.useRef(Date.now());
+  const navRef = React.useRef({ ...INITIAL_NAV, epoch: ledgerEpochRef.current });
   const historyInitialized = React.useRef(false);
   const loadAttemptedRef = React.useRef(false);
   const aiSyncedRef = React.useRef(false); // 이번 로그인에서 AI 설정을 맞췄는지
@@ -154,6 +197,7 @@ function App() {
     if ('accountDrilldown' in s) setAccountDrilldown(s.accountDrilldown);
     if ('accountDetailTab' in s) setAccountDetailTab(s.accountDetailTab);
     if ('showAccountForm' in s) setShowAccountForm(s.showAccountForm);
+    if ('showLedgerSwitcher' in s) setShowLedgerSwitcher(s.showLedgerSwitcher);
   }, []);
 
   const navigate = useCallback((updates) => {
@@ -166,8 +210,12 @@ function App() {
   useEffect(() => {
     const onPopState = (e) => {
       if (e.state) {
-        navRef.current = e.state;
-        applyNavState(e.state);
+        // 다른 가계부에서 쌓인 기록이면 처음 화면으로 — 그 가계부의 계좌·여행 번호가 새 가계부의 다른 것을 열지 않게(M-2)
+        const next = (e.state.epoch || 0) === ledgerEpochRef.current
+          ? e.state : { ...INITIAL_NAV, epoch: ledgerEpochRef.current };
+        if (next !== e.state) window.history.replaceState(next, '');
+        navRef.current = next;
+        applyNavState(next);
       }
     };
     window.addEventListener('popstate', onPopState);
@@ -187,8 +235,14 @@ function App() {
   }, [isAuthenticated]);
 
   // 로그인 후 DB 자동 로드 (실패하면 버튼으로 다시 시도)
+  const loadedStorageRef = React.useRef(null);
   useEffect(() => {
     if (!isAuthenticated || !storage) { loadAttemptedRef.current = false; return; }
+    // 가계부를 바꿨으면(M-2 — 저장소가 바뀌고 useLedgerSync가 지금 DB를 버린다) 그 가계부를 새로 불러온다
+    if (loadedStorageRef.current !== storage) {
+      loadedStorageRef.current = storage;
+      loadAttemptedRef.current = false;
+    }
     if (!db && !loadAttemptedRef.current) {
       loadAttemptedRef.current = true;
       loadDb();
@@ -234,6 +288,155 @@ function App() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [db, runAISync]);
+
+  // ── 다른 계정과 함께 쓰기 (M-2) ─────────────────────────────
+  // 가계부 바꾸기 — 저장하지 못한 변경은 그 가계부 열쇠에 남아 돌아오면 이어서 저장한다(useLedgerSync)
+  /**
+   * 지금 가계부를 닫고 처음 화면으로 — 가계부를 바꾸기 직전(M-2). 미저장 변경은 그 가계부 열쇠에 남는다(useLedgerSync).
+   * 진행 중이던 불러오기·저장의 결과는 버리고, 창·계좌·여행 같은 화면 상태와 뒤로가기 기록은 새 가계부에서 쓰지 않는다
+   */
+  const leaveCurrentLedger = useCallback(() => {
+    hideTopToast();   // 앞 가계부의 '되돌리기'가 남지 않게
+    closeLedger();
+    loadAttemptedRef.current = false;   // 같은 저장소로 다시 열 때도(같은 가계부의 참여 링크) 불러오게
+    ledgerEpochRef.current += 1;
+    const initial = { ...INITIAL_NAV, epoch: ledgerEpochRef.current };
+    navRef.current = initial;
+    applyNavState(initial);
+    window.history.replaceState(initial, '');
+  }, [hideTopToast, closeLedger, applyNavState]);
+  const currentLedgerIdRef = React.useRef(currentLedgerId);
+  currentLedgerIdRef.current = currentLedgerId;
+  const leaveCurrentLedgerRef = React.useRef(leaveCurrentLedger);
+  leaveCurrentLedgerRef.current = leaveCurrentLedger;
+  const switchLedger = useCallback(async (id) => {
+    if (!msAccountKey || id === currentLedgerId) {
+      if (showLedgerSwitcher) window.history.back();
+      return;
+    }
+    if (dirty) await saveNow();
+    leaveCurrentLedger();
+    setCurrentLedgerId(msAccountKey, id);
+    setLedgerVersion(v => v + 1);
+  }, [msAccountKey, currentLedgerId, dirty, saveNow, leaveCurrentLedger, showLedgerSwitcher]);
+  const switchLedgerRef = React.useRef(switchLedger);
+  switchLedgerRef.current = switchLedger;
+  /** 공유받은 가계부를 목록에서 뺀다 — 저장하지 못한 변경이 있으면 사라진다고 묻는다 */
+  const leaveSharedLedger = useCallback(async (id) => {
+    if (!msAccountKey) return;
+    const ledger = sharedLedgers.find(l => l.id === id);
+    const key = ledger ? sharedLedgerKey(msAccountKey, ledger) : '';
+    if (id === currentLedgerId) {
+      if (dirty && !(await saveNow())
+        && !window.confirm(`이 가계부에 저장하지 못한 변경 ${pendingCount}건이 있어요.\n목록에서 빼면 이 변경은 사라져요. 그래도 뺄까요?`)) return;
+      leaveCurrentLedger();
+    } else {
+      const left = key ? loadPending(key)?.entries.length || 0 : 0;
+      if (left && !window.confirm(`그 가계부에 저장하지 못한 변경 ${left}건이 있어요.\n목록에서 빼면 이 변경은 사라져요. 그래도 뺄까요?`)) return;
+    }
+    if (key) clearPending(key);
+    removeSharedLedger(msAccountKey, id);
+    setLedgerVersion(v => v + 1);
+    if (ownStorage) syncLedgerList(ownStorage).catch(() => {});
+  }, [msAccountKey, sharedLedgers, currentLedgerId, dirty, saveNow, pendingCount, leaveCurrentLedger, ownStorage]);
+
+  // 공유받은 가계부 목록을 이 계정의 다른 기기와 맞춘다(내 앱 폴더의 ledgers.json) — 가계부를 연 뒤 한 번
+  const ledgerSyncedRef = React.useRef('');
+  useEffect(() => {
+    if (!canShare || !ownStorage || !db || ledgerSyncedRef.current === msAccountKey) return;
+    ledgerSyncedRef.current = msAccountKey;
+    syncLedgerList(ownStorage).then((changed) => {
+      if (!changed) return;
+      // 다른 기기에서 지금 보던 가계부를 목록에서 뺐다 — 닫고 내 가계부로(화면·뒤로가기 기록도 처음으로)
+      const viewing = currentLedgerIdRef.current;
+      if (viewing && !getSharedLedgers(msAccountKey).some(l => l.id === viewing)) leaveCurrentLedgerRef.current();
+      setLedgerVersion(v => v + 1);
+    }).catch(() => {});
+  }, [canShare, ownStorage, db, msAccountKey]);
+
+  // 참여 링크로 열었으면(index.js가 받아 둠) 로그인 뒤 '이 가계부를 열까요?'를 묻는다
+  const [joinOffer, setJoinOffer] = useState(null);   // { driveId, itemId, ownerName, error, keep }
+  const joinDismissedRef = React.useRef(false);   // 이번에 '나중에'를 눌렀다 — 다음에 앱을 열 때 다시 묻는다
+  useEffect(() => {
+    if (!isAuthenticated || !ownStorage || joinDismissedRef.current) return undefined;
+    const join = peekPendingJoin();
+    if (!join) return undefined;
+    if (provider !== 'microsoft') {
+      clearPendingJoin();
+      setJoinOffer({ ...join, error: 'Microsoft 계정으로 공유된 가계부예요 — 로그아웃한 뒤 초대받은 Microsoft 계정으로 로그인해 주세요' });
+      return undefined;
+    }
+    if (!canShare) {
+      clearPendingJoin();
+      setJoinOffer({ ...join, error: '회사·학교 Microsoft 계정은 아직 함께 쓰기를 지원하지 않아요 — 개인 Microsoft 계정으로 로그인해 주세요' });
+      return undefined;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const own = await ownStorage.sharing.ownLedgerRef().catch(() => null);
+        if (own && own.driveId === join.driveId && own.itemId === join.itemId) {
+          clearPendingJoin();   // 내 가계부의 링크 — 따로 넣을 것이 없다
+          if (alive) showToast('내 가계부의 참여 링크예요 — 따로 넣을 것이 없어요');
+          return;
+        }
+        const known = getSharedLedgers(msAccountKey).find(l => l.driveId === join.driveId && l.itemId === join.itemId);
+        if (known) {
+          // 이미 넣은 가계부 — 다시 묻지 않고 그 가계부로(보고 있으면 그대로)
+          clearPendingJoin();
+          if (alive && known.id !== currentLedgerIdRef.current) switchLedgerRef.current(known.id);
+          return;
+        }
+        const info = await ownStorage.sharing.inspectShared(join);
+        if (alive) setJoinOffer({ ...join, ownerName: info.ownerName || join.from || '' });
+      } catch (e) {
+        if (e instanceof OfflineError) return;   // 연결이 없다 — 받아 둔 링크는 그대로, 다음에 열 때 다시
+        // 열 수 없음(403·404)이나 잘못된 링크(400 등 4xx) — 다시 물어도 같다. 408(시간 초과)·429(요청이 많음)는 잠깐의 오류
+        if (e.message === SHARED_GONE_MESSAGE || /: 4(?!08|29)\d\d\b/.test(e.message)) {
+          // 참여할 때 열 수 없는 까닭은 대개 다른 계정으로 로그인했거나 초대를 아직 받지 않은 것이다
+          clearPendingJoin();
+          if (alive) setJoinOffer({ ...join, error: JOIN_DENIED_MESSAGE });
+          return;
+        }
+        // 잠깐의 오류(서버 등) — 링크는 남겨 두고 알린다
+        if (alive) setJoinOffer({ ...join, keep: true, error: `공유받은 가계부를 확인하지 못했어요 — 잠시 뒤 앱을 다시 열어 주세요 (${e.message})` });
+      }
+    })();
+    return () => { alive = false; };
+  }, [isAuthenticated, ownStorage, provider, canShare, showToast, msAccountKey]);
+  const acceptJoin = useCallback(async () => {
+    const offer = joinOffer;
+    setJoinOffer(null);
+    clearPendingJoin();
+    if (!offer || offer.error || !msAccountKey) return;
+    const id = addSharedLedger(msAccountKey, offer);
+    if (id === currentLedgerIdRef.current) { setLedgerVersion(v => v + 1); return; }   // 이미 보고 있다
+    if (ownStorage) syncLedgerList(ownStorage).catch(() => {});
+    if (dirty) await saveNow();
+    leaveCurrentLedger();
+    setCurrentLedgerId(msAccountKey, id);
+    setLedgerVersion(v => v + 1);
+  }, [joinOffer, msAccountKey, ownStorage, dirty, saveNow, leaveCurrentLedger]);
+  // 나중에(또는 바깥·Esc) — 링크는 남겨 두고 다음에 앱을 열 때 다시 묻는다. 열 수 없는 링크면 버린다
+  const dismissJoin = useCallback(() => {
+    if (joinOffer?.error && !joinOffer.keep) clearPendingJoin();
+    else joinDismissedRef.current = true;
+    setJoinOffer(null);
+    // 참여 링크 때문에 미뤄 둔 첫 실행 안내 — 내 가계부가 비어 있으면 이제 연다
+    if (blankLedgerRef.current && !isOnboardingPostponed(storage?.accountKey || '')) navigate({ showOnboarding: true });
+  }, [joinOffer, storage, navigate]);
+  // 설정 › 데이터의 '다른 계정과 함께 쓰기'
+  const ledgersApi = useMemo(() => ({
+    provider,
+    canShare,
+    sharing: canShare ? ownStorage?.sharing || null : null,
+    myName: msAccount?.name || '',
+    current: currentLedger,
+    shared: sharedLedgers,
+    switchTo: switchLedger,
+    leave: leaveSharedLedger,
+  }), [provider, canShare, ownStorage, msAccount, currentLedger, sharedLedgers, switchLedger, leaveSharedLedger]);
+  const ledgerName = currentLedger ? `${currentLedger.ownerName || '공유받은'} 가계부` : '';
 
   // 동기화 안내(병합·자동등록 등)는 토스트로 보여준다
   useEffect(() => {
@@ -299,7 +502,7 @@ function App() {
     if (!db) { onboardingCheckedRef.current = false; return; }
     if (onboardingCheckedRef.current) return;
     onboardingCheckedRef.current = true;
-    if (blankLedger && !isOnboardingPostponed(accountKey)) navigate({ showOnboarding: true });
+    if (blankLedger && !isOnboardingPostponed(accountKey) && !peekPendingJoin()) navigate({ showOnboarding: true });
   }, [db, blankLedger, accountKey, navigate]);
 
   // 홈 화면 바로가기·공유 받기 (I-024) — 가계부를 연 뒤 한 번: 공유로 받아 둔 사진·글이 있으면 AI 입력으로,
@@ -521,6 +724,12 @@ function App() {
           return;
         }
       }
+      // 이 계정의 다른 가계부(공유받은 가계부·내 가계부, M-2)에 저장하지 못한 변경 — 로그아웃하면 이 기기에서 지운다
+      const others = countPendingForAccount(storage?.accountKey, storage?.ledgerKey || storage?.accountKey);
+      if (others && !window.confirm(`다른 가계부에 저장하지 못한 변경 ${others}건이 있습니다.\n로그아웃하면 이 변경도 사라집니다(그 가계부를 열면 저장할 수 있어요). 그래도 로그아웃할까요?`)) {
+        loggingOutRef.current = false;
+        return;
+      }
       if (Object.values(getAIConfig().keys).some(k => String(k || '').trim())) {
         // 키를 지울지 묻기 전에 드라이브와 맞춰 본다 — 이 기기에서 바꾼 것이 올라가 있어야 지워도 다른 기기·다시 로그인에 남는다.
         // 신호가 약해도 로그아웃이 멈추지 않게 5초까지만 기다린다
@@ -557,7 +766,7 @@ function App() {
       loggingOutRef.current = false;
       setError(`로그아웃 실패: ${e.message}`);
     }
-  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast, hideTopToast, provider, driveName]);
+  }, [dirty, pendingCount, saveNow, resetForLogout, storage, instance, accounts, setError, showToast, hideTopToast, provider, driveName]);
 
   const openAdd = (date) => {
     setDefaultFormDate(typeof date === 'string' ? date : null);
@@ -609,6 +818,9 @@ function App() {
             )}
             {error && <p className="error-msg">{error}</p>}
             <button className="btn-primary" onClick={() => loadDb()}>가계부 불러오기</button>
+            {currentLedger && (
+              <button type="button" className="btn-secondary" onClick={() => switchLedger(OWN_LEDGER)}>내 가계부 열기</button>
+            )}
             {/* 설정 › 앱에 갈 수 없는 화면이라 여기서도 문제를 알릴 수 있게 (I-038) */}
             {error && !showLoadReport && (
               <button type="button" className="btn-secondary" onClick={() => setShowLoadReport(true)}>문제 알리기</button>
@@ -629,6 +841,16 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* 가계부 바꾸기·참여 링크 (M-2) */}
+      {showLedgerSwitcher && (
+        <LedgerSwitcher
+          current={currentLedgerId}
+          shared={sharedLedgers}
+          onPick={switchLedger}
+          onClose={() => window.history.back()}
+        />
+      )}
+      {joinOffer && <JoinLedgerDialog offer={joinOffer} onAccept={acceptJoin} onClose={dismissJoin} />}
       {/* 가계부를 열 때 가리기 (U-7) — 모든 창 위에 덮는다 */}
       {curtain && <PrivacyCurtain onReveal={() => setCurtain(false)} />}
       <Header
@@ -636,6 +858,8 @@ function App() {
         onSave={() => saveNow()}
         onLogout={handleLogout}
         onCover={hideOnOpen ? () => setCurtain(true) : null}
+        ledgerName={ledgerName}
+        onSwitchLedger={sharedLedgers.length ? () => navigate({ showLedgerSwitcher: true }) : null}
         loading={loading}
         saving={saving}
         dirty={dirty}
@@ -769,6 +993,7 @@ function App() {
             dataVersion={dataVersion}
             onChanged={() => saveWithToast('✓ 설정이 저장됨')}
             backup={backupApi}
+            ledgers={ledgersApi}
             activeSection={settingsSection}
             drilldownCategory={settingsDrilldownCategory}
             drilldownTrip={settingsDrilldownTrip}

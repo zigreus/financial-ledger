@@ -25,8 +25,9 @@
 | `src/services/storage/oneDrive.js` + memory | OneDrive 구현(Graph, eTag 조건부 저장) / 테스트용 메모리 가짜(같은 버전 규칙) |
 | `src/services/storage/googleDrive.js` + `src/auth/googleAuth.js` | Google Drive 구현(Drive v3, 버전은 headRevisionId — 원자적 조건부 저장이 없어 저장 직전 확인 + 저장 뒤 리비전 확인·되돌리기로 대신) / Google 로그인(서버 없는 토큰 방식, 약 1시간마다 만료 → `ReconnectRequiredError`, 앱의 '다시 연결'). 테스트는 `__tests__/fakeDrive.js` |
 | `src/services/backups.js` | 백업 이름 규칙·목록·정리(저장소와 무관). 실제 파일은 저장소의 백업 폴더(OneDrive는 `backups/`) |
+| `src/services/ledgers.js` + `App/LedgerDialogs.js` + `SettingsView/sections/LedgerShareBlock.js` | 다른 계정과 함께 쓰기(M-2 1단계 Microsoft 개인 계정): 참여 링크(`?join=ms&drive&item`, index.js가 받아 둠)·공유받은 가계부 목록(기기 + 내 앱 폴더 `ledgers.json`, 항목마다 나중 것)·지금 보는 가계부. 초대·구성원은 `createOneDriveStorage(...).sharing`, 공유받은 가계부는 `createOneDriveStorage(…, { ledger })`(`ledgerKey`·`isShared`, 백업 없음) (I-050) |
 | `src/services/ledgerFile.js` | 가계부 파일로 바꾸기 전 살피기(이 앱의 가계부인지·더 새 버전인지, 거래 수·기간 등). 바꾸기는 useLedgerSync의 `replaceWithFile` (I-035) |
-| `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 계정별) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
+| `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 가계부별 — `ledgerKey || accountKey`) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
 | `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
@@ -54,6 +55,8 @@
    - useLedgerSync가 모든 쓰기를 기록하고 잠시 뒤 저장소(OneDrive 또는 Google Drive)에 저장합니다. 다른 기기와 충돌하면 최신 파일에 내 변경을 다시 실행해 합칩니다.
    - 컴포넌트는 OneDrive·Google Drive(저장소)를 직접 부르지 않습니다. App이 로그인한 계정에 맞춰 `createOneDriveStorage`·`createGoogleDriveStorage`로 만든 저장소를 useLedgerSync·aiSettingsSync에 넘깁니다. 화면 문구의 드라이브 이름은 `storage/driveName.js`를 씁니다.
    - 동기화 코드는 어느 저장소인지 모릅니다. 저장소별 코드는 `services/storage/`에만 두고, 새 저장소는 `storage.test.js`의 계약 테스트를 함께 통과해야 합니다. (I-018)
+   - 이 기기에 두는 것(미저장 변경·연결 없이 열 사본·백업 표식)은 `storage.ledgerKey || storage.accountKey`로 가계부마다 따로 둡니다. AI 설정·온보딩처럼 계정에 묶이는 것은 `accountKey`. 공유받은 가계부(M-2)는 열쇠가 달라 바꾸면 useLedgerSync가 지금 DB를 버리고 새로 엽니다. (I-050)
+   - **다른 계정에는 가계부 파일(`ledger.db`) 하나만 공유합니다.** 앱 폴더(AI 키가 든 `ai-settings.json`)·백업 폴더는 공유하지 않고, 파일 번호가 바뀌지 않게 가계부 파일을 지우고 다시 만들지 않습니다. (M-2)
    - `onChanged()`는 "지금 저장하고 토스트를 보여 줘"라는 뜻입니다. 부르지 않아도 저장은 됩니다. (B-001, B-003, B-037)
    - 저장소에 연결이 없으면 `OfflineError`를 던집니다(그때는 로그인 화면으로 넘기지 않음). useLedgerSync는 이 기기의 사본(`offlineCache`)으로 열고, 연결되면 사본 버전으로 저장해 기존 병합 경로로 합칩니다. 저장소와 맞춘 순간(불러오기·저장·병합·되돌리기)마다 사본을 새로 남기고, 로그아웃하면 지웁니다. 사본으로 연 동안에는 자동등록을 하지 않습니다. (I-024, B-004)
    - 가계부를 다른 파일로 통째로 바꾸면(`replaceWithFile`) SQLite 머리의 `application_id`에 새 **세대**를 찍습니다. 저장 안 된 변경(병합·다시 열기·바꾸는 동안 입력)은 바탕 가계부와 세대가 같을 때만 다시 실행하고, 다르면 넣지 않고 알립니다 — 바뀐 가계부의 같은 번호 행은 다른 거래입니다. 세대는 파일 바이트에서 읽습니다(`generationOfBytes`, 쓰기 경로에서 DB에 질의하지 않게). `application_id`는 세대 전용, `user_version`은 스키마 버전입니다. (I-035)

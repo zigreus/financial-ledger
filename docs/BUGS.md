@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-050
+다음 번호: B-094, I-051
 
 ## 요약표
 
@@ -158,6 +158,7 @@
 | I-047 | ✅ | - | 화면 | 요약에서 달을 바꾸려면 달 목록을 열어 골라야 함 — 캘린더만 밀어서 넘김 (ROADMAP U-9) |
 | I-048 | ✅ | - | 화면 | PC에서 창을 닫으려면 닫기 버튼을 찾아 눌러야 함 (ROADMAP U-10) |
 | I-049 | ✅ | - | 거래 | 몇 년 치 거래내역에서 달 묶음을 하나씩 접고 펼쳐야 함 (ROADMAP U-11) |
+| I-050 | ✅ | - | 저장·공유 | 가족이 각자 자기 계정으로는 같은 가계부를 쓸 수 없고 한 계정을 함께 써야 함 (ROADMAP M-2 1단계 Microsoft) |
 
 
 ## 상세
@@ -1390,3 +1391,11 @@
 - 원인: 달 머리글을 하나씩 누르는 것만 있었다.
 - 해결: 달이 둘 이상이면 거래내역 맨 위 오른쪽에 '모두 펼치기 / 모두 접기'를 둔다(지금 목록의 달만, 거래 1,000건 넘게 한꺼번에 펼치면 먼저 묻는다).
 - 파일: src/components/TransactionList/TransactionList.js·TransactionList.css, src/components/App/__tests__/App.display.test.js, SETUP.md
+
+### I-050 가족이 각자 자기 계정으로는 같은 가계부를 쓸 수 없고 한 계정을 함께 써야 함 (ROADMAP M-2 1단계 Microsoft)
+- 상태: ✅ 해결 (2026-11-10) — 실제 계정 두 개로 확인은 남음(SETUP 5-6)
+- 영역: 저장·공유
+- 문제: 가족이 같은 가계부를 쓰려면 한 Microsoft 계정에 함께 로그인해야 해, 각자 계정(메일·다른 파일)을 쓰는 가족은 함께 쓸 수 없다(사용자 요청 — 개인 계정끼리, Microsoft 먼저, 내 가계부+공유받은 가계부, 백업은 주인만).
+- 원인: 저장소가 늘 로그인한 계정의 앱 폴더 ledger.db만 읽고 썼고, 다른 계정의 파일을 열거나 내 파일을 특정 사람에게 공유하는 길이 없었다.
+- 해결: 주인이 설정 › 데이터에서 이메일로 초대하면 가계부 파일 하나에 쓰기 권한을 주고(Graph invite, 앱 폴더는 공유 안 함) 참여 링크를 만들며, 받는 사람은 링크로 열어 '열기' → 그 파일(/drives/{d}/items/{i})을 같은 eTag 규칙으로 읽고 쓰는 저장소(ledgerKey로 미저장 변경·사본을 따로, 백업 없음)로 열고, 머리글에서 내 가계부와 바꾸며(바꾸기 전에 지금 가계부를 바로 닫고 진행 중인 불러오기·저장 결과를 버림, 화면·뒤로가기 기록은 처음으로), 목록은 기기와 내 앱 폴더 ledgers.json으로 맞춘다. 넣지 못한 변경의 사본은 내 앱 폴더 shared-backups에, 로그아웃·목록에서 빼기는 그 가계부들의 미저장 변경을 묻고 지운다. 회사·학교 계정·Google은 아직(안내).
+- 파일: src/services/storage/oneDrive.js·provider.js, src/services/ledgers.js, src/hooks/useLedgerSync.js, src/index.js, src/components/App/App.js·LedgerDialogs.js·LedgerDialogs.css, src/components/Header/Header.js·Header.css, src/components/SettingsView/SettingsView.js·SettingsView.css·sections/DataSection.js·sections/LedgerShareBlock.js, src/components/common/copyText.js·ProblemReport.js, public/privacy.html, src/services/changeLog.js, src/components/SettingsView/sections/DisplaySettings.js(갤럭시 루틴 안내), 테스트(ledgers·oneDriveShare·useLedgerSync.merge·useLedgerSync.ledgers·App.ledgers·LedgerShare.ui), AGENTS.md, SETUP.md, docs/ROADMAP.md

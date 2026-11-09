@@ -605,3 +605,21 @@
 .disp-switch { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; font-size: calc(14px * var(--fs)); font-weight: 600; color: var(--text); cursor: pointer; }
 .disp-switch input { width: 18px; height: 18px; accent-color: var(--primary); }
 .disp-tip { margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--c-blue-50); border: 1px solid var(--c-blue-200); font-size: calc(12px * var(--fs)); line-height: 1.6; color: var(--text); }
+/* 설정 › 데이터 › 다른 계정과 함께 쓰기 (M-2) */
+.data-share-title { font-size: calc(14px * var(--fs)); font-weight: 600; margin-bottom: 6px; }
+.data-share-desc { font-size: calc(12px * var(--fs)); color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; }
+.data-share-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.data-share-input {
+  flex: 1; min-width: 0; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text); font-size: calc(14px * var(--fs));
+}
+.data-share-btn { flex: 0 0 auto; padding: 10px 16px; }
+.data-share-linkbtn { width: 100%; margin-bottom: 10px; font-size: calc(13px * var(--fs)); padding: 9px 12px; }
+.data-share-link { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); }
+.data-share-linktext { font-size: calc(11px * var(--fs)); word-break: break-all; color: var(--text); }
+.data-share-subtitle { font-size: calc(13px * var(--fs)); font-weight: 600; margin: 12px 0 6px; }
+.data-share-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.data-share-member { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.data-share-member-name { font-size: calc(14px * var(--fs)); color: var(--text); min-width: 0; word-break: break-all; }
+.data-share-member-name small { font-size: calc(12px * var(--fs)); color: var(--text-muted); }
+.data-share-rm { flex: 0 0 auto; padding: 6px 12px; font-size: calc(13px * var(--fs)); }

@@ -2,33 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { CONTACT_EMAIL } from '../../config';
 import { ERROR_LOG_MAX, clearErrorLog, getErrorLog } from '../../services/errorLog';
 import { MAIL_ERRORS_MAX, buildProblemReport } from '../../services/problemReport';
+import { copyText } from './copyText';
 import './ProblemReport.css';
 
 const MAIL_SUBJECT = '[지금 가계부] 문제 알리기';
-
-/** 글을 클립보드에 — 클립보드 API가 막혀 있으면 예전 방식(선택해 복사)으로. 됐으면 true */
-async function copyText(text) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* 아래 방식으로 */ }
-  const area = document.createElement('textarea');
-  try {
-    area.value = text;
-    area.setAttribute('readonly', '');
-    area.style.position = 'fixed';
-    area.style.opacity = '0';
-    document.body.appendChild(area);
-    area.select();
-    return !!document.execCommand?.('copy');
-  } catch {
-    return false;
-  } finally {
-    area.remove();
-  }
-}
 
 /**
  * 문제 알리기 (I-038, ROADMAP M-5) — 이 기기에 남은 오류 기록(services/errorLog)과 앱 정보를 글로 보여 주고,

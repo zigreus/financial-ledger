@@ -3,7 +3,7 @@
  */
 /* eslint-disable */
 // 자동 저장·충돌 병합 시나리오 (B-001·B-002·B-003, F-2) — 저장소는 버전 규칙을 지키는 메모리 가짜, DB는 진짜 sql.js
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import { createMemoryStorage } from '../../services/storage/memory';
@@ -756,5 +756,54 @@ describe('Google Drive 저장소(가짜 Drive)로도 같은 병합 (M-1, I-031)'
     expect(detailsOf(headBytes(drive))).toEqual(['지금', '끼어든 기기', '내 입력']);
     expect(ref.current.pendingCount).toBe(0);
     unmount();
+  });
+});
+
+describe('가계부 바꾸기 (M-2) — 공유받은 가계부는 열쇠(ledgerKey)가 따로', () => {
+  /** 저장소를 바꿔 끼울 수 있는 화면 — 가계부 바꾸기처럼 */
+  async function mountSwitchable(first) {
+    const ref = { current: null, setStore: null };
+    function Harness() {
+      const [store, setStore] = useState(first);
+      ref.setStore = setStore;
+      ref.current = useLedgerSync({ storage: store });
+      return null;
+    }
+    const root = createRoot(document.createElement('div'));
+    await act(async () => { root.render(<Harness />); });
+    return { ref, unmount: () => act(() => root.unmount()) };
+  }
+  const switchTo = async (m, store) => {
+    await act(async () => { m.ref.setStore(store); });
+    await act(async () => { await m.ref.current.loadDb(); });
+    await flush();
+  };
+
+  test('바꾸기 전에 저장하지 못한 변경은 그 가계부 열쇠에 남고, 다른 가계부에 섞이지 않으며, 돌아오면 이어서 저장한다', async () => {
+    const own = storage;   // 내 가계부: '지금'
+    const shared = { ...createMemoryStorage({ accountKey: 'me', bytes: ledgerWith('가족 가계부') }), ledgerKey: 'me#ms:d1:i1', isShared: true };
+    const m = await mountSwitchable(own);
+    await act(async () => { await m.ref.current.loadDb(); });
+    await flush();
+    own.write = async () => { throw new Error('네트워크 오류'); };   // 내 가계부 저장이 실패하는 중
+    await act(async () => { addTransaction(m.ref.current.db, tx('내 가계부 입력')); });
+    await waitSave();
+    expect(pendingStored('me').entries.length).toBeGreaterThan(0);
+
+    await switchTo(m, shared);
+    expect(details(m.ref.current.db)).toEqual(['가족 가계부']);   // 내 미저장 변경이 섞이지 않는다
+    expect(pendingStored('me#ms:d1:i1')).toBeNull();
+    await act(async () => { addTransaction(m.ref.current.db, tx('가족 입력')); });
+    await waitSave();
+    expect(detailsOf(shared.current())).toEqual(['가족 가계부', '가족 입력']);
+    expect(pendingStored('me').entries.length).toBeGreaterThan(0);   // 내 가계부 것은 그대로 남아 있다
+
+    // 연결이 돌아온 내 가계부(같은 파일 — 저장이 되는 저장소)로 돌아온다
+    const fresh = createMemoryStorage({ accountKey: 'me', bytes: own.current() });
+    await switchTo(m, fresh);
+    await waitSave();
+    expect(detailsOf(fresh.current())).toEqual(['지금', '내 가계부 입력']);
+    expect(detailsOf(shared.current())).toEqual(['가족 가계부', '가족 입력']);
+    m.unmount();
   });
 });
