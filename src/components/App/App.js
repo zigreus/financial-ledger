@@ -19,6 +19,12 @@ import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
 import { createOneDriveStorage } from '../../services/storage/oneDrive';
+import { createGoogleDriveStorage } from '../../services/storage/googleDrive';
+import { ReconnectRequiredError } from '../../services/storage/provider';
+import { getGoogleSession, isGoogleTokenValid, markGoogleTokenExpired, googleLogout } from '../../auth/googleAuth';
+import { useGoogleSession } from '../../hooks/useGoogleSession';
+import GoogleReconnectBanner from './GoogleReconnectBanner';
+import { setCurrentDrive } from '../../services/storage/driveName';
 import { resolveDeviceMember } from '../../services/deviceMember';
 import { isOnboardingPostponed, postponeOnboarding } from '../../services/onboardingPrefs';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
@@ -27,14 +33,32 @@ import { clearAIDraft, setAIDraftAccount } from '../../services/aiDraft';
 import { clearSharedItems, readLaunchAction, takeSharedItems } from '../../services/shareInbox';
 
 function App() {
-  const isAuthenticated = useIsAuthenticated();
+  const msalAuthenticated = useIsAuthenticated();
   const { instance, accounts } = useMsal();
+  // Google 로그인 (M-1, I-031) — 이 기기에 Google 세션이 있으면 Google Drive를 쓴다(토큰이 끝났어도 세션은 남는다)
+  const { session: googleSession, tokenValid: googleTokenValid } = useGoogleSession();
+  const googleSub = googleSession?.sub || '';
+  const provider = googleSub ? 'google' : (msalAuthenticated && accounts.length ? 'microsoft' : null);
+  const isAuthenticated = !!provider;
+  const driveName = provider === 'google' ? 'Google Drive' : 'OneDrive';
+  setCurrentDrive(provider);   // 화면 문구(머리글·AI 설정·백업 안내)가 쓰는 저장소 이름
 
-  // 가계부·백업·AI 설정 파일을 두는 저장소 (F-2) — 지금은 로그인한 Microsoft 계정의 OneDrive. 로그인 전에는 null
-  const storage = useMemo(
-    () => (accounts.length ? createOneDriveStorage(instance, accounts) : null),
-    [instance, accounts],
-  );
+  // 가계부·백업·AI 설정 파일을 두는 저장소 (F-2) — 로그인한 계정의 OneDrive 또는 Google Drive. 로그인 전에는 null
+  const storage = useMemo(() => {
+    if (googleSub) {
+      return createGoogleDriveStorage({
+        accountKey: `google:${googleSub}`,
+        // 토큰은 부를 때마다 읽는다 — 다시 연결해 바뀌어도 저장소를 새로 만들지 않게. 끝났으면 연결 없음처럼(ReconnectRequiredError)
+        getToken: () => {
+          const s = getGoogleSession();
+          if (!s || s.sub !== googleSub || !isGoogleTokenValid(s)) throw new ReconnectRequiredError();
+          return s.accessToken;
+        },
+        onUnauthorized: markGoogleTokenExpired,
+      });
+    }
+    return accounts.length ? createOneDriveStorage(instance, accounts) : null;
+  }, [googleSub, instance, accounts]);
 
   // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
   // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
@@ -138,12 +162,12 @@ function App() {
 
   // 로그인 후 DB 자동 로드 (실패하면 버튼으로 다시 시도)
   useEffect(() => {
-    if (!isAuthenticated || accounts.length === 0) { loadAttemptedRef.current = false; return; }
+    if (!isAuthenticated || !storage) { loadAttemptedRef.current = false; return; }
     if (!db && !loadAttemptedRef.current) {
       loadAttemptedRef.current = true;
       loadDb();
     }
-  }, [isAuthenticated, accounts, db, loadDb]);
+  }, [isAuthenticated, storage, db, loadDb]);
 
   // AI 설정(API 키)을 같은 계정의 기기끼리 맞춘다 — 가계부를 불러온 뒤 한 번, 그리고 앱으로 돌아오거나
   // 다시 온라인이 될 때. 다른 기기에서 넣은 키가 있으면 이 기기에서 다시 입력하지 않아도 되고,
@@ -412,7 +436,7 @@ function App() {
         }
       }
       if (Object.values(getAIConfig().keys).some(k => String(k || '').trim())) {
-        // 키를 지울지 묻기 전에 OneDrive와 맞춰 본다 — 이 기기에서 바꾼 것이 올라가 있어야 지워도 다른 기기·다시 로그인에 남는다.
+        // 키를 지울지 묻기 전에 드라이브와 맞춰 본다 — 이 기기에서 바꾼 것이 올라가 있어야 지워도 다른 기기·다시 로그인에 남는다.
         // 신호가 약해도 로그아웃이 멈추지 않게 5초까지만 기다린다
         showToast('로그아웃하는 중…');
         let synced = false;
@@ -427,8 +451,8 @@ function App() {
         clearTimeout(timer);
         const ai = getAIConfig();
         const note = synced && !Object.keys(ai.pending).length
-          ? '다른 사람도 쓰는 기기라면 지우는 것을 권장합니다. OneDrive에 저장된 키는 그대로라, 다시 로그인하면 자동으로 불러옵니다'
-          : '지금 OneDrive와 맞추지 못했습니다. 지우면 이 기기에만 있던 키나 바꾼 설정은 사라질 수 있습니다. 다시 로그인하면 OneDrive에 있는 설정을 불러옵니다';
+          ? `다른 사람도 쓰는 기기라면 지우는 것을 권장합니다. ${driveName}에 저장된 키는 그대로라, 다시 로그인하면 자동으로 불러옵니다`
+          : `지금 ${driveName}와 맞추지 못했습니다. 지우면 이 기기에만 있던 키나 바꾼 설정은 사라질 수 있습니다. 다시 로그인하면 ${driveName}에 있는 설정을 불러옵니다`;
         if (window.confirm(`이 기기에 저장된 AI API 키도 지울까요?\n(${note})`)) clearAIKeys();
       }
       clearAIDraft(); // AI 입력에 쓰다 남은 글은 이 계정의 것 — 다음에 로그인하는 사람에게 보이지 않게
@@ -436,12 +460,18 @@ function App() {
       // 넘어가며 문서가 내려가면 지우기가 끊길 수 있어 잠깐(최대 3초) 기다린다
       const clearing = Promise.all([clearSharedItems(), resetForLogout()]);
       await Promise.race([clearing, new Promise(r => setTimeout(r, 3000))]);
+      if (provider === 'google') {
+        // Google은 이 기기의 세션만 지운 뒤 첫 화면으로 — 토큰 폐기는 가족 기기 허락까지 지워 하지 않는다 (M-1)
+        await googleLogout();
+        window.location.assign('/');
+        return;
+      }
       await instance.logoutRedirect({ account: accounts[0] });
     } catch (e) {
       loggingOutRef.current = false;
       setError(`로그아웃 실패: ${e.message}`);
     }
-  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast]);
+  }, [dirty, pendingCount, saveNow, resetForLogout, instance, accounts, setError, showToast, provider, driveName]);
 
   const openAdd = (date) => {
     setDefaultFormDate(typeof date === 'string' ? date : null);
@@ -473,10 +503,13 @@ function App() {
         {loading ? (
           <>
             <div className="spinner" />
-            <p>OneDrive에서 가계부를 불러오는 중…</p>
+            <p>{driveName}에서 가계부를 불러오는 중…</p>
           </>
         ) : (
           <>
+            {provider === 'google' && !googleTokenValid && (
+              <GoogleReconnectBanner email={googleSession?.email} pending={pendingCount} />
+            )}
             {error && <p className="error-msg">{error}</p>}
             <button className="btn-primary" onClick={() => loadDb()}>가계부 불러오기</button>
           </>
@@ -498,6 +531,10 @@ function App() {
         pendingCount={pendingCount}
         onSettings={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         settingsActive={activeTab === 'settings'}
+        userLabel={provider === 'google' ? (googleSession?.email || '').split('@')[0] : ''}
+        {...(provider === 'google' && !googleTokenValid
+          ? { offlineLabel: '로그인 필요', offlineTitle: "로그인 시간이 끝났습니다 — 입력한 내용은 이 기기에 보관했다가 '다시 연결'을 누르면 저장합니다" }
+          : {})}
       />
 
       {toast && (
@@ -514,6 +551,10 @@ function App() {
             </button>
           )}
         </div>
+      )}
+
+      {provider === 'google' && !googleTokenValid && (
+        <GoogleReconnectBanner email={googleSession?.email} pending={pendingCount} />
       )}
 
       {error && (
@@ -717,7 +758,9 @@ function App() {
       {showOnboarding && blankLedger && (
         <Onboarding
           db={db}
-          accountLabel={accounts[0]?.username ? `${accounts[0].username}의 OneDrive` : ''}
+          accountLabel={provider === 'google'
+            ? (googleSession?.email ? `${googleSession.email}의 Google Drive` : 'Google Drive')
+            : (accounts[0]?.username ? `${accounts[0].username}의 OneDrive` : '')}
           onDone={handleOnboardingDone}
           onClose={handleOnboardingClose}
           onLater={handleOnboardingLater}

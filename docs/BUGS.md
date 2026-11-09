@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-031
+다음 번호: B-093, I-032
 
 ## 요약표
 
@@ -138,6 +138,7 @@
 | I-028 | ✅ | - | 요약 | 한 달이 끝나도 평소보다 무엇에 더 썼는지·큰 지출·무지출일·예산 결과를 한눈에 돌아볼 곳이 없음 (ROADMAP C-9) |
 | I-029 | ✅ | - | 요약 | 연말정산 때 한 해 신용카드·체크카드·현금영수증 사용액과 의료비·교육비 등을 따로 더해 봐야 함 (ROADMAP C-10) |
 | I-030 | ✅ | - | 일정·여행 | 일행과 함께 간 여행에서 누가 냈고 누구 몫인지 정산하려면 따로 계산해야 함 (ROADMAP C-11) |
+| I-031 | ✅ | - | 로그인·저장 | Microsoft 계정·OneDrive가 없으면 쓸 수 없음 — Google 계정·Google Drive로도 쓰게 (ROADMAP M-1) |
 
 
 ## 상세
@@ -1209,3 +1210,11 @@
 - 원인: 여행 일정에 일행·낸 사람·나눌 사람을 적는 곳이 없다.
 - 해결: 설정(캘린더)에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 여행 일정에 '일행 정산'을 두어, 일행(우리 포함, 몫 수)과 일행이 낸 돈(trip_participants·trip_split_entries, 이름으로 참조)을 적고, 가계부의 여행 거래(순지출, 환차손익 조정 제외)는 우리가 낸 돈으로 기본 모두가 나누되 거래마다 나눌 사람·빼기를 고르게 하며, 적은 건수의 정산표와 공유용 글을 만들고, 병합으로 엇갈린 이름은 나누지 않고 알리며, 일정·거래를 지우면 함께 정리한다(ROADMAP C-11, 사용자 요청).
 - 파일: src/services/db/tripSplit.js(새), src/services/db/schema.js·calendar.js·transactions.js, src/services/dbManager.js, src/components/TripSplit/TripSplitModal.js·TripSplitModal.css(새), src/components/CalendarView/CalendarView.js, src/components/SettingsView/sections/CalendarSection.js, src/services/__tests__/tripSplit.test.js, src/components/__tests__/TripSplit.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-031 Microsoft 계정·OneDrive가 없으면 쓸 수 없음 — Google 계정·Google Drive로도 쓰게 (ROADMAP M-1)
+- 상태: ✅ 해결 (2026-11-09, 실제 Google Drive 점검은 사용자 설정 후 — SETUP 2-2)
+- 영역: 로그인·저장
+- 문제: 국내 사용자 대부분은 Microsoft 계정·OneDrive를 쓰지 않아, 다른 가족이 이 앱을 쓰려면 MS 계정부터 만들어야 한다.
+- 원인: 로그인은 MSAL, 저장소는 OneDrive 구현 하나뿐이다(저장소 계약은 F-2에서 나눠 두었다).
+- 해결: Google 로그인(서버 없는 토큰 방식, drive.file 범위, 약 1시간마다 만료 → 앱을 열 때 연결되면 화면 없이 다시 받고 쓰는 중이면 '다시 연결', 로그아웃은 이 기기만)과 Google Drive 저장소(버전 headRevisionId, 원자적 조건부 저장이 없어 저장 직전 확인 + 저장 뒤 시간순 리비전 확인·끼어든 저장 되돌리기, 확인 못 한 저장은 기억했다가 마저 확인)를 같은 저장소 계약으로 붙이고, 로그인 화면에서 Microsoft·Google을 고르게 한다 — VITE_GOOGLE_CLIENT_ID가 있을 때만 보이며, 실제 Google Drive로의 확인은 사용자가 설정한 뒤 한다(ROADMAP M-1, 사용자 요청).
+- 파일: src/auth/googleAuth.js(새), src/services/storage/googleDrive.js·driveName.js(새)·provider.js, src/hooks/useGoogleSession.js(새), src/index.js, src/components/App/App.js·GoogleReconnectBanner.js·GoogleReconnectBanner.css(새), src/components/LoginPage/LoginPage.js·LoginPage.css, src/components/Header/Header.js, src/components/SettingsView/sections/DataSection.js, src/components/AIEntry/AISettingsForm.js, src/services/__tests__/googleAuth.test.js·googleDriveStorage.test.js·fakeDrive.js(새)·storage.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js, src/components/App/__tests__/App.google.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

@@ -7,6 +7,7 @@ import { buildTransactionsCSV } from '../../../services/exportData';
 import { isValidDateStr, todayStr } from '../../../services/dateUtils';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import { downloadText, downloadBytes } from '../../common/download';
+import { currentBackupPath } from '../../../services/storage/driveName';
 import { AddItemRow } from '../MasterItemList';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
 
@@ -261,7 +262,7 @@ function BackupBlock({ backup, setError }) {
     <div style={{ marginBottom: '8px' }}>
       <div style={titleStyle}>백업·되돌리기</div>
       <div style={descStyle}>
-        하루에 한 번, 그날 가계부를 처음 열 때 OneDrive의 Apps/financial-ledger/backups 폴더에 백업을 만듭니다.
+        하루에 한 번, 그날 가계부를 처음 열 때 {currentBackupPath()}에 백업을 만듭니다.
         최근 30개를 보관하고, 실수로 지우거나 잘못 가져왔을 때 그 시점으로 되돌릴 수 있습니다.
       </div>
       <div className="data-actions">

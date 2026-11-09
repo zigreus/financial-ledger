@@ -3,7 +3,7 @@ import {
   initSQL, createDatabase, exportDatabase, runAutoRegister, runAccountAutoRegister,
   getAutoIncrementSeqs, raiseAutoIncrementSeqs,
 } from '../services/dbManager';
-import { ConflictError, OfflineError, ReauthRedirectError } from '../services/storage/provider';
+import { ConflictError, OfflineError, ReauthRedirectError, ReconnectRequiredError } from '../services/storage/provider';
 import { defaultOfflineCache } from '../services/offlineCache';
 import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId,
@@ -39,6 +39,13 @@ const FIRST_LOAD_TIMEOUT_MS = 15000;
 const OFFLINE_RETRY_MS = 30000;
 // 처음 받기가 느려 사본으로 열었다 — 그 불러오기는 여기서 끝난다
 const OPENED_FROM_COPY = Symbol('opened-from-copy');
+
+// 앱이 일부러 다른 페이지로 떠날 때(Google '다시 연결', M-1) 잠깐 동안 '저장되지 않았을 수 있음' 경고를 띄우지 않는다.
+// 미저장 변경은 이미 이 기기(localStorage)에 보관돼 있어 돌아온 뒤 저장된다. 이동이 취소되면 몇 초 뒤 다시 경고한다
+let unloadAllowedUntil = 0;
+export function allowNextUnload(ms = 5000) {
+  unloadAllowedUntil = Date.now() + ms;
+}
 
 /**
  * 결과를 모르는 업로드 중 실제로 이 파일에 닿은 것 — 그 업로드의 변경(앞에서 n개)은 이미 들어 있다. 없으면 null.
@@ -344,11 +351,15 @@ export default function useLedgerSync({
    * 연결이 없어 처음 열지 못할 때 — 이 기기에 둔 사본으로 열고 보관한 미저장 변경을 다시 실행한다 (I-024).
    * 열 수 없으면 이유를 담아 던진다(부르는 쪽이 화면에 보인다).
    */
-  const openOfflineCopy = useCallback(async (session, { slow = false } = {}) => {
+  const openOfflineCopy = useCallback(async (session, { slow = false, reason = null } = {}) => {
     const key = accountKeyRef.current;
     const copy = await offlineCacheRef.current.load(key).catch(() => null);
     if (session !== sessionRef.current) return;
     if (!copy || !copy.bytes) {
+      // 로그인 시간이 끝난 경우(Google, M-1)는 연결 문제가 아니라 '다시 연결'로 풀린다
+      if (reason instanceof ReconnectRequiredError) {
+        throw new Error("로그인 시간이 끝나 가계부를 받지 못했습니다 — 화면 위 '다시 연결'을 눌러 주세요");
+      }
       throw new Error('연결이 없어 가계부를 열 수 없습니다 — 이 기기에서 연결된 상태로 한 번 열고 나면, 그다음부터는 연결이 없어도 열 수 있습니다');
     }
     const SQL = await initSQL();
@@ -559,9 +570,11 @@ export default function useLedgerSync({
       if (e instanceof OfflineError) {
         setOffline(true);
         if (!hadDb && !dbRef.current) {
-          try { await openOfflineCopy(session); } catch (e2) { if (session === sessionRef.current) setError(e2.message); }
+          try { await openOfflineCopy(session, { reason: e }); } catch (e2) { if (session === sessionRef.current) setError(e2.message); }
         } else if (!silent) {
-          setError('연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
+          setError(e instanceof ReconnectRequiredError
+            ? "로그인 시간이 끝나 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, '다시 연결'을 누르면 저장합니다"
+            : '연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
         }
       } else if (e instanceof ReauthRedirectError) setError(e.message);
       else setError(`불러오기 실패: ${e.message}`);
@@ -796,6 +809,7 @@ export default function useLedgerSync({
   // 저장 안 된 변경이 있는데 페이지를 닫으려 하면 경고
   useEffect(() => {
     const onBeforeUnload = (e) => {
+      if (unloadAllowedUntil > Date.now()) return;   // 앱이 일부러 떠나는 이동('다시 연결') — 변경은 이미 보관했다
       if (getChangeLog(dbRef.current)?.entries.length) {
         e.preventDefault();
         e.returnValue = '';

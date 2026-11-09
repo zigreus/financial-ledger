@@ -10,6 +10,8 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { ConflictError, OfflineError, ReauthRedirectError } from '../storage/provider';
 import { createMemoryStorage } from '../storage/memory';
 import { createOneDriveStorage } from '../storage/oneDrive';
+import { createGoogleDriveStorage } from '../storage/googleDrive';
+import { fakeDrive } from './fakeDrive';
 
 const bytesOf = (...n) => new Uint8Array(n);
 const list = b => Array.from(b || []);
@@ -193,6 +195,16 @@ contract('OneDrive(가짜 Graph)', () => {
     otherDeviceSaves: b => graph.put(LEDGER, b),
     removeLedger: () => graph.remove(LEDGER),
     putSettingsText: (name, text) => graph.put(`Apps/financial-ledger/${name}`, text),
+  };
+});
+
+contract('Google Drive(가짜 Drive)', () => {
+  const drive = fakeDrive();
+  return {
+    storage: createGoogleDriveStorage({ accountKey: 'me', getToken: () => 'T', fetchImpl: drive.fetch }),
+    otherDeviceSaves: b => drive.put('ledger.db', b),
+    removeLedger: () => drive.remove('ledger.db'),
+    putSettingsText: (name, text) => drive.put(name, text),
   };
 });
 

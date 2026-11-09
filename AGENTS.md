@@ -9,7 +9,7 @@
 ## 1. 프로젝트 한눈에
 
 - 가족이 함께 쓰는 가계부 웹앱입니다. 서버가 없습니다.
-- 기술: React 18, Vite 6(개발 서버·빌드), Vitest(테스트), sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`)
+- 기술: React 18, Vite 6(개발 서버·빌드), Vitest(테스트), sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`). 선택으로 Google 로그인 + Google Drive(`financial-ledger/ledger.db`, M-1·I-031)
 - 모바일 우선, UI 문구는 한국어입니다.
 
 | 위치 | 역할 |
@@ -20,6 +20,7 @@
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |
 | `src/services/storage/oneDrive.js` + memory | OneDrive 구현(Graph, eTag 조건부 저장) / 테스트용 메모리 가짜(같은 버전 규칙) |
+| `src/services/storage/googleDrive.js` + `src/auth/googleAuth.js` | Google Drive 구현(Drive v3, 버전은 headRevisionId — 원자적 조건부 저장이 없어 저장 직전 확인 + 저장 뒤 리비전 확인·되돌리기로 대신) / Google 로그인(서버 없는 토큰 방식, 약 1시간마다 만료 → `ReconnectRequiredError`, 앱의 '다시 연결'). 테스트는 `__tests__/fakeDrive.js` |
 | `src/services/backups.js` | 백업 이름 규칙·목록·정리(저장소와 무관). 실제 파일은 저장소의 백업 폴더(OneDrive는 `backups/`) |
 | `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 계정별) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
@@ -40,8 +41,8 @@
    - 컴포넌트에서 쓰기 SQL을 직접 실행하지 않습니다. 읽기도 가능하면 dbManager 함수를 씁니다.
    - 쓰기는 `db.run`으로 합니다. `db.prepare`로 쓰면 변경 기록에 잡히지 않아 저장·병합에서 빠집니다. (B-001)
 2. **저장은 자동입니다.**
-   - useLedgerSync가 모든 쓰기를 기록하고 잠시 뒤 OneDrive에 저장합니다. 다른 기기와 충돌하면 최신 파일에 내 변경을 다시 실행해 합칩니다.
-   - 컴포넌트는 OneDrive(저장소)를 직접 부르지 않습니다. App이 `createOneDriveStorage`로 만든 저장소를 useLedgerSync·aiSettingsSync에 넘깁니다.
+   - useLedgerSync가 모든 쓰기를 기록하고 잠시 뒤 저장소(OneDrive 또는 Google Drive)에 저장합니다. 다른 기기와 충돌하면 최신 파일에 내 변경을 다시 실행해 합칩니다.
+   - 컴포넌트는 OneDrive·Google Drive(저장소)를 직접 부르지 않습니다. App이 로그인한 계정에 맞춰 `createOneDriveStorage`·`createGoogleDriveStorage`로 만든 저장소를 useLedgerSync·aiSettingsSync에 넘깁니다. 화면 문구의 드라이브 이름은 `storage/driveName.js`를 씁니다.
    - 동기화 코드는 어느 저장소인지 모릅니다. 저장소별 코드는 `services/storage/`에만 두고, 새 저장소는 `storage.test.js`의 계약 테스트를 함께 통과해야 합니다. (I-018)
    - `onChanged()`는 "지금 저장하고 토스트를 보여 줘"라는 뜻입니다. 부르지 않아도 저장은 됩니다. (B-001, B-003, B-037)
    - 저장소에 연결이 없으면 `OfflineError`를 던집니다(그때는 로그인 화면으로 넘기지 않음). useLedgerSync는 이 기기의 사본(`offlineCache`)으로 열고, 연결되면 사본 버전으로 저장해 기존 병합 경로로 합칩니다. 저장소와 맞춘 순간(불러오기·저장·병합·되돌리기)마다 사본을 새로 남기고, 로그아웃하면 지웁니다. 사본으로 연 동안에는 자동등록을 하지 않습니다. (I-024, B-004)
@@ -136,10 +137,10 @@
 ## 7. AI 연동
 
 - API 키는 **가계부 DB(ledger.db)에 절대 저장하지 않습니다.** DB는 변경 기록·병합·내보내기로 여기저기 복사됩니다.
-  - 키는 기기의 localStorage에 두고, 같은 Microsoft 계정의 기기끼리는 OneDrive의 별도 설정 파일(`Apps/financial-ledger/ai-settings.json`)로만 맞춥니다(`aiSettingsSync`). (I-015)
+  - 키는 기기의 localStorage에 두고, 같은 계정의 기기끼리는 드라이브의 별도 설정 파일(OneDrive `Apps/financial-ledger/ai-settings.json`, Google Drive `financial-ledger/ai-settings.json`)로만 맞춥니다(`aiSettingsSync`). (I-015)
   - 사용자가 바꾼 설정은 `updateAIConfig`로 저장합니다. 실제로 달라진 항목(고른 공급자, 공급자별 키·모델)만 '올릴 것'으로 표시됩니다. (B-071)
   - 동기화는 OneDrive 파일을 먼저 읽고 그 위에 올릴 것만 덮어써, 읽을 때의 eTag로 저장합니다. 기기 시계로 비교하지 않고, 설정 전체를 통째로 덮어쓰지 않습니다.
-  - 이 기기 설정은 로그인 계정(homeAccountId)에 묶습니다. 다른 계정으로 로그인하면 올리지 않고 버립니다.
+  - 이 기기 설정은 로그인 계정(저장소의 accountKey — Microsoft는 homeAccountId, Google은 `google:<sub>`)에 묶습니다. 다른 계정으로 로그인하면 올리지 않고 버립니다.
   - 로그아웃 때 이 기기에서만 지우는 것(`clearAIKeys`)은 올리지 않아, 다시 로그인하면 OneDrive 값이 돌아옵니다.
 - AI가 고른 결제수단·카테고리는 DB 목록과 대조해 검증합니다. 목록에 없으면 버립니다.
 - **AI 호출 규칙 (aiClient.js):**

@@ -1,15 +1,18 @@
 /**
  * 저장소(StorageProvider) 계약 — 가계부 파일을 어디에 두든 앱의 나머지는 이 모양만 안다 (ROADMAP F-2, I-018).
  *
- * 지금 구현: OneDrive(./oneDrive.js), 테스트용 메모리(./memory.js).
- * 다른 드라이브(예: Google Drive)를 붙일 때는 같은 모양의 객체를 만들고
+ * 지금 구현: OneDrive(./oneDrive.js), Google Drive(./googleDrive.js — 원자적 조건부 저장이 없어 저장 뒤 확인으로 대신한다,
+ * 그 파일 머리말 참고), 테스트용 메모리(./memory.js).
+ * 또 다른 드라이브를 붙일 때는 같은 모양의 객체를 만들고
  * src/services/__tests__/storage.test.js의 contract(...)를 하나 더 불러 계약 테스트를 함께 돌린다.
  * 단, 아래 두 규칙은 끼어드는 방법이 저장소마다 달라 contract()로는 확인되지 않는다 — 저장소별 테스트를 따로 만든다
  * (OneDrive 예: storage.test.js의 '읽을 때 버전을 먼저 읽는다', backups.test.js의 '내려받기는 백업 파일만').
  *  - read는 버전을 내용보다 먼저 읽는다   - readBackup은 accept가 거짓이면 내용을 받지 않는다
  *
- * 충돌 병합(useLedgerSync)은 "버전이 다르면 저장 거부"에 기댄다. 그래서 write는 반드시
+ * 충돌 병합(useLedgerSync)은 "버전이 다르면 저장 거부"에 기댄다. 그래서 write는
  * 원자적인 조건부 저장이어야 한다 — 확인하고 저장하는 사이에 다른 기기가 끼어들 틈이 있으면 안 된다.
+ * 예외: Google Drive는 그런 저장이 없어, 저장 뒤 리비전을 확인해 끼어든 저장을 되돌리고 ConflictError로 알린다
+ * (같은 결과를 내도록 — googleDrive.js 머리말에 남는 위험을 적었다).
  *
  * 공통 규칙
  *  - 버전은 저장소가 정한 불투명한 문자열이다. 같은 파일 상태라면 read·getVersion·write가 같은 문자열을 돌려줘야 한다
@@ -71,6 +74,18 @@ export class OfflineError extends Error {
   constructor(message = '네트워크 오류 — 인터넷 연결을 확인하세요') {
     super(message);
     this.name = 'OfflineError';
+  }
+}
+
+/**
+ * 로그인 시간이 끝나 저장소에 닿지 못함 — Google처럼 서버 없이 써서 갱신 토큰이 없는 저장소 (M-1, I-031).
+ * 연결 없음(OfflineError)과 똑같이 처리된다: 이 기기의 사본으로 이어 쓰고 변경은 보관한다.
+ * 입력 중인 화면을 떠나지 않도록 저장소가 저절로 로그인 화면으로 넘기지 않고, 앱이 '다시 연결' 버튼을 보인다.
+ */
+export class ReconnectRequiredError extends OfflineError {
+  constructor(message = '로그인 시간이 끝났습니다 — 화면 위 \'다시 연결\'을 누르면 저장합니다') {
+    super(message);
+    this.name = 'ReconnectRequiredError';
   }
 }
 

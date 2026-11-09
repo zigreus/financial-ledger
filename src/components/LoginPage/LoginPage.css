@@ -39,7 +39,13 @@
   transition: background .2s;
 }
 .btn-login:hover { background: var(--primary-dark); }
+.btn-login:disabled { opacity: .7; cursor: default; }
 .ms-icon { font-size: 18px; }
+/* Google 로그인 (M-1) */
+.btn-login--google { margin-top: 10px; background: #fff; color: #1F2937; border: 1px solid var(--border); }
+.btn-login--google:hover { background: #F8FAFC; }
+.g-icon { font-weight: 800; color: #4285F4; font-size: 18px; }
+.login-hint { margin-top: 12px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 
 .login-error { color: var(--danger); font-size: 13px; margin-top: 12px; }
 

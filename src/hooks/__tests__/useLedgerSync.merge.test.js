@@ -7,6 +7,8 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import { createMemoryStorage } from '../../services/storage/memory';
+import { createGoogleDriveStorage } from '../../services/storage/googleDrive';
+import { fakeDrive } from '../../services/__tests__/fakeDrive';
 import { ConflictError, ReauthRedirectError } from '../../services/storage/provider';
 import { createDatabase, addTransaction, addPaymentMethod, applyStarterSetup, getPaymentMethods, getBudgetCategories, SCHEMA_VERSION } from '../../services/dbManager';
 import { STARTER_TEMPLATES } from '../../data/starterTemplates';
@@ -669,5 +671,90 @@ describe('연결 없이 열기 (I-024)', () => {
     expect(B.ref.current.pendingCount).toBe(0);
     expect(B.ref.current.offline).toBe(false);
     B.unmount();
+  });
+});
+
+describe('Google Drive 저장소(가짜 Drive)로도 같은 병합 (M-1, I-031)', () => {
+  // Drive에는 원자적 조건부 저장이 없다 — 저장소가 '확인 → 올리기 → 리비전 다시 확인'으로 끼어든 저장을 되돌리고 충돌로 알리면
+  // 동기화는 그 내용을 받아 내 변경을 다시 실행해 합친다
+  function googleStore(drive) {
+    return createGoogleDriveStorage({ accountKey: 'me', getToken: () => 'T', fetchImpl: drive.fetch });
+  }
+  const headBytes = (drive) => Uint8Array.from(drive.revisionsOf('ledger.db').at(-1));
+  function driveOtherDeviceAdds(drive, detail) {
+    const { db } = createDatabase(SQL, headBytes(drive));
+    addTransaction(db, tx(detail));
+    stampWriteId(db);
+    drive.put('ledger.db', db.export());
+  }
+
+  test('다른 기기가 먼저 저장했으면 합쳐 둘 다 남긴다', async () => {
+    const drive = fakeDrive();
+    drive.put('ledger.db', ledgerWith('지금'));
+    const { ref, unmount } = await opened(googleStore(drive));
+    driveOtherDeviceAdds(drive, '다른 기기');
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    await waitSave();
+    await flush();
+    expect(detailsOf(headBytes(drive))).toEqual(['지금', '다른 기기', '내 입력']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
+  });
+
+  test('버전을 확인한 직후·올리기 직전에 다른 기기가 저장해도 그 저장을 잃지 않고 합친다', async () => {
+    const drive = fakeDrive();
+    drive.put('ledger.db', ledgerWith('지금'));
+    const { ref, unmount } = await opened(googleStore(drive));
+    drive.hooks.beforeUpload = () => driveOtherDeviceAdds(drive, '끼어든 기기');
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    await waitSave();
+    await flush();
+    await waitSave();
+    expect(detailsOf(headBytes(drive))).toEqual(['지금', '끼어든 기기', '내 입력']);
+    expect(details(ref.current.db)).toEqual(['지금', '끼어든 기기', '내 입력']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
+  });
+
+  test.each([
+    ['리비전 목록이 500', 500],
+    ['리비전 목록 중 연결 끊김', 'offline'],
+  ])('올린 뒤 확인 중 %s — 다음 저장 전에 마저 확인해 끼어든 기기의 입력도 남긴다', async (_, status) => {
+    const drive = fakeDrive();
+    drive.put('ledger.db', ledgerWith('지금'));
+    const { ref, unmount } = await opened(googleStore(drive));
+    drive.hooks.beforeUpload = () => {
+      driveOtherDeviceAdds(drive, '끼어든 기기');
+      drive.hooks.failNext = { match: (url, method) => method === 'GET' && /\/revisions\?/.test(url), status };
+    };
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    for (let i = 0; i < 6; i += 1) {                                    // 실패 → 잠시 뒤 다시 시도 → 합쳐 저장
+      await waitSave();
+      await flush();
+      if (status === 'offline') await act(async () => { window.dispatchEvent(new Event('online')); });
+    }
+    expect(detailsOf(headBytes(drive))).toEqual(['지금', '끼어든 기기', '내 입력']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
+  });
+
+  test('올린 뒤 리비전 목록에 내 저장이 한동안 안 보여도 — 성공으로 끝내지 않아 내 입력도 끼어든 입력도 남는다', async () => {
+    const drive = fakeDrive();
+    drive.put('ledger.db', ledgerWith('지금'));
+    const { ref, unmount } = await opened(createGoogleDriveStorage({ accountKey: 'me', getToken: () => 'T', fetchImpl: drive.fetch, verifyRetryMs: [0] }));
+    let hide = 2;                                                         // 올린 직후 확인과 한 번 더 확인에서 안 보인다
+    drive.hooks.revisionList = l => (hide-- > 0 ? l.slice(0, -1) : l);
+    drive.hooks.beforeUpload = () => driveOtherDeviceAdds(drive, '끼어든 기기');
+    await act(async () => { addTransaction(ref.current.db, tx('내 입력')); });
+    for (let i = 0; i < 6; i += 1) {
+      await waitSave();
+      await flush();
+    }
+    await act(async () => { await ref.current.loadDb({ silent: true }); });
+    await waitSave();
+    await flush();
+    expect(detailsOf(headBytes(drive))).toEqual(['지금', '끼어든 기기', '내 입력']);
+    expect(ref.current.pendingCount).toBe(0);
+    unmount();
   });
 });

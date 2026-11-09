@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { PROVIDERS, getAIConfig, updateAIConfig, activeAI, listModels } from '../../services/aiClient';
 import { syncAISettings, onAISettingsPulled } from '../../services/aiSettingsSync';
+import { currentDriveName } from '../../services/storage/driveName';
 import './AIEntry.css';
 
-// 이미 열려 있는 다른 기기의 앱은 앱으로 돌아오거나 다시 열 때 OneDrive를 확인한다 (App)
+// 이미 열려 있는 다른 기기의 앱은 앱으로 돌아오거나 다시 열 때 드라이브(OneDrive·Google Drive)를 확인한다 (App)
 const LATER = '앱으로 돌아오거나 다시 열면';
-const SAVE_FAIL = '이 기기에는 저장했지만 OneDrive에 올리지 못했습니다 — 앱으로 돌아오거나 다시 열 때 다시 올립니다';
-const DELETE_FAIL = '이 기기에서는 지웠지만 OneDrive에 알리지 못했습니다 — 앱으로 돌아오거나 다시 열 때 다시 시도합니다';
+const saveFail = () => `이 기기에는 저장했지만 ${currentDriveName()}에 올리지 못했습니다 — 앱으로 돌아오거나 다시 열 때 다시 올립니다`;
+const deleteFail = () => `이 기기에서는 지웠지만 ${currentDriveName()}에 알리지 못했습니다 — 앱으로 돌아오거나 다시 열 때 다시 시도합니다`;
 const NO_KEY_HINT = '다른 기기에 키를 넣어 두었다면, 그 기기에서 가계부 앱을 한 번 연 뒤 이 화면을 다시 열면 자동으로 채워집니다';
 
 const hasAnyKey = c => Object.values(c.keys).some(k => k.trim());
@@ -178,7 +179,7 @@ export default function AISettingsForm({ onSaved, onCancel, compact = false }) {
       const shared = stored.pending.provider
         ? `같은 계정으로 로그인한 모든 기기가 이제 ${PROVIDERS[stored.provider].label.split(' ')[0]}를 씁니다`
         : '같은 계정으로 로그인한 휴대폰·PC에서도 쓸 수 있습니다';
-      share(`저장했습니다 — ${shared} (이미 열려 있는 앱은 ${LATER} 반영)`, SAVE_FAIL);
+      share(`저장했습니다 — ${shared} (이미 열려 있는 앱은 ${LATER} 반영)`, saveFail());
     }
     if (onSaved) onSaved(stored);
   };
@@ -186,7 +187,7 @@ export default function AISettingsForm({ onSaved, onCancel, compact = false }) {
   const removeKey = () => {
     const name = info.label.split(' ')[0];
     if (!window.confirm(
-      `${name} API 키를 이 기기와 OneDrive에서 지웁니다.\n`
+      `${name} API 키를 이 기기와 ${currentDriveName()}에서 지웁니다.\n`
       + '같은 계정으로 로그인한 다른 기기(가족 휴대폰 포함)에서도 앱으로 돌아오거나 다시 열면 지워집니다.\n지울까요?',
     )) return;
     cancelCheck();
@@ -195,7 +196,7 @@ export default function AISettingsForm({ onSaved, onCancel, compact = false }) {
     refresh();
     setModels([]);
     setStatus({ ok: true, text: `${name} 키를 이 기기에서 지웠습니다` });
-    share(`${name} 키를 이 기기와 OneDrive에서 지웠습니다 — 다른 기기는 ${LATER} 지워집니다`, DELETE_FAIL);
+    share(`${name} 키를 이 기기와 ${currentDriveName()}에서 지웠습니다 — 다른 기기는 ${LATER} 지워집니다`, deleteFail());
   };
 
   const modelOptions = models.length ? models : [model];
@@ -247,7 +248,7 @@ export default function AISettingsForm({ onSaved, onCancel, compact = false }) {
 
       <div className="ai-privacy">
         영수증 사진과 함께 <b>결제수단·카테고리 목록</b>과 <b>최근 세부내역 입력 습관</b>(가게 이름·분류·횟수)이
-        선택한 AI로 전송됩니다. API 키는 가계부 파일과 따로, 이 Microsoft 계정의 OneDrive 설정 파일에 저장되어
+        선택한 AI로 전송됩니다. API 키는 가계부 파일과 따로, 로그인한 계정의 {currentDriveName()} 설정 파일에 저장되어
         <b> 같은 계정으로 로그인한 휴대폰·PC에서는 다시 입력하지 않아도 됩니다.</b>
       </div>
 

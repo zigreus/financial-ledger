@@ -1,7 +1,7 @@
 # 지금 가계부 - 설정 가이드
 
-이 앱은 **Microsoft 계정 로그인 + OneDrive 저장** 방식으로 동작합니다.
-가계부 데이터(SQLite DB)가 OneDrive에 저장되므로, 가족 구성원 모두 같은 Microsoft 계정으로 로그인하면 동기화됩니다.
+이 앱은 **Microsoft 계정 로그인 + OneDrive 저장** 방식으로 동작합니다(선택으로 **Google 계정 + Google Drive** — 2-2).
+가계부 데이터(SQLite DB)가 드라이브에 저장되므로, 가족 구성원 모두 같은 계정으로 로그인하면 동기화됩니다.
 
 ---
 
@@ -82,6 +82,49 @@ export const ONEDRIVE_DB_PATH = 'Apps/financial-ledger/ledger.db'; // 변경 불
 - `ONEDRIVE_DB_PATH`는 OneDrive 내 저장 경로로, 변경하지 않아도 됩니다.
 - OneDrive에 `Apps/financial-ledger/` 폴더가 없어도 자동 생성됩니다.
 
+### 2-2. Google 로그인 + Google Drive 저장 (선택)
+
+Microsoft 계정 대신 **Google 계정**으로 로그인해 가계부를 Google Drive에 둘 수 있습니다. 설정하지 않으면 로그인 화면에 Google 버튼이 보이지 않습니다.
+
+1. [Google Cloud Console](https://console.cloud.google.com)에서 프로젝트를 만들고 **API 및 서비스 › 라이브러리**에서 **Google Drive API**를 사용 설정합니다.
+2. **OAuth 동의 화면**: 사용자 유형 '외부', 앱 이름·지원 이메일을 넣고, 범위에 `.../auth/drive.file`, `openid`, `email`을 추가합니다.
+   - `drive.file`은 **이 앱이 만든 파일만** 볼 수 있는 범위라 사용자의 다른 Drive 파일에는 손대지 않습니다.
+   - 게시 상태가 '테스트'면 테스트 사용자로 등록한 계정만 로그인할 수 있습니다. 가족 계정을 테스트 사용자로 넣거나 '프로덕션'으로 게시하세요.
+3. **사용자 인증 정보 › OAuth 클라이언트 ID › 웹 애플리케이션**
+   - 승인된 JavaScript 원본: `https://<배포 도메인>`, `http://localhost:3000`
+   - 승인된 리디렉션 URI: `https://<배포 도메인>/`, `http://localhost:3000/` (끝의 `/`까지 똑같이)
+4. 만든 **클라이언트 ID**를 환경값 `VITE_GOOGLE_CLIENT_ID`로 넣습니다.
+   - Vercel: Settings › Environment Variables에 추가하고 **Redeploy**
+   - 로컬: 프로젝트 폴더의 `.env.local`에 `VITE_GOOGLE_CLIENT_ID=…` 한 줄
+5. 가족이 함께 쓰려면 Microsoft 때처럼 **같은 Google 계정**으로 로그인합니다. 가계부는 `내 드라이브 › financial-ledger › ledger.db`, 백업은 그 안의 `backups/`, AI 설정은 `ai-settings.json`에 생깁니다.
+
+알아 둘 점
+- **로그인은 약 1시간마다 끝납니다.** 서버 없이 쓰는 방식이라 Google이 갱신 토큰을 주지 않기 때문입니다.
+  - 앱을 열 때 끝나 있고 실제로 연결되면 Google에 잠깐 다녀와 새로 받습니다(이미 허락한 계정이면 화면 없이 바로 돌아옴). 공유 받기·바로가기로 연 주소도 그대로 돌아옵니다. 연결이 약하면 다녀오지 않고 이 기기 사본으로 엽니다.
+  - 쓰는 도중에 끝나면 입력한 내용은 이 기기에 보관하고(머리글에 '로그인 필요'), 화면 위 **'다시 연결'** 을 누르면 다녀와서 저장합니다. Google이 계정 확인을 원하면 확인 화면이 뜹니다. 입력 중인 화면을 저절로 떠나지는 않습니다(누르기 전에 쓰던 입력 창은 닫고 누르세요).
+- **로그아웃은 이 기기에서만** 합니다. ⚠ Google 계정 설정(보안 › 타사 앱)에서 이 앱의 연결을 해제하지 마세요 — Google 정책상 다시 허락해도 앱이 기존 가계부 파일을 보지 못할 수 있고, 같은 계정을 쓰는 가족 기기도 모두 끊깁니다(파일은 Drive에 남아 있습니다).
+- 내 드라이브의 **financial-ledger 폴더 이름이나 위치를 바꾸지 마세요.** 앱이 찾지 못해 빈 가계부를 새로 만듭니다.
+- **두 기기가 같은 순간에 저장할 때의 안전성은 OneDrive보다 약합니다.** Google Drive에는 OneDrive의 '버전이 같을 때만 저장'(If-Match)이 없어, 저장 직전 버전을 확인하고, 저장한 뒤 리비전 목록(시간 순서)에서 바로 앞 버전이 맞는지 다시 확인합니다. 그 사이 다른 기기가 끼어들었으면 그 기기의 내용을 되돌려 놓고 합쳐 다시 저장합니다. 확인 도중 연결이 끊기거나 확인할 수 없으면 '저장 안 됨'으로 남겨 두고(입력은 그대로 보관) 이 기기에 기억했다가 다음에 마저 확인한 뒤 합쳐 저장합니다. 막지 못하는 경우: 되돌리기 전에 또 다른 기기가 내 것 위에 저장한 경우, Drive의 리비전 동작이 아래 점검과 다른 경우, 앱이 저장 응답을 받기 직전에 꺼진 경우.
+- **실제 Google Drive로는 아직 확인하지 않았습니다**(테스트는 가짜 Drive로 했습니다). 가족과 쓰기 전에 아래를 확인하세요.
+  1. 로그인 → 거래 하나 입력 → 로그아웃 → 다시 로그인했을 때 **같은 가계부**가 열리는지
+  2. 두 기기에서 번갈아 입력해 서로의 입력이 모두 남는지
+  3. 리비전 동작 — 로그인한 PC 브라우저에서 앱 주소를 연 채(로그인 시간이 남아 있을 때) 개발자 도구 콘솔에 아래를 붙여 넣으면, 시험 파일을 만들어 빠르게 세 번 올린 뒤 결과를 보여 줍니다. `세 번이 각각 따로 남음 true, 시간 순서 true, 머리 = 마지막 true`이면 이 앱이 기대하는 대로입니다(시험 파일은 끝나고 지웁니다).
+     ```js
+     (async () => {
+       const t = JSON.parse(localStorage.getItem('ledger_google_session')).accessToken, H = { Authorization: `Bearer ${t}` };
+       const f = await (await fetch('https://www.googleapis.com/drive/v3/files', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'revision-check.bin' }) })).json();
+       const up = b => fetch(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=headRevisionId`, { method: 'PATCH', headers: H, body: new Uint8Array([b]) }).then(r => r.json()).then(j => j.headRevisionId);
+       const mine = [await up(1), await up(2), await up(3)];
+       const { revisions } = await (await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}/revisions?fields=revisions(id,modifiedTime)`, { headers: H })).json();
+       const ids = revisions.map(r => r.id);
+       const separate = new Set(mine).size === 3 && ids.slice(-3).join() === mine.join();
+       const ordered = revisions.every((r, i) => i === 0 || revisions[i - 1].modifiedTime <= r.modifiedTime);
+       console.log(`세 번이 각각 따로 남음 ${separate}, 시간 순서 ${ordered}, 머리 = 마지막 ${ids.at(-1) === mine[2]}`);
+       await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE', headers: H });
+     })();
+     ```
+- OneDrive에 쓰던 가계부를 Google Drive로 바로 옮기는 기능은 아직 없습니다. 설정 › 데이터에서 거래 CSV를 내려받아 Google 쪽에서 가져오기로 옮길 수 있습니다(카테고리·결제수단은 가져올 때 만들어짐).
+
 ---
 
 ## 3. 로컬 개발 환경 실행 (개발 시)
@@ -130,8 +173,9 @@ npm start
 - `main` 브랜치에 push하면 Vercel이 **자동으로 재배포**
 - 수동 배포: Vercel 대시보드 → 프로젝트 → **Redeploy**
 
-### 4-4. 환경변수 설정 (현재 불필요)
+### 4-4. 환경변수 설정
 
+- Google 로그인을 쓰려면 `VITE_GOOGLE_CLIENT_ID`를 넣습니다(2-2). 쓰지 않으면 필요 없습니다.
 - `AZURE_CLIENT_ID`는 현재 `src/config.js`에 하드코딩되어 있어 별도 환경변수 설정 불필요
 - 환경변수로 옮기려면: Vercel 대시보드 → Settings → **Environment Variables**에 `VITE_AZURE_CLIENT_ID`를 추가하고 코드에서 `import.meta.env.VITE_AZURE_CLIENT_ID`로 읽습니다.
   - Vite는 `VITE_`로 시작하는 값만 브라우저 코드에 넣습니다. `process.env`는 브라우저에 없습니다.
