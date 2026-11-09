@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-045
+다음 번호: B-094, I-050
 
 ## 요약표
 
@@ -153,6 +153,11 @@
 | I-042 | ✅ | - | 입력 | 큰 금액에서 0을 하나 더/덜 넣어도 입력하는 동안 알아보기 어려움 (ROADMAP U-4) |
 | I-043 | ✅ | - | 입력 | 영수증을 몰아 적을 때 날짜마다 달력을 열어야 함 (ROADMAP U-5) |
 | I-044 | ✅ | - | 입력 | 같은 곳에서 또 쓴 거래를 처음부터 다시 입력해야 함 (ROADMAP U-6) |
+| I-045 | ✅ | - | 화면 | 남 앞에서 앱을 열면 금액·잔액이 바로 보임 (ROADMAP U-7) |
+| I-046 | ✅ | - | 화면 | 요약·캘린더를 먼저 보는 가족도 앱을 열면 늘 거래내역부터 보임 (ROADMAP U-8) |
+| I-047 | ✅ | - | 화면 | 요약에서 달을 바꾸려면 달 목록을 열어 골라야 함 — 캘린더만 밀어서 넘김 (ROADMAP U-9) |
+| I-048 | ✅ | - | 화면 | PC에서 창을 닫으려면 닫기 버튼을 찾아 눌러야 함 (ROADMAP U-10) |
+| I-049 | ✅ | - | 거래 | 몇 년 치 거래내역에서 달 묶음을 하나씩 접고 펼쳐야 함 (ROADMAP U-11) |
 
 
 ## 상세
@@ -1345,3 +1350,43 @@
 - 원인: 거래 상세 창에는 삭제·수정만 있고 그 거래로 새로 입력하는 길이 없었다.
 - 해결: 거래 상세 창의 '복사해 입력'이 내용·분류·결제수단·금액(분할이면 합계)으로 오늘 날짜의 새 거래 입력 창을 연다('누가'는 이 기기 사용자, 할인은 규칙으로 다시, 숨긴 결제수단·카테고리는 옮기지 않고, 여행 연결·외화·분할은 새로 고름).
 - 파일: src/components/TransactionForm/TransactionForm.js, src/components/TransactionList/TransactionList.js, src/components/App/App.js, src/components/App/__tests__/App.quickWins.test.js, SETUP.md
+
+### I-045 남 앞에서 앱을 열면 금액·잔액이 바로 보임 (ROADMAP U-7)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 화면
+- 문제: 다른 사람이 옆에 있을 때 앱을 열면 거래내역·잔액이 바로 보여, 가계부를 열기 부담스럽다(사용자 요청 — 갤럭시 S26 울트라 프라이버시 디스플레이도 켜지면 좋겠음).
+- 원인: 앱을 열면 곧바로 화면을 그렸고, 휴대폰의 프라이버시 디스플레이는 앱이 켤 방법(공개 API)이 없다.
+- 해결: 이 기기 설정 '가계부를 열 때 가리기'(기본 끔)를 켜면 앱을 열 때와 다른 앱으로 가는 순간 화면 전체를 흐리게 덮고(PrivacyCurtain, 모든 창 위, 뒤 화면은 inert, 1분 안에 돌아오면 저절로 걷음) 누르면 걷으며, 머리글 🔒로 바로 가릴 수 있고, 안드로이드에서는 휴대폰 설정 › 디스플레이 › 프라이버시 디스플레이에서 이 앱을 고르는 방법을 함께 안내한다.
+- 파일: src/components/App/PrivacyCurtain.js·PrivacyCurtain.css·App.js, src/components/Header/Header.js·Header.css, src/services/displayPrefs.js, src/components/SettingsView/sections/DisplaySettings.js·SettingsView.css, src/components/App/__tests__/App.display.test.js, src/services/__tests__/displayPrefs.test.js, SETUP.md, AGENTS.md
+
+### I-046 요약·캘린더를 먼저 보는 가족도 앱을 열면 늘 거래내역부터 보임 (ROADMAP U-8)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 화면
+- 문제: 앱을 열면 늘 거래내역이 먼저 보여, 요약이나 캘린더를 주로 보는 가족은 매번 탭을 옮겨야 한다(사용자 요청).
+- 원인: 처음 탭이 거래내역으로 고정돼 있었다.
+- 해결: 이 기기 설정 '처음 여는 화면'(거래내역·요약·캘린더·계좌)으로 가계부를 처음 불러올 때 그 화면을 열되, '확인할 것'이 보이거나(collectOpenNotices·hasVisibleNotices — 거래내역 카드와 같은 계산) 바로가기·공유로 열었거나 빈 가계부면 거래내역 그대로.
+- 파일: src/components/App/App.js, src/components/TransactionList/OpenNotices.js·TransactionList.js, src/services/displayPrefs.js, src/components/SettingsView/sections/DisplaySettings.js, src/components/App/__tests__/App.display.test.js, SETUP.md, AGENTS.md
+
+### I-047 요약에서 달을 바꾸려면 달 목록을 열어 골라야 함 — 캘린더만 밀어서 넘김 (ROADMAP U-9)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 화면
+- 문제: 요약의 카테고리·결제수단·리포트에서 이웃한 달을 보려면 목록을 열거나 작은 버튼을 눌러야 한다(사용자 요청).
+- 원인: 밀어서 넘기기가 캘린더 안에만 따로 만들어져 있었다.
+- 해결: 캘린더의 밀기 처리를 common/useHorizontalSwipe로 꺼내(세로 스크롤·입력 칸·가로 스크롤 칸은 거름) 캘린더와 요약(카테고리·결제수단의 한 달 보기, 리포트)에 쓰고, 왼쪽으로 밀면 다음 달·오른쪽은 지난달. 거래내역은 이어진 목록이라 대신 모두 접기·펼치기(I-049).
+- 파일: src/components/common/useHorizontalSwipe.js, src/components/CalendarView/CalendarView.js, src/components/SummaryView/SummaryView.js, src/components/App/__tests__/App.display.test.js, SETUP.md, AGENTS.md
+
+### I-048 PC에서 창을 닫으려면 닫기 버튼을 찾아 눌러야 함 (ROADMAP U-10)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 화면
+- 문제: PC 브라우저로 쓸 때 거래 상세 같은 창을 Esc로 닫을 수 없다(사용자 요청).
+- 원인: 공통 창(ModalOverlay)이 키보드를 받지 않았다.
+- 해결: ModalOverlay가 Esc를 바깥 누르기와 같게 처리해 onDismiss가 있는 맨 위 창 하나만 닫는다(입력 창은 onDismiss가 없어 입력을 잃지 않음, 먼저 Esc를 쓴 쪽이 preventDefault를 부르면 그대로 — 가리기 화면).
+- 파일: src/components/common/ModalOverlay.js, src/components/common/__tests__/ModalOverlay.test.js, src/components/App/__tests__/App.display.test.js, SETUP.md, AGENTS.md
+
+### I-049 몇 년 치 거래내역에서 달 묶음을 하나씩 접고 펼쳐야 함 (ROADMAP U-11)
+- 상태: ✅ 해결 (2026-11-10)
+- 영역: 거래
+- 문제: 거래내역의 달 묶음을 한꺼번에 펼치거나 접을 수 없어 달마다 눌러야 한다(사용자 요청).
+- 원인: 달 머리글을 하나씩 누르는 것만 있었다.
+- 해결: 달이 둘 이상이면 거래내역 맨 위 오른쪽에 '모두 펼치기 / 모두 접기'를 둔다(지금 목록의 달만, 거래 1,000건 넘게 한꺼번에 펼치면 먼저 묻는다).
+- 파일: src/components/TransactionList/TransactionList.js·TransactionList.css, src/components/App/__tests__/App.display.test.js, SETUP.md

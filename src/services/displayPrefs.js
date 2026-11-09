@@ -1,5 +1,6 @@
 /**
- * 이 기기의 화면 설정 (ROADMAP U-1 글씨 크기, U-2 화면 테마) — 기기마다 따로(localStorage). 가계부 DB에 두지 않는다
+ * 이 기기의 화면 설정 (ROADMAP U-1 글씨 크기, U-2 화면 테마, U-7 열 때 가리기, U-8 처음 여는 화면)
+ * — 기기마다 따로(localStorage). 가계부 DB에 두지 않는다
  * (가족이 각자 편한 대로, AGENTS §6). 설정 › 앱 › 이 기기 화면에서 고른다.
  *
  *  - 글씨 크기: <html>의 --fs(배율). 화면의 글씨는 모두 calc(Npx * var(--fs))로 쓴다(src/index.css, displayPrefs.test.js가 지킨다).
@@ -95,6 +96,52 @@ export function setFontScale(key) {
 export function setTheme(key) {
   write(THEME_KEY, key === 'light' ? null : key);
   applyDisplayPrefs();
+}
+
+// ── 가계부를 열 때 가리기 (U-7) · 처음 여는 화면 (U-8) — 같은 '이 기기 화면' 설정 ─────────────
+
+export const HIDE_ON_OPEN_KEY = 'ledger_hide_on_open';
+export const START_TAB_KEY = 'ledger_start_tab';
+/** 다른 앱에 이만큼 넘게 있다 돌아오면 다시 가린다(가리기를 켰을 때) */
+export const HIDE_AGAIN_AFTER_MS = 60 * 1000;
+export const START_TABS = [
+  { key: 'list', label: '거래내역' },
+  { key: 'summary', label: '요약' },
+  { key: 'calendar', label: '캘린더' },
+  { key: 'account', label: '계좌' },
+];
+
+/** 가계부를 열 때(다른 앱에 오래 있다 돌아올 때도) 화면을 가릴지 — 기본 끔 */
+export function getHideOnOpen() {
+  return read(HIDE_ON_OPEN_KEY) === '1';
+}
+export function setHideOnOpen(on) {
+  write(HIDE_ON_OPEN_KEY, on ? '1' : null);
+  notifyChange();
+}
+
+const CHANGE_EVENT = 'ledger-display-prefs';
+function notifyChange() {
+  try { window.dispatchEvent(new Event(CHANGE_EVENT)); } catch { /* 창이 없는 곳(테스트 노드 환경) */ }
+}
+/** 이 기기 화면 설정이 바뀌면 알린다(지금은 열 때 가리기 — 머리글의 🔒). 반환: 그만 듣는 함수 */
+export function onDisplayPrefsChange(fn) {
+  window.addEventListener(CHANGE_EVENT, fn);
+  return () => window.removeEventListener(CHANGE_EVENT, fn);
+}
+
+/** 처음 여는 화면 — 기본 거래내역. '확인할 것'이 있으면 App이 거래내역을 먼저 연다(I-036) */
+export function getStartTab() {
+  const k = read(START_TAB_KEY);
+  return START_TABS.some(t => t.key === k) ? k : 'list';
+}
+export function setStartTab(key) {
+  write(START_TAB_KEY, key === 'list' ? null : key);
+}
+
+/** 안드로이드인지 — 갤럭시 프라이버시 디스플레이 안내를 보일지 */
+export function isAndroid(nav = typeof navigator !== 'undefined' ? navigator : null) {
+  return /Android/i.test(nav?.userAgent || '');
 }
 
 /** 테스트용 — 기기 모드 듣기를 다시 걸 수 있게, 이번에 고른 값도 잊게 */

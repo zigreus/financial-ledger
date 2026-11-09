@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DARK_BAR_COLOR, FONT_SCALES, FONT_SCALE_KEY, THEMES, THEME_KEY, applyDisplayPrefs, getFontScale, getTheme, isDarkNow,
-  resetDisplayPrefsWatch, setFontScale, setTheme,
+  resetDisplayPrefsWatch, setFontScale, setTheme, HIDE_ON_OPEN_KEY, START_TAB_KEY, getHideOnOpen, setHideOnOpen,
+  getStartTab, setStartTab, isAndroid,
 } from '../displayPrefs';
 
 const ROOT = path.resolve(__dirname, '../../..');
@@ -107,6 +108,29 @@ describe('설정 적용', () => {
     expect(getTheme()).toBe('dark');
     expect(root().style.getPropertyValue('--fs')).toBe('1.15');
     expect(root().getAttribute('data-theme')).toBe('dark');
+  });
+});
+
+describe('열 때 가리기 (U-7)·처음 여는 화면 (U-8)', () => {
+  test('기본은 가리지 않음·거래내역 — 고르면 기억하고, 기본으로 돌리면 지운다', () => {
+    expect(getHideOnOpen()).toBe(false);
+    expect(getStartTab()).toBe('list');
+    setHideOnOpen(true);
+    setStartTab('calendar');
+    expect(window.localStorage.getItem(HIDE_ON_OPEN_KEY)).toBe('1');
+    expect(getStartTab()).toBe('calendar');
+    setHideOnOpen(false);
+    setStartTab('list');
+    expect(window.localStorage.getItem(HIDE_ON_OPEN_KEY)).toBeNull();
+    expect(window.localStorage.getItem(START_TAB_KEY)).toBeNull();
+    window.localStorage.setItem(START_TAB_KEY, 'settings');   // 고를 수 없는 화면
+    expect(getStartTab()).toBe('list');
+  });
+
+  test('안드로이드에서만 갤럭시 프라이버시 디스플레이 안내', () => {
+    expect(isAndroid({ userAgent: 'Mozilla/5.0 (Linux; Android 15; SM-S948N) Chrome/130' })).toBe(true);
+    expect(isAndroid({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' })).toBe(false);
+    expect(isAndroid(null)).toBe(false);
   });
 });
 

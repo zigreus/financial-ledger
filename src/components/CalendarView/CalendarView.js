@@ -21,6 +21,7 @@ import {
 } from '../../services/dbManager';
 import { parseRate, parseForeignAmount, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
+import { useHorizontalSwipe } from '../common/useHorizontalSwipe';
 import TripCashModal from '../TripCash/TripCashModal';
 import TripSplitModal from '../TripSplit/TripSplitModal';
 import ModalOverlay from '../common/ModalOverlay';
@@ -31,8 +32,6 @@ import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
 // ── 상수 ───────────────────────────────────────────────────
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
-const SWIPE_MIN_DX = 50;   // 이만큼 가로로 밀어야 달을 넘긴다
-const SWIPE_MAX_SLOPE = 0.6; // 세로 이동이 가로의 이 비율을 넘으면 스크롤로 본다
 
 
 function formatDateKo(dateStr) {
@@ -562,27 +561,8 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
 
   // 달력 넘기기 스와이프 — 달력 격자(.cv-grid)에서만 받는다.
   // 바텀시트·일정 폼·현금 관리 같은 모달은 cv-wrap 안에 그려지므로, cv-wrap에서 받으면
-  // 모달 안의 가로 드래그까지 뒤의 달을 바꿔 버린다. 세로로 더 많이 움직였으면 스크롤로 본다.
-  const touchStart = useRef(null);
-
-  function handleTouchStart(e) {
-    if (e.touches.length !== 1) { touchStart.current = null; return; }
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-  function handleTouchEnd(e) {
-    const start = touchStart.current;
-    touchStart.current = null;
-    if (!start) return;
-    const dx = e.changedTouches[0].clientX - start.x;
-    const dy = e.changedTouches[0].clientY - start.y;
-    if (Math.abs(dx) < SWIPE_MIN_DX) return;
-    if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_SLOPE) return;
-    if (dx < 0) nextMonth();
-    else prevMonth();
-  }
-  function handleTouchCancel() {
-    touchStart.current = null;
-  }
+  // 모달 안의 가로 드래그까지 뒤의 달을 바꿔 버린다. 세로로 더 많이 움직였으면 스크롤로 본다(common/useHorizontalSwipe).
+  const swipe = useHorizontalSwipe({ onNext: nextMonth, onPrev: prevMonth });
 
   const [pickerYear, setPickerYear] = useState(year);
   const [yearRangeBase, setYearRangeBase] = useState(year);
@@ -647,9 +627,7 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
       {/* ── 달력 그리드 ── */}
       <div
         className="cv-grid"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchCancel}
+        {...swipe}
       >
         <div className="cv-weekdays">
           {WEEKDAYS.map((wd, i) => (

@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus, isMonthlyReportEnabled, getMonthlyReportHeadline, isSubscriptionsEnabled, getUpcomingSubscriptionPayments } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, isBlankLedger, getAllSubCategories } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
-import OpenNotices, { REPORT_BANNER_DAYS, isReportSeen } from './OpenNotices';
+import OpenNotices, { collectOpenNotices } from './OpenNotices';
 import FirstEntryGuide from './FirstEntryGuide';
 import FilterPanel from './FilterPanel';
 import FilterSummary from './FilterSummary';
@@ -17,9 +17,12 @@ import './TransactionList.css';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
-import { currentYearMonth, todayStr as todayDateStr, addMonths } from '../../services/dateUtils';
+import { currentYearMonth, todayStr as todayDateStr } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 
+
+/** 모두 펼치기에서 이보다 많은 거래를 한꺼번에 펼치면 먼저 묻는다 (U-11) */
+const EXPAND_ALL_CONFIRM = 1000;
 
 function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCopy, onDelete, onChanged, onOpenImport, onOpenCardCheck, onOpenAccount, onOpenBudget, onOpenReport, onOpenOnboarding, onOpenSettings }) {
   // 탭을 옮겼다 와도(설정 › AI에 다녀오는 등) 걸던 조건을 이어 쓴다 — 그사이 없어진 이름은 뺀다
@@ -122,27 +125,10 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCop
     ].filter(Boolean);
   }, [live, paymentMethods, budgetCategories]);
   const members = useMemo(() => getMemberNames(live.db), [live]);
-  // 계좌 잔액이 위험선 아래로 내려가는 날 (B-066)
-  const balanceAlerts = useMemo(() => getBalanceAlerts(live.db), [live]);
-  // 이번 달 카테고리 예산 80% 이상·초과 (I-025) — 카테고리별 예산을 켰을 때만
-  const budgetAlerts = useMemo(() => (isCategoryBudgetEnabled(live.db)
-    ? getCategoryBudgetStatus(live.db, currentMonth).filter(r => r.level !== 'ok')
-    : []), [live, currentMonth]);
-  // 지난달 리포트 알림 (I-028) — 월간 리포트를 켰을 때, 매달 1~7일에만. 이 기기에서 이미 본 달이면 계산하지 않는다.
+  // 확인할 것 — 잔액 위험(B-066)·카테고리 예산(I-025)·지난달 리포트(I-028)·곧 결제될 구독(I-036).
   // 날짜가 바뀌면(앱을 켜 둔 채 8일·다음 달이 되면) 다음 그리기에서 다시 판단한다
   const reportDay = todayDateStr();
-  const lastMonthReport = useMemo(() => {
-    if (Number(reportDay.slice(8, 10)) > REPORT_BANNER_DAYS) return null;
-    if (!isMonthlyReportEnabled(live.db)) return null;
-    const ym = addMonths(reportDay.slice(0, 7), -1);
-    if (isReportSeen(ym)) return null;
-    const headline = getMonthlyReportHeadline(live.db, ym);
-    return headline.count ? headline : null;
-  }, [live, reportDay]);
-  // 곧 결제될 구독 (I-036) — 구독 모아보기를 켰을 때만
-  const duePayments = useMemo(() => (isSubscriptionsEnabled(live.db)
-    ? getUpcomingSubscriptionPayments(live.db, reportDay)
-    : []), [live, reportDay]);
+  const notices = useMemo(() => collectOpenNotices(live.db, reportDay), [live, reportDay]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
@@ -262,6 +248,19 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCop
     setExpandedMonths(prev => new Set([...prev, ...monthsToOpen]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodKey]);
+
+  const monthKeys = useMemo(() => Object.keys(groupedTransactions).sort().reverse(), [groupedTransactions]);
+  const allMonthsOpen = monthKeys.every(m => expandedMonths.has(m));
+  // 모두 접기는 지금 목록의 달만(필터로 가려진 달의 펼침은 그대로), 모두 펼치기는 거래가 아주 많으면 먼저 묻는다(한꺼번에 그리느라 느려질 수 있다)
+  const toggleAllMonths = () => {
+    if (allMonthsOpen) {
+      setExpandedMonths(prev => new Set([...prev].filter(m => !monthKeys.includes(m))));
+      return;
+    }
+    const closedCount = monthKeys.filter(m => !expandedMonths.has(m)).reduce((n, m) => n + groupedTransactions[m].length, 0);
+    if (closedCount > EXPAND_ALL_CONFIRM && !window.confirm(`거래 ${formatAmount(closedCount)}건을 한꺼번에 펼칩니다. 기기에 따라 잠시 느려질 수 있어요. 펼칠까요?`)) return;
+    setExpandedMonths(prev => new Set([...prev, ...monthKeys]));
+  };
 
   const toggleMonth = (month) => {
     const newExpanded = new Set(expandedMonths);
@@ -482,12 +481,12 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCop
         <OpenNotices
           anchorRef={noticesRef}
           scrollMargin={(showFilters ? 0 : filterBarHeight) + 8}
-          balanceAlerts={balanceAlerts}
-          budgetAlerts={budgetAlerts}
-          payments={duePayments}
-          report={lastMonthReport}
+          balanceAlerts={notices.balanceAlerts}
+          budgetAlerts={notices.budgetAlerts}
+          payments={notices.payments}
+          report={notices.report}
           onOpenAccount={onOpenAccount}
-          onOpenBudget={() => onOpenBudget && onOpenBudget(currentMonth)}
+          onOpenBudget={() => onOpenBudget && onOpenBudget(reportDay.slice(0, 7))}
           onOpenSubscriptions={() => onOpenSettings && onOpenSettings('recurring')}
           onOpenReport={ym => onOpenReport && onOpenReport(ym)}
         />
@@ -513,7 +512,19 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onCop
         </div>
       ) : (
         <div className="tx-list">
-          {Object.keys(groupedTransactions).sort().reverse().map(month => (
+          {/* 월 묶음 모두 접기·펼치기 (ROADMAP U-11) — 몇 년 치 목록에서 달을 하나씩 접지 않게 */}
+          {monthKeys.length > 1 && (
+            <div className="tx-month-all">
+              <button
+                type="button"
+                className="tx-month-all-btn"
+                onClick={toggleAllMonths}
+              >
+                {allMonthsOpen ? '모두 접기' : '모두 펼치기'}
+              </button>
+            </div>
+          )}
+          {monthKeys.map(month => (
             <div
               key={month}
               className="month-group"

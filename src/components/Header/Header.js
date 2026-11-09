@@ -5,8 +5,9 @@ import './Header.css';
 
 // userLabel: Microsoft가 아닌 계정(Google, M-1)으로 로그인했을 때 보일 이름
 // offlineLabel·offlineTitle: 저장소에 닿지 못하는 이유가 연결이 아니라 로그인 만료일 때(Google, M-1) 바꿔 보인다
+// onCover: '가계부를 열 때 가리기'(U-7)를 켰을 때 — 지금 바로 화면을 가리는 버튼
 function Header({
-  onRefresh, onSave, onLogout, loading, saving, dirty, offline = false, pendingCount = 0, onSettings, settingsActive, userLabel,
+  onRefresh, onSave, onLogout, onCover, loading, saving, dirty, offline = false, pendingCount = 0, onSettings, settingsActive, userLabel,
   offlineLabel = '오프라인', offlineTitle = '연결이 없습니다 — 입력한 내용은 이 기기에 보관했다가 연결되면 저장합니다',
 }) {
   const { accounts } = useMsal();
@@ -35,6 +36,11 @@ function Header({
           >
             {saving ? '저장 중…' : `저장 안 됨${pendingCount ? ` ${pendingCount}` : ''}`}
           </button>
+        )}
+        {/* 오프라인과 저장 안 됨 표시가 함께 있으면 자리가 모자라 숨긴다(설정에서 켜 둔 가리기는 그대로).
+            거래를 넣은 직후(저장 중)에도 바로 가릴 수 있게 하나만 있을 때는 둔다 */}
+        {onCover && !(offline && (dirty || saving)) && (
+          <button className="btn-header btn-cover" onClick={onCover} title="화면 가리기" aria-label="화면 가리기">🔒</button>
         )}
         <button
           className="btn-header btn-refresh"

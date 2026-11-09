@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, Suspense } from 'react';
+import { flushSync } from 'react-dom';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import './App.css';
 
@@ -31,6 +32,9 @@ import { clearAIDraft, setAIDraftAccount } from '../../services/aiDraft';
 import { clearSharedItems, readLaunchAction, takeSharedItems } from '../../services/shareInbox';
 import { recordError } from '../../services/errorLog';
 import ProblemReport from '../common/lazyProblemReport';
+import PrivacyCurtain from './PrivacyCurtain';
+import { collectOpenNotices, hasVisibleNotices } from '../TransactionList/OpenNotices';
+import { HIDE_AGAIN_AFTER_MS, getHideOnOpen, getStartTab, onDisplayPrefsChange } from '../../services/displayPrefs';
 
 function App() {
   const msalAuthenticated = useIsAuthenticated();
@@ -80,6 +84,13 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showCardCheck, setShowCardCheck] = useState(false);
   const [showLoadReport, setShowLoadReport] = useState(false); // 가계부를 불러오지 못한 화면의 '문제 알리기' (I-038)
+  // 가계부를 열 때 가리기 (U-7) — 이 기기 설정을 켰으면 앱을 열 때 덮어 두고, 누르면 걷는다
+  const [curtain, setCurtain] = useState(() => getHideOnOpen());
+  // 설정에서 '가계부를 열 때 가리기'를 켜고 끄면 머리글의 🔒도 바로 따라간다
+  const [hideOnOpen, setHideOnOpenOn] = useState(() => getHideOnOpen());
+  useEffect(() => onDisplayPrefsChange(() => setHideOnOpenOn(getHideOnOpen())), []);
+  const curtainRef = React.useRef(curtain);
+  curtainRef.current = curtain;
   const [showEventForm, setShowEventForm] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false); // 첫 실행 안내 (F-3)
   const [editingTx, setEditingTx] = useState(null);
@@ -240,11 +251,43 @@ function App() {
   }, [db]);
 
   // DB 최초 로드 완료 시 브라우저 히스토리 초기화
-  useEffect(() => {
+  // 처음 여는 화면 (U-8) — 이 기기에서 고른 화면으로. 다만 '확인할 것'이 보일 때(I-036), 바로가기·공유로 열었을 때,
+  // 빈 가계부(첫 실행 안내)일 때는 거래내역 그대로. 그리기 전에(useLayoutEffect) 정해 거래내역이 잠깐 보였다 바뀌지 않게
+  useLayoutEffect(() => {
     if (!db || historyInitialized.current) return;
     historyInitialized.current = true;
+    const start = getStartTab();
+    if (start !== 'list' && !launchRef.current && !isBlankLedger(db) && !hasVisibleNotices(collectOpenNotices(db))) {
+      navRef.current = { ...navRef.current, activeTab: start };
+      setActiveTab(start);
+    }
     window.history.replaceState(navRef.current, '');
   }, [db]);
+
+  // 다른 앱으로 갈 때 바로 덮는다 (U-7) — 돌아온 뒤에 덮으면 돌아오는 첫 장면에 금액이 보인다
+  // (앱 전환 화면의 미리 보기는 가려진 뒤에 찍지 않는 휴대폰도 있어 장담하지 않는다).
+  // 금방(HIDE_AGAIN_AFTER_MS 안에) 돌아오면 저절로 걷는다. 그동안 휴대폰을 남에게 건넸을 수 있어 오래 있다 오면 그대로 둔다.
+  // 가기 전부터 덮여 있었으면 그대로
+  useEffect(() => {
+    let hiddenAt = 0;
+    let coveredOnLeave = false;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        coveredOnLeave = false;
+        if (getHideOnOpen() && !curtainRef.current) {
+          coveredOnLeave = true;
+          flushSync(() => setCurtain(true));
+        }
+        return;
+      }
+      if (coveredOnLeave && hiddenAt && Date.now() - hiddenAt < HIDE_AGAIN_AFTER_MS) setCurtain(false);
+      coveredOnLeave = false;
+      hiddenAt = 0;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   // 첫 실행 안내 (F-3) — 처음 불러온 가계부가 비어 있으면(카테고리·결제수단·거래가 하나도 없음) 한 번 연다.
   // 이 기기에서 '나중에'를 골랐으면 저절로 열지 않는다. 거래내역 빈 화면에서 언제든 다시 열 수 있다
@@ -266,8 +309,9 @@ function App() {
   const launchHandledRef = React.useRef(false);
   const blankLedgerRef = React.useRef(blankLedger);
   blankLedgerRef.current = blankLedger;
+  // 화면을 가려 두었으면(U-7) 걷은 뒤에 연다 — 가린 뒤에서 입력 창이 열려 키보드가 올라오거나 공유한 글이 저절로 들어가지 않게
   useEffect(() => {
-    if (!db || launchHandledRef.current) return;
+    if (!db || launchHandledRef.current || curtain) return;
     launchHandledRef.current = true;
     const action = launchRef.current;
     launchRef.current = null;
@@ -284,7 +328,7 @@ function App() {
         navigate({ showForm: true, editingTx: null, copyFromTx: null });
       }
     })();
-  }, [db, navigate]);
+  }, [db, navigate, curtain]);
 
   // 입력 창이 닫히면 AI 입력 시작 정보를 버린다 — 다음에 열 때는 평소대로
   useEffect(() => { if (!showForm) setAiStart(null); }, [showForm]);
@@ -585,10 +629,13 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* 가계부를 열 때 가리기 (U-7) — 모든 창 위에 덮는다 */}
+      {curtain && <PrivacyCurtain onReveal={() => setCurtain(false)} />}
       <Header
         onRefresh={() => loadDb()}
         onSave={() => saveNow()}
         onLogout={handleLogout}
+        onCover={hideOnOpen ? () => setCurtain(true) : null}
         loading={loading}
         saving={saving}
         dirty={dirty}

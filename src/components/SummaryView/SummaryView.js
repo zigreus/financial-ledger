@@ -13,6 +13,7 @@ import {
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
+import { useHorizontalSwipe } from '../common/useHorizontalSwipe';
 import './SummaryView.css';
 import { currentYearMonth, addMonths } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
@@ -305,8 +306,28 @@ function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onT
     ? aggregateForeign(eventDetailSummary)
     : aggregateForeign(eventSummary);
 
+  // 밀어서 달 넘기기 (ROADMAP U-9) — 카테고리·결제수단의 한 달 보기와 리포트에서. 왼쪽으로 밀면 다음(새) 달.
+  // 달 목록은 새 것부터라 다음 달은 앞 칸, 지난 달은 뒤 칸이다. 끝이면 그대로
+  const monthSwipe = (tab === 'category' || tab === 'payment') && filterType === 'month';
+  const stepMonth = (dir) => {
+    if (monthSwipe) {
+      const next = monthOptions[monthOptions.indexOf(selectedMonth) - dir];
+      if (next) setSelectedMonth(next);
+    } else if (tab === 'report') {
+      const next = reportNavMonths[reportNavMonths.indexOf(reportMonth) - dir];
+      if (next) pickReportMonth(next);
+    }
+  };
+  // 리포트의 ‹ › 와 같은 목록 — 보는 달이 목록에 없으면(지난번에 본 달 등) 끼워 넣는다(MonthlyReport)
+  const reportNavMonths = reportMonths.includes(reportMonth) ? reportMonths : [...reportMonths, reportMonth].sort().reverse();
+  const swipe = useHorizontalSwipe({
+    onNext: () => stepMonth(1),
+    onPrev: () => stepMonth(-1),
+    enabled: monthSwipe || (tab === 'report' && reportNavMonths.length > 1),
+  });
+
   return (
-    <div className="summary-page">
+    <div className="summary-page" {...swipe}>
       {/* 메인 탭 */}
       <div className={`summary-tabs${reportEnabled || taxEnabled ? ' summary-tabs--many' : ''}`}>
         <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => onTabChange('monthly')}>월별 추이</button>

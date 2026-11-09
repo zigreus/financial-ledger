@@ -736,3 +736,10 @@
 .fsum-ai-points { padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .fsum-ai-tip { color: var(--c-amber-800); }
 .fsum-ai-note { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
+
+/* 월 묶음 모두 접기·펼치기 (U-11) */
+.tx-month-all { display: flex; justify-content: flex-end; padding: 4px 16px 0; }
+.tx-month-all-btn {
+  padding: 6px 10px; border: none; background: none; color: var(--primary-text);
+  font-size: calc(12px * var(--fs)); font-weight: 600; cursor: pointer;
+}

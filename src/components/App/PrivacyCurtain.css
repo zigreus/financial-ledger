@@ -1,0 +1,33 @@
+/* 가계부를 열 때 가리기 (U-7) — 모든 창 위에(입력 툴바 2000보다 위), 흐리게 */
+.privacy-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border: none;
+  padding: 24px;
+  cursor: pointer;
+  /* 반투명을 못 그리는 브라우저에서도 가려지게 먼저 불투명한 바탕 */
+  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  color: var(--text);
+}
+.privacy-curtain-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 28px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+.privacy-curtain-icon { font-size: calc(28px * var(--fs)); }
+.privacy-curtain-title { font-size: calc(16px * var(--fs)); font-weight: 700; }
+.privacy-curtain-hint { font-size: calc(13px * var(--fs)); color: var(--primary-text); font-weight: 600; }

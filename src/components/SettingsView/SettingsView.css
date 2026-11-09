@@ -601,3 +601,7 @@
 }
 .disp-option--on { border-color: var(--primary); background: var(--c-blue-50); color: var(--primary-text); font-weight: 700; }
 .disp-preview { margin: -2px 0 12px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: calc(15px * var(--fs)); color: var(--text); }
+/* 가계부를 열 때 가리기 (U-7) */
+.disp-switch { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; font-size: calc(14px * var(--fs)); font-weight: 600; color: var(--text); cursor: pointer; }
+.disp-switch input { width: 18px; height: 18px; accent-color: var(--primary); }
+.disp-tip { margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--c-blue-50); border: 1px solid var(--c-blue-200); font-size: calc(12px * var(--fs)); line-height: 1.6; color: var(--text); }

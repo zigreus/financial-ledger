@@ -36,12 +36,12 @@
 | `src/services/txFilters.js` + txSummary | 거래내역 필터(기간·여러 개 선택·순지출 금액 범위·저장한 필터)와 걸러진 결과의 집계·AI 요약(집계만 보냄) |
 | `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
 | `src/services/errorLog.js` + problemReport + `components/common/ProblemReport.js` | 문제 알리기: 처리 못 한 오류·화면 오류(`common/ErrorBoundary`)·화면에 알린 오류를 이 기기에만 남김(최근 20건, 가림, 늘 있는 상태 안내는 뺌) / 보낼 글 / 미리 보기와 복사·메일. 설정 › 앱(`SettingsView/sections/AboutSection.js`), 가계부를 불러오지 못한 화면, 화면 오류 화면에서 쓴다(뒤의 둘은 `common/lazyProblemReport`). 앱 버전은 빌드가 적는다(`__APP_VERSION__`, vite.config.mjs) (I-038) |
-| `src/services/displayPrefs.js` + `SettingsView/sections/DisplaySettings.js` | 이 기기 화면: 글씨 크기(`--fs`)·화면 테마(`data-theme`, 기본 밝게) — 설정 › 앱. 앱을 열 때는 `index.html`의 스크립트가 먼저 적용 (U-1·U-2, I-039·I-040) |
+| `src/services/displayPrefs.js` + `SettingsView/sections/DisplaySettings.js` | 이 기기 화면: 글씨 크기(`--fs`)·화면 테마(`data-theme`, 기본 밝게)·처음 여는 화면·열 때 가리기(`App/PrivacyCurtain`) — 설정 › 앱. 글씨 크기·테마는 앱을 열 때 `index.html`의 스크립트가 먼저 적용 (U-1·U-2·U-7·U-8, I-039·I-040·I-045·I-046) |
 | `public/privacy.html` + `terms.html` + `src/config.js` | 개인정보처리방침·이용약관(로그인 없이 열리는 정적 페이지, 서비스 워커는 앱 화면으로 대신하지 않음) / 설정값: Azure 클라이언트 ID(`VITE_AZURE_CLIENT_ID`로 덮어씀), 운영자 이름·문의 메일(정하기 전: 앱 이름·빈 값) (I-038) |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/data/starterTemplates.js` + `components/Onboarding` | 첫 실행 기본값(가구 유형별 카테고리·결제수단)과 안내. 빈 가계부(`isBlankLedger`)에만, 확정할 때 `applyStarterSetup`으로 한 번에 넣음 |
 | `src/components/*` | 화면 |
-| `src/components/TransactionList/OpenNotices.js` | 확인할 것: 앱을 열면 거래내역 맨 위에 보이는 알림 카드 하나(잔액 위험·예산·구독 결제 예정·지난달 리포트, 닫은 기록은 기기별). 거래내역은 이 카드가 있으면 이번 달 대신 이 카드로 열린다 (I-036, B-093) |
+| `src/components/TransactionList/OpenNotices.js` | 확인할 것: 앱을 열면 거래내역 맨 위에 보이는 알림 카드 하나(잔액 위험·예산·구독 결제 예정·지난달 리포트, 닫은 기록은 기기별). 거래내역은 이 카드가 있으면 이번 달 대신 이 카드로 열린다 (I-036, B-093). 무엇을 알릴지는 `collectOpenNotices`, 닫은 것을 뺀 결과는 `hasVisibleNotices` — 처음 여는 화면(U-8)도 같은 계산을 쓴다 |
 | `src/components/App/screens.js` + `common/lazyScreen.js` | 열 때 불러오는 화면(요약·캘린더·계좌·설정·창들, 입력 창의 AI 입력은 `AIEntry/lazyAIEntry.js`)과 미리 불러오기(`preloadScreens`), 못 불러왔을 때의 다시 시도 (I-033) |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
 
@@ -143,6 +143,7 @@
 - **알림은 앱을 열 때 거래내역의 '확인할 것' 카드 한 곳에만 보입니다.** 새 알림은 `TransactionList/OpenNotices.js`에 항목으로 더하고 띠를 따로 만들지 않습니다. 앱이 꺼져 있을 때의 푸시 알림은 쓰지 않습니다. (사용자 결정, I-036, B-093)
 - 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
 - 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)
+  - 가로로 밀어 넘기기는 `common/useHorizontalSwipe`를 씁니다(캘린더·요약 — 세로 스크롤·입력 칸·가로 스크롤 칸은 거름). Esc는 `ModalOverlay`가 맨 위 창의 `onDismiss`로 처리합니다(입력 창은 onDismiss를 넘기지 않아 닫히지 않음). (U-9, U-10)
 - `dangerouslySetInnerHTML`은 쓰지 않습니다. AI 응답과 사용자 입력은 텍스트로만 렌더링합니다.
 - 비동기 요청(AI·네트워크)은 `AbortController`로 취소할 수 있게 하고, 취소는 오류로 표시하지 않습니다.
 - 늦게 도착한 응답이 현재 화면 상태와 맞는지 확인합니다. (B-049, B-052)

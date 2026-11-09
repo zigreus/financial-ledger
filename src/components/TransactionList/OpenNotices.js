@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { formatAmount } from '../../services/formulaEvaluator';
-import { reportAvgLabel } from '../../services/dbManager';
-import { todayStr } from '../../services/dateUtils';
+import {
+  reportAvgLabel, getBalanceAlerts, isCategoryBudgetEnabled, getCategoryBudgetStatus, isMonthlyReportEnabled,
+  getMonthlyReportHeadline, isSubscriptionsEnabled, getUpcomingSubscriptionPayments,
+} from '../../services/dbManager';
+import { addMonths, todayStr } from '../../services/dateUtils';
 
 /*
  * 확인할 것 (I-036, ROADMAP C-12) — 앱을 열면 거래내역 맨 위에 보이는 알림 카드 하나.
@@ -55,6 +58,56 @@ const readBudgetSeen = () => readList(BUDGET_KEY, s => (s && s.date === todayStr
 // 닫은 결제 예정 — 지난 결제는 버린다(쓸 때 정리)
 const readPaymentSeen = () => readList(PAYMENT_KEY, s => (Array.isArray(s) ? s : null));
 
+/**
+ * 오늘 알릴 것 — 거래내역의 이 카드와, 처음 여는 화면을 고를 때(App, U-8) 같은 계산을 쓴다.
+ * { balanceAlerts, budgetAlerts, payments, report } — 닫은 기록은 보지 않는다(hasVisibleNotices·카드가 filterVisible로 거른다)
+ *  - 지난달 리포트는 월간 리포트를 켰을 때 매달 1~REPORT_BANNER_DAYS일에만, 이 기기에서 이미 본 달이면 계산하지 않는다
+ */
+export function collectOpenNotices(db, today = todayStr()) {
+  if (!db) return { balanceAlerts: [], budgetAlerts: [], payments: [], report: null };
+  const month = today.slice(0, 7);
+  let report = null;
+  if (Number(today.slice(8, 10)) <= REPORT_BANNER_DAYS && isMonthlyReportEnabled(db)) {
+    const ym = addMonths(month, -1);
+    if (!isReportSeen(ym)) {
+      const headline = getMonthlyReportHeadline(db, ym);
+      report = headline.count ? headline : null;
+    }
+  }
+  return {
+    // 계좌 잔액이 위험선 아래로 내려가는 날 (B-066)
+    balanceAlerts: getBalanceAlerts(db),
+    // 이번 달 카테고리 예산 80% 이상·초과 (I-025) — 카테고리별 예산을 켰을 때만
+    budgetAlerts: isCategoryBudgetEnabled(db) ? getCategoryBudgetStatus(db, month).filter(r => r.level !== 'ok') : [],
+    // 곧 결제될 구독 (I-036) — 구독 모아보기를 켰을 때만
+    payments: isSubscriptionsEnabled(db) ? getUpcomingSubscriptionPayments(db, today) : [],
+    report,
+  };
+}
+
+/** 이 기기에서 닫은 기록 */
+function readSeen() {
+  return { balance: readKey(BALANCE_KEY), budget: readBudgetSeen(), payment: readPaymentSeen(), report: readKey(REPORT_KEY) };
+}
+
+/** 닫은 것을 뺀, 카드에 보일 항목 — { balances, budgets, dues, showReport, stamp } */
+function filterVisible({ balanceAlerts = [], budgetAlerts = [], payments = [], report = null }, seen, today) {
+  const stamp = balanceStamp(balanceAlerts, today);
+  return {
+    stamp,
+    balances: balanceAlerts.length && seen.balance !== stamp ? balanceAlerts : [],
+    budgets: budgetAlerts.filter(a => !seen.budget.includes(budgetKey(a))),
+    dues: payments.filter(p => !seen.payment.includes(paymentKey(p))),
+    showReport: !!report && !!report.count && seen.report !== report.month,
+  };
+}
+
+/** 지금 '확인할 것' 카드가 보일지 — 닫은 기록까지 따진다 (U-8: 다른 화면을 먼저 열기로 했어도 이때는 거래내역부터) */
+export function hasVisibleNotices(notices, today = todayStr()) {
+  const v = filterVisible(notices, readSeen(), today);
+  return v.balances.length > 0 || v.budgets.length > 0 || v.dues.length > 0 || v.showReport;
+}
+
 const md = (dateStr) => {
   const [, m, d] = dateStr.split('-').map(Number);
   return `${m}월 ${d}일`;
@@ -103,11 +156,11 @@ export default function OpenNotices({
   const [reportSeen, setReportSeen] = useState(() => readKey(REPORT_KEY));
 
   const today = todayStr();
-  const stamp = balanceStamp(balanceAlerts, today);
-  const balances = balanceAlerts.length && balanceSeen !== stamp ? balanceAlerts : [];
-  const budgets = budgetAlerts.filter(a => !budgetSeen.includes(budgetKey(a)));
-  const dues = payments.filter(p => !paymentSeen.includes(paymentKey(p)));
-  const showReport = !!report && !!report.count && reportSeen !== report.month;
+  const {
+    stamp, balances, budgets, dues, showReport,
+  } = filterVisible({ balanceAlerts, budgetAlerts, payments, report }, {
+    balance: balanceSeen, budget: budgetSeen, payment: paymentSeen, report: reportSeen,
+  }, today);
   if (!balances.length && !budgets.length && !dues.length && !showReport) return null;
 
   const closeReport = () => {
