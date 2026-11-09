@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-038
+다음 번호: B-094, I-039
 
 ## 요약표
 
@@ -146,6 +146,7 @@
 | I-035 | ✅ | - | 데이터·저장 | 다른 계정(OneDrive ↔ Google Drive)으로 옮길 때 거래 CSV뿐이라 카테고리·계좌·정기지출·일정·설정이 빠짐 (ROADMAP F-5) |
 | I-036 | ✅ | - | 알림 | 예산·잔액·리포트 알림이 띠 여러 개로 흩어지고, 구독이 결제되기 전에 알 길이 없음 — 푸시(서버) 대신 앱을 열 때 한 카드로 (ROADMAP C-12) |
 | I-037 | ✅ | - | 정기지출 | 정기지출의 결제일을 바꾸면 미리 등록된 앞으로의 거래는 옛 날짜로 남아 하나씩 고쳐야 함 |
+| I-038 | ✅ | - | 출시 준비 | 처리방침·약관이 없고, 로그인 화면에 앱 소개가 없으며, 문제가 생겨도 알릴 길이 없음 (ROADMAP M-5 중 바로 할 수 있는 것) |
 
 
 ## 상세
@@ -1282,3 +1283,11 @@
 - 원인: 일정을 바꾼 수정은 옛 일정으로 등록된 거래와 맞지 않을 수 있어 앞으로의 거래를 건드리지 않았다(B-092), 옮길지 사용자에게 묻는 길이 없었다.
 - 해결: 주기는 그대로 두고 결제일(날, 연간은 달·날)만 바꾸면 옮길 앞으로의 거래를 보여 주며 '함께 옮기기·정기지출만 바꾸기·돌아가기'를 묻고, 옮기면 아직 옛 결제일 그대로인 오늘 뒤 거래를 그 달(연간은 가장 가까운 해의 새 달)의 새 결제일로(말일 보정, 분할 몫 함께, 지금 결제일과 날짜가 다른 것·새 날짜가 오늘 이전인 것은 날짜·금액 모두 그대로, 옮기는 거래는 금액도 B-092처럼 따라감, 연간 달을 옮기면 등록 기록도) SQL 식으로 옮겨 병합 때도 같은 규칙으로 다시 실행된다(사용자 요청).
 - 파일: src/services/db/recurring.js, src/components/SettingsView/sections/RecurringSection.js·SettingsView.css, src/services/db/subscriptions.js(주석), src/services/__tests__/subscriptions.test.js, src/components/__tests__/Subscriptions.ui.test.js, SETUP.md
+
+### I-038 처리방침·약관이 없고, 로그인 화면에 앱 소개가 없으며, 문제가 생겨도 알릴 길이 없음 (ROADMAP M-5 중 바로 할 수 있는 것)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 출시 준비
+- 문제: 다른 가족에게 넓히거나 Google 브랜드 확인·Play 스토어(M-6)를 하려면 로그인 없이 볼 수 있는 앱 소개·개인정보처리방침·이용약관이 있어야 하는데 없고, 오류를 자동으로 모으지 않기로 해(F-4) 사용자가 문제를 알릴 길도 없다.
+- 원인: 지금까지 가족끼리만 써서 출시 문서와 문의 창구를 만들지 않았다.
+- 해결: 정적 페이지 public/privacy.html·terms.html(운영자는 자동으로 수집·보관하지 않음, 드라이브·AI(기능별 범위)·기기 저장, 직접 보낸 문의·문제 알리기의 항목·목적·보유 기간, 운영자 이름은 앱 이름·문의는 준비 중)과 로그인 화면 소개·링크, 설정 › 정보(버전·운영·문의·링크)와 '문제 알리기'(이 기기에만 남는 오류 기록 20건 — 가린 메시지·위치·시각, 늘 있는 상태 안내는 뺌 — 과 앱 정보를 보여 주고 사용자가 직접 복사·메일, 자동으로 보내지 않음; 불러오기 실패 화면과 새 화면 오류 화면(ErrorBoundary)에서도), 빌드 버전 표시, Azure 클라이언트 ID를 환경값으로 덮어쓰게, 서비스 워커는 연결이 없을 때 두 페이지를 앱 화면으로 대신하지 않게.
+- 파일: public/privacy.html·terms.html·sw.js, index.html, src/services/errorLog.js·problemReport.js, src/components/common/ProblemReport.js·ProblemReport.css·lazyProblemReport.js·ErrorBoundary.js·ErrorBoundary.css, src/components/SettingsView/sections/AboutSection.js·SettingsView.js·SettingsView.css, src/components/LoginPage/LoginPage.js·LoginPage.css, src/components/App/App.js·App.css·screens.js, src/index.js, src/config.js, vite.config.mjs, src/services/__tests__/errorLog.test.js, src/components/__tests__/About.ui.test.js, src/components/App/__tests__/App.google.test.js·App.problemReport.test.js, AGENTS.md, SETUP.md, docs/ROADMAP.md

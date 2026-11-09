@@ -29,6 +29,8 @@ import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import { useTopToast } from '../../hooks/useTopToast';
 import { clearAIDraft, setAIDraftAccount } from '../../services/aiDraft';
 import { clearSharedItems, readLaunchAction, takeSharedItems } from '../../services/shareInbox';
+import { recordError } from '../../services/errorLog';
+import ProblemReport from '../common/lazyProblemReport';
 
 function App() {
   const msalAuthenticated = useIsAuthenticated();
@@ -77,6 +79,7 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCardCheck, setShowCardCheck] = useState(false);
+  const [showLoadReport, setShowLoadReport] = useState(false); // 가계부를 불러오지 못한 화면의 '문제 알리기' (I-038)
   const [showEventForm, setShowEventForm] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false); // 첫 실행 안내 (F-3)
   const [editingTx, setEditingTx] = useState(null);
@@ -223,6 +226,16 @@ function App() {
   useEffect(() => {
     if (notice) showToast(notice.text);
   }, [notice, showToast]);
+
+  // 화면 위 띠로 알린 오류(불러오기·저장 실패 등)는 이 기기의 오류 기록에도 남긴다 — '문제 알리기'에서 사용자가 보고 보낸다(I-038)
+  useEffect(() => {
+    if (error) recordError(error, { kind: '화면에 알린 오류' });
+  }, [error]);
+
+  // 가계부를 열면 불러오기 실패 화면의 문제 알리기를 닫아 둔다 — 다음에 또 실패하면 처음처럼 버튼부터
+  useEffect(() => {
+    if (db) setShowLoadReport(false);
+  }, [db]);
 
   // DB 최초 로드 완료 시 브라우저 히스토리 초기화
   useEffect(() => {
@@ -526,7 +539,19 @@ function App() {
             )}
             {error && <p className="error-msg">{error}</p>}
             <button className="btn-primary" onClick={() => loadDb()}>가계부 불러오기</button>
+            {/* 설정 › 정보에 갈 수 없는 화면이라 여기서도 문제를 알릴 수 있게 (I-038) */}
+            {error && !showLoadReport && (
+              <button type="button" className="btn-secondary" onClick={() => setShowLoadReport(true)}>문제 알리기</button>
+            )}
           </>
+        )}
+        {/* 다시 불러오는 동안(스피너)에도 같은 자리에 두어 적던 글이 사라지지 않게 */}
+        {showLoadReport && (
+          <div className="load-report">
+            <Suspense fallback={<p className="load-report-wait">불러오는 중…</p>}>
+              <ProblemReport drive={driveName} />
+            </Suspense>
+          </div>
         )}
       </div>
     );

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>이용약관 · 지금 가계부</title>
+  <meta name="description" content="지금 가계부 이용약관" />
+  <link rel="icon" href="/favicon_b2.ico" />
+  <!--
+    I-038 (ROADMAP M-5) — 로그인 없이 열리는 정적 페이지. 처리방침(privacy.html)과 같은 모양을 쓴다.
+    운영자 이름·문의 메일은 src/config.js(OPERATOR_NAME·CONTACT_EMAIL)와 같게 — 정하면 함께 고친다(할 일: ROADMAP M-5).
+  -->
+  <style>
+    :root { --text: #1E293B; --muted: #64748B; --bg: #F8FAFC; --surface: #FFFFFF; --border: #E2E8F0; --primary: #2563EB; }
+    @media (prefers-color-scheme: dark) {
+      :root { --text: #E2E8F0; --muted: #94A3B8; --bg: #0F172A; --surface: #1E293B; --border: #334155; --primary: #60A5FA; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif; line-height: 1.7; word-break: keep-all; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    a { color: var(--primary); }
+    h1 { font-size: 24px; margin: 8px 0 4px; }
+    h2 { font-size: 17px; margin: 28px 0 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .meta { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+    ul, ol { padding-left: 20px; margin: 8px 0; }
+    li { margin: 4px 0; }
+    .back { display: inline-block; margin-bottom: 8px; font-size: 14px; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+<main>
+  <a class="back" href="/">← 지금 가계부로</a>
+  <h1>이용약관</h1>
+  <p class="meta">시행일 2026년 11월 9일 · 운영: 지금 가계부</p>
+
+  <h2>제1조 (목적)</h2>
+  <p>이 약관은 지금 가계부(이하 "앱")를 이용하는 조건과 절차, 이용자와 운영자의 권리·의무를 정합니다.</p>
+
+  <h2>제2조 (서비스)</h2>
+  <ol>
+    <li>앱은 웹 브라우저에서 동작하는 가계부입니다. 휴대폰에서는 홈 화면에 추가해 앱처럼 쓸 수 있습니다.</li>
+    <li>가계부는 이용자가 로그인한 계정의 Microsoft OneDrive 또는 Google Drive에 저장됩니다. 운영자는 가계부를 보관하지 않습니다.</li>
+    <li>앱은 현재 무료입니다.</li>
+  </ol>
+
+  <h2>제3조 (계정과 저장소)</h2>
+  <ol>
+    <li>이용자는 자신의 Microsoft 또는 Google 계정으로 로그인합니다. 계정과 저장소(저장 공간, 계정 보안 등)의 이용은 해당 회사의 약관을 따릅니다.</li>
+    <li>같은 계정으로 로그인한 사람은 같은 가계부를 함께 보고 고칠 수 있습니다. 계정을 누구와 함께 쓸지는 이용자가 정하고 관리합니다.</li>
+  </ol>
+
+  <h2>제4조 (이용자의 의무)</h2>
+  <ol>
+    <li>이용자는 자신의 계정과 기기, AI API 키를 안전하게 관리합니다.</li>
+    <li>이용자는 법령을 어기거나 다른 사람의 권리를 침해하는 데 앱을 쓰지 않으며, 앱의 동작을 고의로 방해하지 않습니다.</li>
+  </ol>
+
+  <h2>제5조 (AI 기능)</h2>
+  <ol>
+    <li>AI 기능은 선택 기능이며, 이용자가 직접 넣은 API 키로 해당 AI 회사(Google, Anthropic)에 요청합니다. 이용 요금은 AI 회사가 키의 주인에게 청구합니다.</li>
+    <li>AI가 읽거나 추천한 내용은 틀릴 수 있습니다. 앱이 보여 주는 확인 화면에서 내용을 확인한 뒤 저장해 주세요.</li>
+    <li>AI에 보내는 내용의 범위는 <a href="/privacy.html">개인정보처리방침</a> 3항에 적었습니다.</li>
+  </ol>
+
+  <h2>제6조 (데이터와 백업)</h2>
+  <ol>
+    <li>앱은 가계부를 여는 날마다 이용자의 드라이브에 백업을 만들고 최근 30개를 보관합니다.</li>
+    <li>운영자는 이용자의 가계부를 갖고 있지 않아 대신 복구해 드릴 수 없습니다. 중요한 자료는 설정 › 데이터 › 내보내기로 따로 보관하기를 권합니다.</li>
+  </ol>
+
+  <h2>제7조 (참고용 정보)</h2>
+  <p>
+    잔액 예측, 예산, 월간 리포트, 연말정산 참고 합계 등은 이용자가 입력한 내용으로 계산한 참고 정보입니다.
+    세무·금융 상담이 아니며, 실제 금액(카드 청구액, 공제액 등)은 해당 기관의 자료로 확인해야 합니다.
+  </p>
+
+  <h2>제8조 (서비스의 변경과 중단)</h2>
+  <ol>
+    <li>운영자는 앱의 기능을 바꾸거나 서비스를 중단할 수 있습니다. 이용에 큰 영향을 주는 변경이나 중단은 미리 이 페이지나 앱에서 알립니다.</li>
+    <li>서비스가 중단되어도 가계부 파일과 백업은 이용자의 드라이브에 그대로 남습니다.</li>
+  </ol>
+
+  <h2>제9조 (유료 기능)</h2>
+  <p>현재 유료 기능은 없습니다. 유료 기능을 도입하면 내용과 가격을 미리 알리고, 동의한 이용자에게만 요금을 받습니다.</p>
+
+  <h2>제10조 (책임의 제한)</h2>
+  <ol>
+    <li>앱은 무료로 제공됩니다. 운영자는 관련 법령이 허용하는 범위에서, 운영자의 고의 또는 중대한 과실이 없는 한 앱 이용으로 생긴 손해(데이터 손실, 계산 오류 등)에 책임을 지지 않습니다.</li>
+    <li>Microsoft, Google, AI 회사 등 외부 서비스의 장애나 정책 변경으로 생긴 문제에 대해서는 책임을 지지 않습니다.</li>
+  </ol>
+
+  <h2>제11조 (약관의 변경)</h2>
+  <p>
+    약관을 바꾸면 바뀐 내용과 시행일을 시행 7일 전부터 이 페이지에 알립니다. 이용자에게 불리한 변경은 30일 전부터 알립니다.
+    바뀐 약관에 동의하지 않으면 이용을 멈추고 앱의 접근 허락을 취소할 수 있습니다.
+  </p>
+
+  <h2>제12조 (준거법)</h2>
+  <p>이 약관은 대한민국 법에 따릅니다.</p>
+
+  <h2>문의</h2>
+  <p>문의 창구를 준비하고 있습니다. 정해지면 이 페이지에 알립니다.</p>
+
+  <footer>
+    <a href="/privacy.html">개인정보처리방침</a> · <a href="/">지금 가계부로</a>
+  </footer>
+</main>
+</body>
+</html>

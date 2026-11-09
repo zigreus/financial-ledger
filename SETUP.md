@@ -75,11 +75,13 @@ export const AZURE_CLIENT_ID = '여기에-붙여넣기';
 ### 2-1. `src/config.js`
 
 ```js
-export const AZURE_CLIENT_ID = '9eaaf1b0-...'; // Azure에서 복사한 Client ID
+export const AZURE_CLIENT_ID = import.meta.env.VITE_AZURE_CLIENT_ID || '9eaaf1b0-...'; // Azure에서 복사한 Client ID
 export const ONEDRIVE_DB_PATH = 'Apps/financial-ledger/ledger.db'; // 변경 불필요
 ```
 
+- 기본값 자리에 Azure에서 복사한 Client ID를 넣습니다. 환경값 `VITE_AZURE_CLIENT_ID`가 있으면 그것을 씁니다(4-4).
 - `ONEDRIVE_DB_PATH`는 OneDrive 내 저장 경로로, 변경하지 않아도 됩니다.
+- 운영자 이름·문의 메일(`OPERATOR_NAME`·`CONTACT_EMAIL`)은 5-4를 봅니다.
 - OneDrive에 `Apps/financial-ledger/` 폴더가 없어도 자동 생성됩니다.
 
 ### 2-2. Google 로그인 + Google Drive 저장 (선택)
@@ -176,9 +178,11 @@ npm start
 ### 4-4. 환경변수 설정
 
 - Google 로그인을 쓰려면 `VITE_GOOGLE_CLIENT_ID`를 넣습니다(2-2). 쓰지 않으면 필요 없습니다.
-- `AZURE_CLIENT_ID`는 현재 `src/config.js`에 하드코딩되어 있어 별도 환경변수 설정 불필요
-- 환경변수로 옮기려면: Vercel 대시보드 → Settings → **Environment Variables**에 `VITE_AZURE_CLIENT_ID`를 추가하고 코드에서 `import.meta.env.VITE_AZURE_CLIENT_ID`로 읽습니다.
+- Azure 클라이언트 ID는 `src/config.js`의 기본값(지금 운영 중인 앱 등록)을 씁니다. 개발용·운영용 앱 등록을 나누려면 환경값 `VITE_AZURE_CLIENT_ID`로 덮어씁니다(I-038).
+  - 로컬: `.env.local`에 `VITE_AZURE_CLIENT_ID=…` 한 줄 / Vercel: 대시보드 → Settings → **Environment Variables**
+  - 새 앱 등록을 쓰면 그 등록의 리디렉션 URI(1-3)에 앱 주소를 넣어야 합니다.
   - Vite는 `VITE_`로 시작하는 값만 브라우저 코드에 넣습니다. `process.env`는 브라우저에 없습니다.
+- 앱 버전(설정 › 정보)은 빌드가 빌드 시각과 커밋으로 적습니다. Vercel은 커밋을 저절로 알려 주므로 따로 넣을 값이 없습니다.
 
 ---
 
@@ -286,6 +290,17 @@ npm start
 - **지난달 리포트** — 매달 1~7일(월간 리포트, 5-1).
 
 줄을 누르면 그 화면으로 갑니다. ✕로 닫으면 같은 내용은 그날 다시 보이지 않습니다(리포트는 그 달, 결제 예정은 그 결제에 대해 다시 보이지 않음). 닫은 기록은 기기마다 따로입니다.
+
+### 5-4. 앱 정보·처리방침·문제 알리기 (I-038)
+
+- **개인정보처리방침·이용약관:** `/privacy.html`, `/terms.html` — 로그인하지 않고도 열립니다(로그인 화면 아래, 설정 › 정보에 링크). Google 브랜드 확인·Play 스토어에 이 주소를 냅니다.
+  - 앱이 기기 밖으로 보내는 것이나 기기에 두는 것을 바꾸면 처리방침도 함께 고칩니다(AGENTS §1).
+  - 운영자 이름은 아직 앱 이름('지금 가계부'), 문의는 '준비 중'입니다. 정하면 `src/config.js`(`OPERATOR_NAME`·`CONTACT_EMAIL`)와 두 페이지를 함께 고칩니다(ROADMAP M-5 남은 할 일).
+- **설정 › 정보:** 앱 버전·운영·문의와 처리방침·약관 링크.
+- **문제 알리기(설정 › 정보):** 앱은 오류를 어디로도 자동으로 보내지 않습니다. 대신 이 기기에서 난 오류(처리하지 못한 오류, 화면을 그리다 멈춘 오류, 화면 위 빨간 띠로 알린 오류)를 최근 20건까지 이 기기에만 남깁니다 — 메시지·위치·시각만, 이메일·긴 숫자(전화·계좌·카드번호)·키처럼 보이는 값은 가림. 연결 없음·로그인 시간 끝처럼 늘 있는 안내는 남기지 않고, 같은 오류가 또 나면 횟수만 늘립니다.
+  - 가계부를 불러오지 못한 화면과, 화면을 그리다 멈췄을 때 나오는 '화면을 그리다 문제가 생겼어요' 화면에도 **문제 알리기** 버튼이 있습니다(설정에 갈 수 없을 때).
+  - '무슨 일이 있었나요'를 적으면 앱 정보(버전·홈 화면 앱인지·저장소·브라우저)·최근 오류와 함께 보낼 글이 미리 보기로 보입니다. 읽어 보고 **복사하기**로 메신저에 붙여 보냅니다(문의 메일을 정하면 **메일로 보내기**도 생김 — 메일 앱이 긴 글을 자르지 않게 최근 오류 5건만 담음).
+  - **오류 기록 지우기**로 이 기기의 기록을 지웁니다. 로그아웃해도 지워지지 않습니다(가계부 내용이 없는 기록).
 
 ---
 

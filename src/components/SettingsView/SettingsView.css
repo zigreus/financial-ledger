@@ -481,8 +481,8 @@
   border-color: var(--primary);
 }
 
-/* 탭이 7개라 탭 이름이 두 줄로 꺾이지 않게 하고(어느 폭에서나), 넘치면 가로로 밀어 본다
-   (데이터 탭 I-013·I-014, 선택 기능 탭 I-032 — 한글 폭이 1em인 휴대폰 글꼴로 421~460px에서 '선택 기능'이 꺾였다) */
+/* 탭이 8개라 탭 이름이 두 줄로 꺾이지 않게 하고(어느 폭에서나), 넘치면 가로로 밀어 본다
+   (데이터 탭 I-013·I-014, 선택 기능 탭 I-032, 정보 탭 I-038 — 한글 폭이 1em인 휴대폰 글꼴로 421~460px에서 '선택 기능'이 꺾였다) */
 .settings-tabs { overflow-x: auto; scrollbar-width: none; }
 .settings-tabs::-webkit-scrollbar { display: none; }
 .settings-tabs .tab { white-space: nowrap; }
@@ -491,9 +491,10 @@
   .settings-tabs { padding: 0 8px; }
   .settings-tabs .tab { flex: 1 0 auto; padding: 12px 6px; font-size: 13px; }
 }
-/* 360~400px 휴대폰에서도 7개 탭이 한 줄에 다 보이게 (가려진 탭이 없도록) */
+/* 360~400px 휴대폰에서도 8개 탭이 한 줄에 다 보이게 (가려진 탭이 없도록 — 12px 글꼴로 약 350px).
+   그보다 좁으면 가로로 밀어 맨 끝의 '정보'를 본다 */
 @media (max-width: 400px) {
-  .settings-tabs { padding: 0 4px; }
+  .settings-tabs { padding: 0 2px; }
   .settings-tabs .tab { padding: 12px 3px; font-size: 12px; letter-spacing: -0.3px; }
 }
 
@@ -575,3 +576,16 @@
 .rmove-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
 .rmove-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .rmove-actions button { width: 100%; }
+
+/* 설정 › 정보 (I-038) — 앱 버전·운영·문의·처리방침·약관. 문제 알리기는 common/ProblemReport.css */
+.about-section { display: flex; flex-direction: column; gap: 20px; }
+.about-block { padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.about-block:last-child { border-bottom: none; padding-bottom: 0; }
+.about-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.about-facts { margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.about-facts > div { display: flex; gap: 10px; }
+.about-facts dt { flex: 0 0 36px; color: var(--text-muted); }
+.about-facts dd { margin: 0; color: var(--text); word-break: break-all; }
+.about-desc { margin: 0 0 10px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.about-links { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
+.about-links a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }

@@ -10,6 +10,7 @@ import CalendarSection from './sections/CalendarSection';
 import FeaturesSection from './sections/FeaturesSection';
 import AISection from './sections/AISection';
 import DataSection from './sections/DataSection';
+import AboutSection from './sections/AboutSection';
 import { featureAnchorId } from './optionalFeatures';
 
 /**
@@ -70,6 +71,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
         <button className={activeSection === 'features' ? 'tab active' : 'tab'} onClick={() => switchSection('features')}>선택 기능</button>
         <button className={activeSection === 'ai' ? 'tab active' : 'tab'} onClick={() => switchSection('ai')}>AI</button>
         <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
+        <button className={activeSection === 'about' ? 'tab active' : 'tab'} onClick={() => switchSection('about')}>정보</button>
       </div>
 
       {/* 드릴다운 뒤로가기 */}
@@ -115,6 +117,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
         {activeSection === 'features' && <FeaturesSection {...sectionProps} onOpenPlace={openFeaturePlace} />}
         {activeSection === 'ai' && <AISection />}
         {activeSection === 'data' && <DataSection key={masterKey} {...sectionProps} backup={backup} />}
+        {activeSection === 'about' && <AboutSection key={masterKey} />}
 
         {activeSection === 'calendar' && (
           <CalendarSection

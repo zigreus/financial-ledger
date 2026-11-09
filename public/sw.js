@@ -8,6 +8,7 @@
  *       — 둔 화면이 없는 파일을 찾아 흰 화면이 되거나, 새 JS와 옛 wasm이 섞여 열리지 않는 일이 없게.
  *       설치할 때(첫 방문 포함) 한 번, 그리고 페이지를 서버에서 새로 받을 때마다. 지금 index.html이 가리키지 않는 빌드 파일은 지운다.
  *     - 페이지 열기: 먼저 서버에 묻고(4초까지), 안 되면 둔 index.html
+ *       (개인정보처리방침·이용약관 페이지는 서버가 먼저, 안 되면 한 번 볼 때 둔 그 페이지 — 앱 화면으로 대신하지 않는다)
  *     - /assets/*: 이름에 내용 해시가 붙어 바뀌지 않으므로 둔 것을 먼저
  *     - sql-wasm.wasm·manifest.json: 서버가 먼저(4초까지), 안 되면 둔 것 — 앱 JS와 버전이 어긋나면 열리지 않는다(B-013)
  *     - 아이콘: 둔 것을 바로 쓰고 뒤에서 새로 받아 둔다
@@ -24,6 +25,9 @@ const INBOX_CACHE = 'share-inbox';
 const NETWORK_TIMEOUT_MS = 4000; // 연결이 약할 때 이만큼만 기다리고 둔 것을 쓴다
 const ICONS = ['/favicon_b2.ico', '/logo192_b2.png', '/logo512_b2.png', '/logo192_transparent.png'];
 const NETWORK_FIRST = new Set(['/sql-wasm.wasm', '/manifest.json']);
+// 앱 화면이 아닌 정적 페이지(개인정보처리방침·이용약관, I-038) — 연결이 없을 때 앱 화면(index.html)을 대신 열지 않고,
+// 한 번 본 것이 있으면 그것을 보인다
+const DOC_PAGES = new Set(['/privacy.html', '/terms.html']);
 const ICON_PATHS = new Set(ICONS);
 const ASSET_RE = /\/assets\/[A-Za-z0-9._-]+/g;
 
@@ -59,7 +63,9 @@ self.addEventListener('fetch', (event) => {
   }
   if (request.method !== 'GET') return;
 
-  if (request.mode === 'navigate') {
+  if (request.mode === 'navigate' && DOC_PAGES.has(url.pathname)) {
+    event.respondWith(networkFirst(request, url.pathname));
+  } else if (request.mode === 'navigate') {
     event.respondWith(openPage(event));
   } else if (url.pathname.startsWith('/assets/')) {
     event.respondWith(assetFirst(request));
@@ -155,7 +161,7 @@ async function assetFirst(request) {
   return res;
 }
 
-/** sql-wasm.wasm·manifest.json — 서버가 먼저(받으면 둔다), 안 되면(또는 너무 느리면) 둔 것 */
+/** sql-wasm.wasm·manifest.json·정적 페이지(DOC_PAGES) — 서버가 먼저(받으면 둔다), 안 되면(또는 너무 느리면) 둔 것 */
 async function networkFirst(request, path) {
   const shell = await caches.open(SHELL_CACHE);
   const network = fetch(request).then((res) => {

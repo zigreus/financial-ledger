@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>개인정보처리방침 · 지금 가계부</title>
+  <meta name="description" content="지금 가계부 개인정보처리방침 — 운영자는 가계부와 개인정보를 수집·보관하지 않습니다." />
+  <link rel="icon" href="/favicon_b2.ico" />
+  <!--
+    I-038 (ROADMAP M-5) — 로그인 없이, 앱을 받지 않고도 열리는 정적 페이지(Google 브랜드 확인·Play 스토어에 이 주소를 낸다).
+    앱이 기기 밖으로 보내는 것(새 외부 서비스·AI로 보내는 범위)이나 기기에 두는 것이 바뀌면 이 문서도 함께 고친다(AGENTS §1).
+    운영자 이름·문의 메일은 src/config.js(OPERATOR_NAME·CONTACT_EMAIL)와 같게 — 정하면 두 곳을 함께 고친다(할 일: ROADMAP M-5).
+    오류 기록 건수(20)는 src/services/errorLog.js의 ERROR_LOG_MAX와 같게.
+  -->
+  <style>
+    :root { --text: #1E293B; --muted: #64748B; --bg: #F8FAFC; --surface: #FFFFFF; --border: #E2E8F0; --primary: #2563EB; }
+    @media (prefers-color-scheme: dark) {
+      :root { --text: #E2E8F0; --muted: #94A3B8; --bg: #0F172A; --surface: #1E293B; --border: #334155; --primary: #60A5FA; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif; line-height: 1.7; word-break: keep-all; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    a { color: var(--primary); }
+    h1 { font-size: 24px; margin: 8px 0 4px; }
+    h2 { font-size: 17px; margin: 32px 0 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .meta { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+    .summary { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
+    .summary h2 { border: none; margin: 0 0 6px; padding: 0; font-size: 16px; }
+    ul { padding-left: 20px; margin: 8px 0; }
+    li { margin: 4px 0; }
+    code { font-size: 0.92em; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; word-break: break-all; }
+    .back { display: inline-block; margin-bottom: 8px; font-size: 14px; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+<main>
+  <a class="back" href="/">← 지금 가계부로</a>
+  <h1>개인정보처리방침</h1>
+  <p class="meta">시행일 2026년 11월 9일 · 운영: 지금 가계부</p>
+
+  <section class="summary">
+    <h2>한눈에 보기</h2>
+    <ul>
+      <li>운영자는 앱을 통해 이용자의 개인정보와 가계부를 수집하거나 보관하지 않습니다. 가계부를 저장하는 운영자 서버가 없습니다.</li>
+      <li>가계부는 이용자가 로그인한 계정의 클라우드 저장소(Microsoft OneDrive 또는 Google Drive)에 파일로 저장됩니다.</li>
+      <li>사용 기록(통계)이나 오류를 운영자에게 자동으로 보내지 않습니다. 광고·분석 도구를 쓰지 않습니다.</li>
+      <li>AI 기능은 이용자가 직접 넣은 API 키로, 이용자가 그 기능을 쓸 때만 해당 AI 회사에 필요한 내용을 보냅니다.</li>
+      <li>운영자가 받는 것은 이용자가 직접 보낸 문의와 '문제 알리기' 내용뿐입니다(6항).</li>
+    </ul>
+  </section>
+
+  <h2>1. 운영자가 처리하는 개인정보</h2>
+  <p>
+    지금 가계부(이하 "앱")는 이용자의 브라우저 안에서 동작합니다. 운영자는 앱을 통해 개인정보를 자동으로 수집·저장·이용하지 않습니다.
+    아래 2~4의 정보는 이용자의 기기와 이용자가 고른 서비스(Microsoft·Google·AI 회사) 사이에서만 오가며, 운영자는 이를 받거나 볼 수 없습니다.
+    이용자가 직접 문의하거나 '문제 알리기' 글을 보내면 운영자가 그 내용을 받습니다(6항).
+  </p>
+
+  <h2>2. 로그인과 가계부 저장 (Microsoft · Google)</h2>
+  <ul>
+    <li>
+      <strong>Microsoft 계정으로 로그인하면</strong> 이용자의 OneDrive <code>Apps/financial-ledger</code> 폴더에 가계부 파일(<code>ledger.db</code>),
+      매일 백업(<code>backups</code>), AI 설정 파일(<code>ai-settings.json</code>)을 저장합니다.
+      요청하는 권한은 OneDrive 파일 읽기·쓰기(Files.ReadWrite)와 기본 프로필 읽기(User.Read)이며, 앱은 이 중 위 폴더의 파일만 읽고 씁니다.
+    </li>
+    <li>
+      <strong>Google 계정으로 로그인하면</strong> 이용자의 Google Drive <code>financial-ledger</code> 폴더에 같은 파일을 저장합니다.
+      요청하는 권한은 이 앱이 만든 파일만 다루는 권한(drive.file)과 계정 이메일 확인(openid·email)이며, 이용자의 다른 Drive 파일은 볼 수 없습니다.
+    </li>
+    <li>
+      가계부에 적는 내용(거래의 날짜·금액·내용·결제수단·카테고리, 가족 구성원 이름, 계좌와 잔액, 일정·여행 등)은 위 파일에 저장되며,
+      해당 회사의 약관과 개인정보 처리방침에 따라 보관됩니다
+      (<a href="https://privacy.microsoft.com/ko-kr/privacystatement" target="_blank" rel="noopener noreferrer">Microsoft</a>,
+      <a href="https://policies.google.com/privacy?hl=ko" target="_blank" rel="noopener noreferrer">Google</a>).
+    </li>
+    <li>같은 계정으로 로그인한 사람(예: 가족)은 같은 가계부를 함께 봅니다. 계정을 누구와 함께 쓸지는 이용자가 정합니다.</li>
+  </ul>
+
+  <h2>3. AI 기능 (선택)</h2>
+  <ul>
+    <li>
+      AI 기능(영수증 사진 읽기, 말로 입력, 카드 명세서 대조, 표 가져오기의 맞추기 추천, 거래 요약, 월간 리포트 한마디)은
+      이용자가 설정에 직접 넣은 API 키로 Google(Gemini) 또는 Anthropic(Claude)에 요청합니다. 키를 넣지 않거나 기능을 쓰지 않으면 보내지 않습니다.
+    </li>
+    <li>기능마다 보내는 내용은 다음과 같습니다.
+      <ul>
+        <li><strong>영수증·말로 입력·카드 명세서:</strong> 이용자가 고른 사진·글·명세서와, 결과를 맞추는 데 필요한 결제수단·카테고리 목록, 입력 습관(자주 적는 가게와 그 분류·결제수단·횟수), 여행 일정</li>
+        <li><strong>표 가져오기:</strong> 표의 앞 15~30줄(계좌·카드번호처럼 보이는 긴 숫자는 가림)과 표의 분류·결제수단 이름 목록. 표에 분류 칸이 없으면 내용(가게 이름, 은행 내역이면 보낸·받은 사람 이름일 수 있음)을 많이 나온 것부터 360개까지 횟수와 함께 보냅니다.</li>
+        <li><strong>거래 요약:</strong> 거래내역 필터 조건(검색어 포함), 합계·평균, 월별·카테고리별·결제수단별 합계, 가족 구성원별 합계(2명 이상일 때 이름 포함), 많이 쓴 내용 상위 10개(30자까지), 가장 큰 지출 3건(달·내용·금액). 걸러진 거래가 몇 건뿐이면 사실상 그 거래들의 내용·금액이 전해집니다.</li>
+        <li><strong>월간 리포트 한마디:</strong> 그 달의 합계·할인 합계·건수·예정 거래 합계, 견준 앞 달 평균, 카테고리 이름과 합계·평균(상위 8개)과 크게 늘거나 준 카테고리, 가장 큰 지출 3건의 카테고리·금액(가게·메모는 보내지 않음), 무지출일, 가계부를 쓰기 시작한 날(첫 달일 때), 켜 둔 경우 목표·예산 결과와 수입·남은 돈·저축률</li>
+      </ul>
+    </li>
+    <li>
+      AI 회사가 받은 내용을 처리하는 방식은 해당 회사의 약관·정책을 따릅니다
+      (<a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer">Gemini API 약관</a>,
+      <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener noreferrer">Anthropic 개인정보 처리방침</a>).
+      AI 이용 요금은 AI 회사가 키의 주인에게 청구합니다.
+    </li>
+    <li>API 키는 가계부 파일에 넣지 않습니다. 이 기기에 저장하고, 같은 계정의 다른 기기와 맞추기 위해 이용자의 드라이브에 있는 AI 설정 파일에만 저장합니다.</li>
+  </ul>
+
+  <h2>4. 이 기기에 저장하는 정보</h2>
+  <p>앱은 브라우저 저장소(localStorage·sessionStorage·IndexedDB·캐시)에 다음을 둡니다. 운영자에게 보내지 않습니다.</p>
+  <ul>
+    <li>로그인 정보(접근 토큰)</li>
+    <li>연결 없이 열기 위한 가계부 사본(계정별), 아직 드라이브에 저장하지 못한 변경(다음에 연결되면 저장)</li>
+    <li>AI API 키와 AI 설정, 쓰다 남은 AI 입력 글</li>
+    <li>기기별 설정 — 이 기기 사용자, 저장한 필터, 닫은 알림, 기억한 가져오기 양식, 카드 문자의 결제수단 기억 등</li>
+    <li>안드로이드에서 공유로 받은 사진·글(앱이 꺼내 쓸 때까지 잠시)</li>
+    <li>오류 기록(최근 20건) — 오류 메시지·위치·시각만 남기고 이메일·긴 숫자·키처럼 보이는 값은 가립니다. '문제 알리기'에서 이용자가 읽어 보고 직접 보낼 때만 쓰입니다.</li>
+  </ul>
+  <p>
+    로그아웃하면 로그인 정보, 가계부 사본, 저장하지 못한 변경, 쓰다 남은 AI 입력, 공유로 받은 것을 지우고 AI 키는 지울지 묻습니다.
+    나머지(기기별 설정, 오류 기록)는 브라우저의 사이트 데이터 삭제로 지울 수 있고, 오류 기록은 '문제 알리기'에서도 지울 수 있습니다.
+    로그인 과정에 필요한 쿠키 외에 광고·추적용 쿠키는 쓰지 않습니다.
+  </p>
+
+  <h2>5. 앱 파일 제공(호스팅)</h2>
+  <p>
+    앱 화면 파일은 호스팅 업체 Vercel을 통해 제공됩니다. 앱을 열 때 Vercel 서버에 일반적인 접속 기록(IP 주소, 브라우저 정보, 요청 시각 등)이 남을 수 있으며,
+    운영자는 이를 따로 모으거나 이용자를 분석하는 데 쓰지 않습니다.
+  </p>
+
+  <h2>6. 이용자가 직접 보낸 문의와 '문제 알리기'</h2>
+  <ul>
+    <li>
+      <strong>받는 것:</strong> 이용자가 메일·메신저로 직접 보낸 내용 — 적은 글, 보낸 사람의 메일 주소·메신저 이름, 그리고 '문제 알리기' 글을 보냈다면
+      그 안의 앱 버전, 화면 방식(홈 화면 앱인지), 저장소 종류, 브라우저 정보(휴대폰 기종이 들어 있을 수 있음), 오류 기록.
+      '문제 알리기' 글은 보내기 전에 화면에서 모두 볼 수 있고, 복사한 뒤 지우고 보낼 수 있습니다.
+    </li>
+    <li><strong>목적:</strong> 문의에 답하고 문제를 찾아 고치는 데에만 씁니다.</li>
+    <li><strong>보유 기간:</strong> 답변과 문제 해결이 끝나면 지체 없이 지우며, 늦어도 받은 날부터 1년 안에 지웁니다.</li>
+  </ul>
+
+  <h2>7. 제3자 제공과 처리 위탁</h2>
+  <p>
+    운영자는 이용자의 개인정보를 제3자에게 제공하지 않고, 개인정보 처리를 위탁하지 않습니다.
+    2·3의 전송은 이용자가 고른 서비스로 이용자의 계정과 키를 써서 이용자의 기기에서 직접 보내는 것입니다.
+    앱 파일 제공을 위해 Vercel을 쓰며, 그 과정에서 5항의 접속 기록이 남을 수 있습니다.
+  </p>
+
+  <h2>8. 보유 기간과 파기</h2>
+  <ul>
+    <li>운영자가 보관하는 정보는 6항의 문의·문제 알리기 내용뿐이며, 6항의 기간에 따라 지웁니다.</li>
+    <li>
+      드라이브의 가계부와 백업은 이용자가 지울 때까지 남습니다. 모두 지우려면 OneDrive의 <code>Apps/financial-ledger</code> 폴더
+      또는 Google Drive의 <code>financial-ledger</code> 폴더를 지우면 됩니다.
+    </li>
+    <li>이 기기의 정보는 4항의 방법으로 지웁니다.</li>
+  </ul>
+
+  <h2>9. 이용자의 권리</h2>
+  <ul>
+    <li>가계부는 이용자의 드라이브에 있어 언제든 보고, 내려받고(설정 › 데이터 › 내보내기), 고치고, 지울 수 있습니다.</li>
+    <li>
+      앱에 준 접근 허락은 <a href="https://account.live.com/consent/Manage" target="_blank" rel="noopener noreferrer">Microsoft 계정</a>
+      또는 <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer">Google 계정</a>의 연결된 앱 관리에서 언제든 취소할 수 있습니다.
+    </li>
+  </ul>
+
+  <h2>10. 안전성 확보 조치</h2>
+  <ul>
+    <li>모든 통신은 암호화된 연결(HTTPS)로 합니다.</li>
+    <li>가계부와 API 키는 운영자 서버를 거치지 않습니다.</li>
+    <li>Google Drive 권한은 이 앱이 만든 파일로 한정합니다.</li>
+    <li>오류 기록은 이 기기에만 두고, 개인 정보처럼 보이는 값은 가립니다.</li>
+  </ul>
+
+  <h2>11. 문의와 권익 침해 구제</h2>
+  <ul>
+    <li>운영: 지금 가계부</li>
+    <li>문의: 문의 창구를 준비하고 있습니다. 정해지면 이 페이지에 알립니다.</li>
+  </ul>
+  <p>개인정보 침해에 대한 신고·상담은 아래 기관에 할 수 있습니다.</p>
+  <ul>
+    <li>개인정보침해 신고센터 — 국번 없이 118, <a href="https://privacy.kisa.or.kr" target="_blank" rel="noopener noreferrer">privacy.kisa.or.kr</a></li>
+    <li>개인정보 분쟁조정위원회 — 1833-6972, <a href="https://www.kopico.go.kr" target="_blank" rel="noopener noreferrer">www.kopico.go.kr</a></li>
+    <li>대검찰청 — 국번 없이 1301, <a href="https://www.spo.go.kr" target="_blank" rel="noopener noreferrer">www.spo.go.kr</a></li>
+    <li>경찰청 — 국번 없이 182, <a href="https://ecrm.police.go.kr" target="_blank" rel="noopener noreferrer">ecrm.police.go.kr</a></li>
+  </ul>
+
+  <h2>12. 처리방침의 변경</h2>
+  <p>이 방침을 바꾸면 바뀐 내용과 시행일을 시행 전에 이 페이지에 알립니다.</p>
+
+  <footer>
+    <a href="/terms.html">이용약관</a> · <a href="/">지금 가계부로</a>
+  </footer>
+</main>
+</body>
+</html>

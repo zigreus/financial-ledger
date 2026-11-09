@@ -16,10 +16,11 @@ const LOADING_CLOSE_MS = 3000;    // 창을 이만큼 기다려도 안 열리면
  *    창(모달) 화면이면(onClose를 받음) 창으로 보이고 '닫기'도 둔다. 한 번 실패한 화면을 다시 열면 바로 다시 받아 본다.
  *
  * load: () => import('...') — 모듈의 default가 화면 컴포넌트
+ * options.inlineRetry: inline에서 다시 시도도 실패했을 때 덧붙이는 문구(입력할 것이 없는 곳이면 그에 맞게)
  * options.inline: 다른 화면 안에 들어가는 부분(예: 입력 창의 AI 입력)이면 실패할 때 보일 짧은 문구 —
  *   '새로 고침'을 두지 않는다(누르면 그 화면에 입력하던 것이 사라진다)
  */
-export function lazyScreen(load, { inline = '' } = {}) {
+export function lazyScreen(load, { inline = '', inlineRetry = '계속 안 되면 입력을 마친 뒤 앱을 새로 고쳐 주세요.' } = {}) {
   let loaded = null;        // 불러온 화면 컴포넌트
   let pending = null;       // 불러오는 중인 약속 — 실패하면 비워 다음에 다시 시도한다
   let failedAt = 0;         // 마지막으로 불러오지 못한 시각
@@ -66,7 +67,7 @@ export function lazyScreen(load, { inline = '' } = {}) {
       return (
         <div className="screen-load-failed screen-load-failed--inline" role="alert">
           <p>{inline}</p>
-          {state === 'failed' && <p>계속 안 되면 입력을 마친 뒤 앱을 새로 고쳐 주세요.</p>}
+          {state === 'failed' && <p>{inlineRetry}</p>}
           <div className="screen-load-failed-actions">{retryButton}</div>
         </div>
       );

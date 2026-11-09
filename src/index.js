@@ -5,9 +5,14 @@ import App from './components/App/App';
 import { MsalProvider } from '@azure/msal-react';
 import { msalInstance } from './auth/msalConfig';
 import { registerServiceWorker } from './services/serviceWorker';
+import { installErrorLog } from './services/errorLog';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import {
   completeGoogleRedirect, rememberGoogleResult, shouldReconnectAtStart, startGoogleLogin,
 } from './auth/googleAuth';
+
+// 처리하지 못한 오류를 이 기기에만 남긴다 — 설정 › 정보의 '문제 알리기'에서 사용자가 보고 직접 보낸다(I-038)
+installErrorLog();
 
 // 연결 없이 열기·공유 받기 (I-024)
 registerServiceWorker();
@@ -41,9 +46,11 @@ prepareGoogle()
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(
       <React.StrictMode>
-        <MsalProvider instance={msalInstance}>
-          <App />
-        </MsalProvider>
+        <ErrorBoundary>
+          <MsalProvider instance={msalInstance}>
+            <App />
+          </MsalProvider>
+        </ErrorBoundary>
       </React.StrictMode>
     );
   });

@@ -63,3 +63,10 @@
   border-radius: 4px;
   font-family: monospace;
 }
+
+/* 앱 소개·처리방침·약관 (I-038) — 로그인하지 않고도 무슨 앱인지, 데이터가 어디에 있는지 보이게(Google 브랜드 확인에도 필요) */
+.login-intro { margin: -12px 0 24px; padding: 0; list-style: none; text-align: left; display: flex; flex-direction: column; gap: 6px; }
+.login-intro li { position: relative; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--text); }
+.login-intro li::before { content: '✓'; position: absolute; left: 0; color: var(--primary); font-weight: 700; }
+.login-links { margin-top: 20px; display: flex; justify-content: center; gap: 16px; font-size: 12px; }
+.login-links a { color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px; }

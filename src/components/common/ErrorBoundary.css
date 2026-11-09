@@ -1,0 +1,7 @@
+/* 화면 오류 (I-038) — 화면을 그리다 멈췄을 때 흰 화면 대신 */
+.crash-page { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; background: var(--bg); }
+.crash-card { width: 100%; max-width: 480px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px 20px; }
+.crash-title { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
+.crash-desc { margin: 0 0 14px; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.crash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.crash-actions > * { flex: 1 1 140px; }

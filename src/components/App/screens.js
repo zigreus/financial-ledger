@@ -1,5 +1,6 @@
 import { lazyScreen } from '../common/lazyScreen';
 import AIEntry from '../AIEntry/lazyAIEntry';
+import ProblemReport from '../common/lazyProblemReport';
 
 /**
  * 열 때 불러오는 화면들 (I-033, ROADMAP Q-3) — 첫 화면(거래내역)과 입력 창은 앱과 함께 불러오고,
@@ -16,7 +17,8 @@ export const CardStatementModal = lazyScreen(() => import('../CardStatement/Card
 export const Onboarding = lazyScreen(() => import('../Onboarding/Onboarding'));
 
 // 입력 창의 AI 입력(TransactionForm이 AIEntry/lazyAIEntry로 쓴다)을 먼저 — 가장 자주 여는 곳
-const SCREENS = [AIEntry, SummaryView, CalendarView, AccountManagement, SettingsView, ImportModal, CardStatementModal, Onboarding];
+// 문제 알리기(I-038)는 가계부를 불러오지 못했거나 화면이 멈췄을 때 쓴다 — 그때 연결이 없어도 열리게 함께 불러 둔다
+const SCREENS = [AIEntry, SummaryView, CalendarView, AccountManagement, SettingsView, ImportModal, CardStatementModal, Onboarding, ProblemReport];
 
 /** 모든 화면을 미리 불러 둔다 — 반환: 모두 불러왔는지 */
 export function preloadScreens() {

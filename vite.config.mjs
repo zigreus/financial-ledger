@@ -1,5 +1,23 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/**
+ * 앱 버전 (I-038) — 설정 › 정보와 '문제 알리기'에 보인다. 빌드한 시각(한국 시각)과 커밋 앞 7자리.
+ * Vercel은 커밋을 환경값(VERCEL_GIT_COMMIT_SHA)으로 주고, 내 PC에서는 git에 묻는다(없으면 시각만).
+ */
+function appVersion() {
+  const built = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date());
+  let commit = process.env.VERCEL_GIT_COMMIT_SHA || '';
+  if (!commit) {
+    try {
+      commit = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch { /* git이 없으면 시각만 */ }
+  }
+  return commit ? `${built} (${commit.slice(0, 7)})` : built;
+}
 
 // CRA → Vite 이전 (I-008)
 // - JSX가 들어 있는 .js 파일을 그대로 쓴다 (파일 이름을 .jsx로 바꾸지 않음)
@@ -31,8 +49,10 @@ function prefetchLazyChunks() {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react({ include: /\.(js|jsx)$/ }), prefetchLazyChunks()],
+  // 빌드에만 적는다 — 개발 서버·테스트는 'dev'(services/errorLog.js의 appVersion)
+  define: command === 'build' ? { __APP_VERSION__: JSON.stringify(appVersion()) } : {},
   esbuild: {
     loader: 'jsx',
     include: /src\/.*\.jsx?$/,
@@ -71,4 +91,4 @@ export default defineConfig({
     include: ['src/**/*.test.js'],
     css: false,
   },
-});
+}));

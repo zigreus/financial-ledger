@@ -81,6 +81,15 @@ test('로그인하지 않았으면 로그인 화면 — Google 버튼이 보인�
   expect(shared.storage).toBeNull();
 });
 
+test('로그인 화면에 앱 소개와 개인정보처리방침·이용약관 링크 — 로그인하지 않고도 보인다 (I-038)', async () => {
+  await show();
+  const intro = container.querySelector('.login-intro').textContent;
+  expect(intro).toContain('운영자 서버에는 저장하지 않아요');
+  expect(intro).toContain('사용 기록이나 오류를 운영자에게 자동으로 보내지 않아요');
+  const links = [...container.querySelectorAll('.login-links a')].map(a => [a.textContent, a.getAttribute('href')]);
+  expect(links).toEqual([['개인정보처리방침', '/privacy.html'], ['이용약관', '/terms.html']]);
+});
+
 test('Google 세션이 있으면 Google Drive 저장소로 연다 — 계정 키는 google:<sub>, 머리글에 이름', async () => {
   session(60 * 60 * 1000);
   await show();
