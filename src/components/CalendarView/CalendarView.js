@@ -16,10 +16,12 @@ import {
   getSetting,
   getCalendarEventLinkCounts,
   withTransaction,
+  isTripSplitEnabled,
 } from '../../services/dbManager';
 import { parseRate, parseForeignAmount, formatAmount } from '../../services/formulaEvaluator';
 import { getEventWallets } from '../../services/dbManager';
 import TripCashModal from '../TripCash/TripCashModal';
+import TripSplitModal from '../TripSplit/TripSplitModal';
 import ModalOverlay from '../common/ModalOverlay';
 import AmountInput from '../common/AmountInput';
 import { categoryColor, categoryColorAlpha } from '../common/categoryColor';
@@ -109,7 +111,7 @@ const EMPTY_FORM = {
   countries: [], // [{id, country, currency}]
 };
 
-export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, onOpenCash, eventTypes = [], eventTypeMap = {} }) {
+export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete, onCancel, onOpenCash, onOpenSplit, eventTypes = [], eventTypeMap = {} }) {
   const [form, setForm] = useState(() => {
     if (editingEvent) {
       return {
@@ -219,12 +221,15 @@ export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete,
   async function handleDelete() {
     if (!editingEvent) return;
     // 지우면 함께 바뀌는 범위를 확인 문구에 그대로 보여준다 (deleteCalendarEvent 동작과 일치)
-    const { txCount, flowCount, accountFlowCount } = getCalendarEventLinkCounts(db, editingEvent.id);
+    const { txCount, flowCount, accountFlowCount, splitPeople, splitPayments, splitTxSettings } = getCalendarEventLinkCounts(db, editingEvent.id);
     const lines = [`"${editingEvent.title}" 일정을 삭제할까요?`];
     if (txCount > 0) lines.push(`· 연결된 거래 ${txCount}건은 지워지지 않고, 일정 연결만 해제됩니다.`);
     if (flowCount > 0) {
       lines.push(`· 이 일정의 환전·정산 기록 ${flowCount}건이 함께 삭제됩니다.`);
       if (accountFlowCount > 0) lines.push(`  (그중 계좌 입출금으로 기록된 ${accountFlowCount}건은 계좌 내역에 그대로 남습니다.)`);
+    }
+    if (splitPeople > 0 || splitPayments > 0 || splitTxSettings > 0) {
+      lines.push(`· 일행 정산 기록(일행 ${splitPeople}명, 일행이 낸 돈 ${splitPayments}건, 거래별 나눔 설정 ${splitTxSettings}건)이 함께 삭제됩니다.`);
     }
     if (!window.confirm(lines.join('\n'))) return;
     try {
@@ -303,6 +308,13 @@ export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete,
             <button className="cv-form-cash-btn" onClick={() => onOpenCash(editingEvent)}>
               <span className="cv-form-cash-btn-icon">💰</span>
               <span className="cv-form-cash-btn-text">현금 관리 — 환전·잔여 현금·정산</span>
+              <span className="cv-form-cash-btn-arrow">›</span>
+            </button>
+          )}
+          {eventTypeMap[form.event_type]?.is_trip_type === 1 && editingEvent && onOpenSplit && (
+            <button className="cv-form-cash-btn" onClick={() => onOpenSplit(editingEvent)}>
+              <span className="cv-form-cash-btn-icon">👥</span>
+              <span className="cv-form-cash-btn-text">일행 정산 — 누가 냈나·나눠 내기</span>
               <span className="cv-form-cash-btn-arrow">›</span>
             </button>
           )}
@@ -391,6 +403,7 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
   const [formInitialDate, setFormInitialDate] = useState('');
   const [selectedTx, setSelectedTx] = useState(null);
   const [cashEvent, setCashEvent] = useState(null);
+  const [splitEvent, setSplitEvent] = useState(null);   // 여행 정산(I-030)
 
   useEffect(() => {
     if (goTodayKey > 0) {
@@ -414,6 +427,8 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
   // db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
   // db 내용이 바뀔 때마다(dataVersion) 새 참조가 되는 스냅샷 — db를 읽는 memo·effect는 live에 의존한다 (B-014, I-010)
   const live = useDbSnapshot(db, dataVersion);
+  // 여행 정산(일행 N빵, I-030) — 켰을 때만 여행 일정에 '일행 정산'이 보인다
+  const splitEnabled = useMemo(() => isTripSplitEnabled(live.db), [live]);
   const eventTypes = useMemo(() => getCalendarEventTypes(live.db), [live]);
   const eventTypeMap = useMemo(
     () => Object.fromEntries(eventTypes.map(t => [t.value, t])),
@@ -748,6 +763,14 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
                             title="현금 관리"
                           >💰</button>
                         )}
+                        {isTrip && splitEnabled && (
+                          <button
+                            className="cv-bs-event-cash-btn"
+                            onClick={e => { e.stopPropagation(); setSelectedDate(null); setSplitEvent(ev); }}
+                            title="일행 정산"
+                            aria-label={`${ev.title} 일행 정산`}
+                          >👥</button>
+                        )}
                         <span className="cv-bs-event-arrow">›</span>
                       </div>
                     );
@@ -843,8 +866,22 @@ export default function CalendarView({ db, dataVersion = 0, goTodayKey, onChange
           onDelete={handleFormDelete}
           onCancel={handleFormCancel}
           onOpenCash={ev => { setInternalEventForm(false); setEditingEvent(null); if (showEventForm && onCloseEventForm) onCloseEventForm(); setCashEvent(ev); }}
+          onOpenSplit={splitEnabled
+            ? ev => { setInternalEventForm(false); setEditingEvent(null); if (showEventForm && onCloseEventForm) onCloseEventForm(); setSplitEvent(ev); }
+            : null}
           eventTypes={eventTypes}
           eventTypeMap={eventTypeMap}
+        />
+      )}
+
+      {/* ── 여행 정산 — 일행 N빵 (I-030) ── */}
+      {splitEvent && splitEnabled && (
+        <TripSplitModal
+          db={db}
+          dataVersion={dataVersion}
+          event={splitEvent}
+          onClose={() => setSplitEvent(null)}
+          onChanged={onChanged}
         />
       )}
 

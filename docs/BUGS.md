@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-030
+다음 번호: B-093, I-031
 
 ## 요약표
 
@@ -137,6 +137,7 @@
 | I-027 | ✅ | - | 정기지출 | 구독이 정기지출에 섞여 한 달·한 해에 구독으로 얼마 나가는지, 값이 오른 구독이 무엇인지 알 수 없음 (ROADMAP C-8) |
 | I-028 | ✅ | - | 요약 | 한 달이 끝나도 평소보다 무엇에 더 썼는지·큰 지출·무지출일·예산 결과를 한눈에 돌아볼 곳이 없음 (ROADMAP C-9) |
 | I-029 | ✅ | - | 요약 | 연말정산 때 한 해 신용카드·체크카드·현금영수증 사용액과 의료비·교육비 등을 따로 더해 봐야 함 (ROADMAP C-10) |
+| I-030 | ✅ | - | 일정·여행 | 일행과 함께 간 여행에서 누가 냈고 누구 몫인지 정산하려면 따로 계산해야 함 (ROADMAP C-11) |
 
 
 ## 상세
@@ -1200,3 +1201,11 @@
 - 원인: 결제수단에 유형이 없고, 카테고리를 연말정산 항목으로 묶는 곳이 없다.
 - 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 결제수단 유형(payment_methods.tax_type)과 카테고리·세부카테고리 항목(budget_categories·sub_categories.tax_tag, 세부가 먼저·'-'는 해당 없음, 행에 붙어 이름 변경·삭제를 따라감)을 두고, 요약 '연말정산' 탭에 해마다 유형별·항목별 결제액(할인 전, 환불 뺌, 외화 결제는 따로, 환차손익 조정·오늘 이후 미리 등록된 거래 제외)을 보이며 공제액은 계산하지 않는다(ROADMAP C-10, 사용자 요청).
 - 파일: src/services/db/taxSummary.js(새), src/services/db/schema.js·common.js(hasForeignAmount), src/services/cardStatement.js, src/services/dbManager.js, src/components/SummaryView/TaxSummary.js·TaxSummary.css(새)·SummaryView.js, src/components/SettingsView/sections/TaxSummarySettings.js(새)·BudgetSection.js, src/components/App/App.js, src/services/__tests__/taxSummary.test.js, src/components/__tests__/TaxSummary.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-030 일행과 함께 간 여행에서 누가 냈고 누구 몫인지 정산하려면 따로 계산해야 함 (ROADMAP C-11)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 일정·여행
+- 문제: 친구·친척과 여행하면 가계부에 적은 우리 지출과 일행이 낸 돈을 몫대로 나눠 "누가 누구에게 얼마"를 손으로 계산하고 메신저로 알려야 한다.
+- 원인: 여행 일정에 일행·낸 사람·나눌 사람을 적는 곳이 없다.
+- 해결: 설정(캘린더)에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 여행 일정에 '일행 정산'을 두어, 일행(우리 포함, 몫 수)과 일행이 낸 돈(trip_participants·trip_split_entries, 이름으로 참조)을 적고, 가계부의 여행 거래(순지출, 환차손익 조정 제외)는 우리가 낸 돈으로 기본 모두가 나누되 거래마다 나눌 사람·빼기를 고르게 하며, 적은 건수의 정산표와 공유용 글을 만들고, 병합으로 엇갈린 이름은 나누지 않고 알리며, 일정·거래를 지우면 함께 정리한다(ROADMAP C-11, 사용자 요청).
+- 파일: src/services/db/tripSplit.js(새), src/services/db/schema.js·calendar.js·transactions.js, src/services/dbManager.js, src/components/TripSplit/TripSplitModal.js·TripSplitModal.css(새), src/components/CalendarView/CalendarView.js, src/components/SettingsView/sections/CalendarSection.js, src/services/__tests__/tripSplit.test.js, src/components/__tests__/TripSplit.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

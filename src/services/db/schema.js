@@ -248,6 +248,31 @@ CREATE TABLE IF NOT EXISTS event_cash_flows (
   created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 여행 정산(일행 N빵, I-030): 일행(우리 포함)과 몫 수, 나눌 지출(일행이 낸 돈·가계부 거래의 나눔 설정)
+CREATE TABLE IF NOT EXISTS trip_participants (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id   INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  is_me      INTEGER NOT NULL DEFAULT 0,
+  weight     INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(event_id, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_participants_me ON trip_participants(event_id) WHERE is_me = 1;
+
+CREATE TABLE IF NOT EXISTS trip_split_entries (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id       INTEGER NOT NULL,
+  transaction_id INTEGER DEFAULT NULL,
+  payer          TEXT NOT NULL DEFAULT '',
+  title          TEXT NOT NULL DEFAULT '',
+  date           TEXT NOT NULL DEFAULT '',
+  amount         INTEGER NOT NULL DEFAULT 0,
+  shared_by      TEXT NOT NULL DEFAULT '',
+  excluded       INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_split_entries_tx ON trip_split_entries(event_id, transaction_id) WHERE transaction_id IS NOT NULL;
+
 `;
 
 
@@ -266,7 +291,7 @@ export async function initSQL() {
 // ── 스키마 버전 · 마이그레이션 ─────────────────────────────────────
 // 새 컬럼은 COLUMN_MIGRATIONS에 한 줄 추가한다. 새 테이블은 SCHEMA에 CREATE TABLE IF NOT EXISTS로 추가한다.
 // 실제로 무언가 바뀌었을 때만 didMigrate가 참이 되어야 한다 — 참이면 로드 직후 OneDrive에 다시 저장한다.
-export const SCHEMA_VERSION = 7; // 4: category_budgets (I-025), 5: accounts.count_income (I-026), 6: 구독 표시 (I-027), 7: 연말정산 분류 (I-029)
+export const SCHEMA_VERSION = 8; // 4: category_budgets (I-025), 5: accounts.count_income (I-026), 6: 구독 표시 (I-027), 7: 연말정산 분류 (I-029), 8: 여행 정산 (I-030)
 
 const COLUMN_MIGRATIONS = [
   // [테이블, 컬럼, 정의]

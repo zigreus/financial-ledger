@@ -1,6 +1,7 @@
 // 캘린더 일정 — 일정, 일정의 국가·환율, 일정 유형.
 
 import { withTransaction } from './common';
+import { deleteTripSplitData } from './tripSplit';
 
 // ── 캘린더 이벤트 ──────────────────────────────────────────────────
 
@@ -109,13 +110,19 @@ export function updateCalendarEvent(db, id, ev) {
  * 일정을 지우면 함께 바뀌는 것 — 삭제 확인 문구용.
  *  txCount: 일정 연결만 풀리고 남는 거래 수
  *  flowCount: 같이 지워지는 환전·정산 기록 수 (accountFlowCount: 그중 계좌 입출금으로도 기록된 것)
+ *  splitPeople·splitPayments: 같이 지워지는 여행 정산의 일행(우리 빼고)·일행이 낸 돈 기록 수 (I-030)
  */
 export function getCalendarEventLinkCounts(db, id) {
-  if (!db || !id) return { txCount: 0, flowCount: 0, accountFlowCount: 0 };
+  if (!db || !id) return { txCount: 0, flowCount: 0, accountFlowCount: 0, splitPeople: 0, splitPayments: 0, splitTxSettings: 0 };
   const one = (sql) => Number(db.exec(sql, [id])[0]?.values[0][0]) || 0;
   return {
     txCount: one('SELECT COUNT(*) FROM transactions WHERE event_id = ?'),
     flowCount: one('SELECT COUNT(*) FROM event_cash_flows WHERE event_id = ?'),
+    splitPeople: one('SELECT COUNT(*) FROM trip_participants WHERE event_id = ? AND is_me = 0'),
+    splitPayments: one('SELECT COUNT(*) FROM trip_split_entries WHERE event_id = ? AND transaction_id IS NULL'),
+    // 거래별 나눔 설정 — 지금 이 일정에 연결된 거래의 것만 센다(지웠거나 다른 일정으로 옮긴 거래의 설정은 남아도 쓰이지 않는다)
+    splitTxSettings: one(`SELECT COUNT(*) FROM trip_split_entries e JOIN transactions t ON t.id = e.transaction_id AND t.event_id = e.event_id
+      WHERE e.event_id = ?`),
     // addEventCashFlow는 계좌를 지정하고 원화 금액이 있을 때만 계좌 내역을 만든다
     accountFlowCount: one(`SELECT COUNT(*) FROM event_cash_flows
       WHERE event_id = ? AND account_id IS NOT NULL AND COALESCE(krw_cost, 0) != 0`),
@@ -134,6 +141,8 @@ export function deleteCalendarEvent(db, id) {
             WHERE event_id != ? AND linked_flow_id IN (SELECT id FROM event_cash_flows WHERE event_id = ?)`, [id, id]);
     db.run('DELETE FROM event_cash_flows WHERE event_id = ?', [id]);
     db.run('UPDATE transactions SET event_id = NULL WHERE event_id = ?', [id]);
+    // 여행 정산(I-030)의 일행·나눌 지출도 함께 지운다
+    deleteTripSplitData(db, id);
     db.run('DELETE FROM calendar_events WHERE id = ?', [id]);
   });
 }

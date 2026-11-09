@@ -126,7 +126,11 @@ export function updateTransaction(db, id, tx) {
 }
 
 export function deleteTransaction(db, id) {
-  db.run('DELETE FROM transactions WHERE id = ?', [id]);
+  withTransaction(db, () => {
+    db.run('DELETE FROM transactions WHERE id = ?', [id]);
+    // 여행 정산(I-030)의 이 거래 나눔 설정도 지운다 — 남아도 쓰이지는 않지만 일정 삭제 확인창 수에 섞이지 않게
+    db.run('DELETE FROM trip_split_entries WHERE transaction_id = ?', [id]);
+  });
 }
 
 // 바로 넣은 거래를 알아보는 칸 — 되돌릴 때 이 값이 모두 같아야 지운다

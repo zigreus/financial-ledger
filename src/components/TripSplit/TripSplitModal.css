@@ -1,0 +1,83 @@
+/* 여행 정산 — 일행 N빵 (I-030) */
+.ts-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 1200;
+  display: flex; align-items: flex-end; justify-content: center; overscroll-behavior: contain;
+}
+.ts-modal {
+  background: var(--surface); width: 100%; max-width: 520px; max-height: 92vh;
+  border-radius: var(--radius) var(--radius) 0 0; display: flex; flex-direction: column;
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+@media (min-width: 640px) {
+  .ts-overlay { align-items: center; }
+  .ts-modal { border-radius: var(--radius); }
+}
+.ts-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.ts-header-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ts-title { font-size: 16px; font-weight: 700; }
+.ts-subtitle { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-close { border: none; background: none; font-size: 18px; color: var(--text-muted); cursor: pointer; width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0; }
+.ts-body { padding: 14px 16px 18px; overflow-y: auto; overscroll-behavior: contain; flex: 1; display: flex; flex-direction: column; gap: 14px; }
+
+.ts-result { padding: 12px 14px; border-radius: 10px; background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: #fff; display: flex; flex-direction: column; gap: 6px; }
+.ts-result-total { font-size: 13px; }
+.ts-result-total strong { font-size: 18px; }
+.ts-transfers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.ts-transfers span { font-weight: 700; }
+.ts-result .ts-muted { color: rgba(255, 255, 255, .85); }
+.ts-result .ts-btn { background: rgba(255, 255, 255, .18); color: #fff; border-color: rgba(255, 255, 255, .4); }
+
+.ts-muted { font-size: 12px; color: var(--text-muted); }
+.ts-warn { padding: 8px 10px; border-radius: 8px; background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.ts-item-warn { font-size: 11px; color: #B45309; }
+.ts-unknown { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ts-unknown select { min-height: 36px; max-width: 45%; }
+.ts-form-title { font-size: 13px; font-weight: 700; }
+.ts-error { padding: 8px 10px; border-radius: 8px; background: #FEF2F2; color: var(--danger); font-size: 13px; }
+.ts-section { display: flex; flex-direction: column; gap: 6px; }
+.ts-section-title { font-size: 14px; font-weight: 700; }
+.ts-section-title small { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.ts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.ts-person { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.ts-person-name { border: none; background: none; padding: 4px 0; min-height: 32px; font-size: 14px; font-weight: 600; color: var(--text); text-decoration: underline dotted; cursor: pointer; }
+.ts-rename { display: flex; gap: 6px; align-items: center; flex: 1 1 100%; }
+.ts-weight { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.ts-weight button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 15px; }
+.ts-weight button:disabled { opacity: .4; cursor: default; }
+.ts-balance { margin-left: auto; text-align: right; font-size: 13px; font-weight: 700; display: flex; flex-direction: column; }
+.ts-balance small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.ts-balance--plus { color: #16A34A; }
+.ts-balance--minus { color: #DC2626; }
+.ts-remove { border: none; background: none; color: var(--text-muted); width: 32px; height: 32px; cursor: pointer; font-size: 14px; }
+
+.ts-add, .ts-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ts-input { flex: 1; min-width: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--surface); color: var(--text); }
+.ts-btn { min-height: 36px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13px; cursor: pointer; }
+.ts-btn--primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.ts-btn:disabled { opacity: .5; cursor: default; }
+.ts-add-payment { align-self: flex-start; }
+
+.ts-item { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.ts-item--off { opacity: .6; }
+.ts-item-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ts-item-title { font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.ts-item-title small { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+.ts-item-amount { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.ts-item-sub { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.ts-link { border: none; background: none; padding: 4px 0; min-height: 28px; color: var(--primary); font-size: 12px; text-decoration: underline; cursor: pointer; }
+.ts-link:disabled { color: var(--text-muted); text-decoration: none; cursor: default; }
+.ts-link--danger { color: var(--danger); }
+
+.ts-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.ts-pick { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+.ts-pick--on { border-color: var(--primary); color: var(--primary); background: #EFF6FF; }
+.ts-pick input { margin: 0; }
+
+.ts-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.ts-form-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ts-form-row > label, .ts-form-row > span { width: 64px; flex-shrink: 0; color: var(--text-muted); }
+.ts-form-row--top { align-items: flex-start; }
+.ts-form-row select { flex: 1; min-height: 36px; }
+.ts-preview summary { font-size: 12px; color: var(--text-muted); cursor: pointer; }
+.ts-preview pre { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding: 8px 10px; border-radius: 8px; margin: 6px 0 0; }

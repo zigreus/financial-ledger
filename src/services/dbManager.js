@@ -20,4 +20,5 @@ export * from './db/monthlyBalance';
 export * from './db/subscriptions';
 export * from './db/monthlyReport';
 export * from './db/taxSummary';
+export * from './db/tripSplit';
 export { withTransaction, hasForeignAmount } from './db/common';
