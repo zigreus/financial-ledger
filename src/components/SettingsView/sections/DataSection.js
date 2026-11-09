@@ -14,8 +14,8 @@ import { AddItemRow } from '../MasterItemList';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
 
 const blockStyle = { marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' };
-const titleStyle = { fontSize: '14px', fontWeight: '600', marginBottom: '6px' };
-const descStyle = { fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 };
+const titleStyle = { fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '6px' };
+const descStyle = { fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 };
 
 /** 설정 › 데이터 — 가족 구성원, 내보내기, 백업·되돌리기, 가계부 파일로 바꾸기 */
 export default function DataSection({ db, dataVersion, onChanged, setError, backup }) {
@@ -279,7 +279,7 @@ function BackupBlock({ backup, setError }) {
       {loading ? (
         <div className="data-muted">백업 목록을 불러오는 중…</div>
       ) : loadError ? (
-        <div className="error-msg" style={{ fontSize: '13px' }}>백업 목록을 불러오지 못했습니다: {loadError}</div>
+        <div className="error-msg" style={{ fontSize: 'calc(13px * var(--fs))' }}>백업 목록을 불러오지 못했습니다: {loadError}</div>
       ) : list.length === 0 ? (
         <div className="data-muted">아직 백업이 없습니다. 가계부를 여는 날마다 자동으로 만들어지고, '지금 백업'으로 바로 만들 수도 있습니다.</div>
       ) : (
@@ -378,7 +378,7 @@ function ReplaceBlock({ db, dataVersion, backup, setError }) {
       </div>
       <input type="file" accept=".db,.sqlite,application/octet-stream" onChange={choose} disabled={busy || checking} className="data-file-input" aria-label="가계부 파일 고르기" />
       {checking && <div className="data-muted">파일을 살펴보는 중…</div>}
-      {fileError && <div className="error-msg" style={{ fontSize: '13px' }}>{fileError}</div>}
+      {fileError && <div className="error-msg" style={{ fontSize: 'calc(13px * var(--fs))' }}>{fileError}</div>}
       {picked && (
         <div className="data-replace-compare">
           <div><b>고른 파일</b><span>{summaryText(picked.summary)}</span></div>

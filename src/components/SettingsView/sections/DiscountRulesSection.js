@@ -64,7 +64,7 @@ export default function DiscountRulesSection({ db, dataVersion, onChanged, setEr
       </div>
 
       {discountRules.length === 0 ? (
-        <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px', fontSize: '13px' }}>등록된 할인규칙이 없습니다.</div>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px', fontSize: 'calc(13px * var(--fs))' }}>등록된 할인규칙이 없습니다.</div>
       ) : (
         discountRules.map(rule => {
           const scopeParts = [];

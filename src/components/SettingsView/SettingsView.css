@@ -20,7 +20,7 @@
   border-bottom: 2px solid transparent;
   background: none;
   border: none;
-  font-size: 14px;
+  font-size: calc(14px * min(var(--fs), 1));
   font-weight: 500;
   cursor: pointer;
   transition: color .2s, border-color .2s;
@@ -31,7 +31,7 @@
 }
 
 .settings-tabs .tab.active {
-  color: var(--primary);
+  color: var(--primary-text);
   border-bottom-color: var(--primary);
   font-weight: 600; /* 예전에는 요약 화면 CSS의 '.tab.active'가 덮어써 굵게 보였다 — 그 모양 그대로 */
 }
@@ -54,7 +54,7 @@
 }
 
 .settings-item-name {
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   font-weight: 500;
   flex: 1;
 }
@@ -107,7 +107,7 @@
 .btn-eye-toggle:hover {
   background: var(--bg);
   border-color: var(--primary);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 .btn-eye-toggle--hidden {
   color: var(--text-muted);
@@ -116,7 +116,7 @@
 }
 .btn-eye-toggle--hidden:hover {
   opacity: 1;
-  color: var(--primary);
+  color: var(--primary-text);
   border-color: var(--primary);
   border-style: solid;
 }
@@ -158,67 +158,67 @@
 .cb-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .cb-settings-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .cb-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
-.cb-settings-name { display: flex; align-items: center; gap: 2px; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.cb-settings-name { display: flex; align-items: center; gap: 2px; font-size: calc(13px * var(--fs)); min-width: 0; overflow-wrap: anywhere; }
 .cb-settings-value { display: flex; align-items: center; gap: 6px; }
-.cb-settings-amount { font-size: 14px; font-weight: 700; color: var(--primary); white-space: nowrap; }
-.cb-settings-unset { font-size: 13px; color: var(--text-muted); }
+.cb-settings-amount { font-size: calc(14px * var(--fs)); font-weight: 700; color: var(--primary-text); white-space: nowrap; }
+.cb-settings-unset { font-size: calc(13px * var(--fs)); color: var(--text-muted); }
 .cb-settings-edit { display: flex; align-items: center; gap: 6px; flex: 1; max-width: 260px; }
-.cb-settings-note { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
+.cb-settings-note { margin-top: 10px; font-size: calc(12px * var(--fs)); color: var(--text-muted); }
 .cb-settings .cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
-.cb-settings-hidden { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #F3F4F6; color: #6B7280; font-size: 10px; font-weight: 700; }
+.cb-settings-hidden { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--c-gray-100); color: var(--c-gray-500); font-size: calc(10px * var(--fs)); font-weight: 700; }
 .cb-settings-orphans { margin-top: 12px; }
 
 /* 수입·월 수지 (I-026) */
 .mb-account-name { flex-direction: column; align-items: flex-start; gap: 0; }
-.mb-account-hint { font-size: 11px; color: var(--text-muted); }
+.mb-account-hint { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
 .mb-account-reset {
   margin-left: 4px; padding: 4px 6px; min-height: 28px; border: none; background: none;
-  color: var(--primary); font-size: 12px; text-decoration: underline; cursor: pointer;
+  color: var(--primary-text); font-size: calc(12px * var(--fs)); text-decoration: underline; cursor: pointer;
 }
-.mb-transfer-hint { color: #B45309; }
+.mb-transfer-hint { color: var(--c-amber-700); }
 
 /* 구독 모아보기 (I-027) */
 .sub-panel { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .sub-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
 .sub-totals > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg); }
-.sub-totals span { font-size: 11px; color: var(--text-muted); }
-.sub-totals strong { font-size: 14px; color: var(--primary); white-space: nowrap; }
+.sub-totals span { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
+.sub-totals strong { font-size: calc(14px * var(--fs)); color: var(--primary-text); white-space: nowrap; }
 .sub-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .sub-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
 .sub-row--changed { border-color: #F59E0B; }
 .sub-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.sub-name { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.sub-amount { font-size: 14px; font-weight: 700; color: var(--primary); white-space: nowrap; }
-.sub-per { font-size: 11px; font-weight: 400; color: var(--text-muted); }
-.sub-meta { margin-top: 2px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
-.sub-changed { margin-top: 4px; font-size: 12px; color: #B45309; overflow-wrap: anywhere; }
+.sub-name { font-size: calc(14px * var(--fs)); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.sub-amount { font-size: calc(14px * var(--fs)); font-weight: 700; color: var(--primary-text); white-space: nowrap; }
+.sub-per { font-size: calc(11px * var(--fs)); font-weight: 400; color: var(--text-muted); }
+.sub-meta { margin-top: 2px; font-size: calc(12px * var(--fs)); color: var(--text-muted); overflow-wrap: anywhere; }
+.sub-changed { margin-top: 4px; font-size: calc(12px * var(--fs)); color: var(--c-amber-700); overflow-wrap: anywhere; }
 .sub-changed-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -6px; }
-.sub-note { margin-top: 4px; font-size: 12px; color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.sub-note { margin-top: 4px; font-size: calc(12px * var(--fs)); color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; overflow-wrap: anywhere; }
 .sub-note-edit { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
 .sub-note-edit .rule-form-input { flex: 1; min-width: 0; }
-.sub-note-btn { padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+.sub-note-btn { padding: 6px 10px; font-size: calc(12px * var(--fs)); white-space: nowrap; }
 .sub-link {
   padding: 4px 6px; min-height: 28px; border: none; background: none;
-  color: var(--primary); font-size: 12px; text-decoration: underline; cursor: pointer;
+  color: var(--primary-text); font-size: calc(12px * var(--fs)); text-decoration: underline; cursor: pointer;
 }
 .sub-pick-toggle { margin-top: 8px; padding-left: 0; }
 .sub-pick-list { margin-top: 4px; }
-.sub-hint { color: #B45309; }
-.sub-badge { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: #EEF2FF; color: #4338CA; font-size: 10px; font-weight: 700; }
+.sub-hint { color: var(--c-amber-700); }
+.sub-badge { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: var(--c-indigo-50); color: var(--c-indigo-700); font-size: calc(10px * var(--fs)); font-weight: 700; }
 
 /* 설정 › 선택 기능 (I-032) */
-.features-intro { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+.features-intro { font-size: calc(12px * var(--fs)); color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
 .features-count { font-weight: 700; color: var(--text); }
 .features-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .features-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .features-row--on { border-color: var(--primary); }
 .features-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .features-text { min-width: 0; }
-.features-label { font-size: 14px; font-weight: 600; }
-.features-desc { margin-top: 2px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.features-label { font-size: calc(14px * var(--fs)); font-weight: 600; }
+.features-desc { margin-top: 2px; font-size: calc(12px * var(--fs)); color: var(--text-muted); overflow-wrap: anywhere; }
 .features-place {
   margin-top: 6px; margin-left: -6px; padding: 4px 6px; min-height: 32px; border: none; background: none;
-  color: var(--primary); font-size: 12px; text-align: left; cursor: pointer; font-family: inherit;
+  color: var(--primary-text); font-size: calc(12px * var(--fs)); text-align: left; cursor: pointer; font-family: inherit;
 }
 
 .btn-drilldown {
@@ -278,7 +278,7 @@
 }
 
 .trip-country-info {
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   color: var(--text-muted);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -292,7 +292,7 @@
   padding: 6px 10px;
   border: 1.5px solid var(--primary);
   border-radius: 8px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   font-family: inherit;
   background: var(--surface);
   color: var(--text);
@@ -311,13 +311,13 @@
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   text-align: right;
   background: var(--bg);
   color: var(--text);
 }
 .rate-unit {
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   color: var(--text-muted);
 }
 
@@ -333,7 +333,7 @@
   padding: 10px 12px;
   border: 1.5px solid var(--border);
   border-radius: 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   background: var(--bg);
   outline: none;
   font-family: inherit;
@@ -354,7 +354,7 @@
   padding: 10px 12px;
   border: 1.5px solid var(--border);
   border-radius: 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   background: var(--bg);
   font-family: inherit;
 }
@@ -364,7 +364,7 @@
   border: 1.5px solid var(--border);
   background: var(--surface);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   cursor: pointer;
   transition: border-color .2s, background .2s;
 }
@@ -376,7 +376,7 @@
 
 /* ── 결제수단 할인규칙 UI ──────────────────────────────── */
 .rule-section-info {
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   color: var(--text-muted);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -386,7 +386,7 @@
 }
 
 .rule-scope {
-  font-size: 14px;
+  font-size: calc(14px * var(--fs));
   font-weight: 500;
   color: var(--text);
   margin-right: 8px;
@@ -394,9 +394,9 @@
 
 .rule-value-badge {
   display: inline-block;
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   font-weight: 600;
-  color: var(--primary);
+  color: var(--primary-text);
   background: rgba(37, 99, 235, 0.08);
   border-radius: 10px;
   padding: 2px 8px;
@@ -404,7 +404,7 @@
 }
 
 .rule-note {
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   color: var(--text-muted);
 }
 
@@ -420,7 +420,7 @@
 }
 
 .rule-add-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: 2px;
@@ -433,7 +433,7 @@
 }
 
 .rule-form-label {
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   color: var(--text-muted);
   width: 110px;
   flex-shrink: 0;
@@ -446,7 +446,7 @@
   padding: 8px 10px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--fs));
   font-family: inherit;
   background: var(--surface);
   color: var(--text);
@@ -467,7 +467,7 @@
 .settings-subtab {
   padding: 4px 14px;
   border-radius: 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   background: var(--bg-secondary, var(--surface));
   border: 1px solid var(--border);
   cursor: pointer;
@@ -481,21 +481,22 @@
   border-color: var(--primary);
 }
 
-/* 탭이 8개라 탭 이름이 두 줄로 꺾이지 않게 하고(어느 폭에서나), 넘치면 가로로 밀어 본다
-   (데이터 탭 I-013·I-014, 선택 기능 탭 I-032, 정보 탭 I-038 — 한글 폭이 1em인 휴대폰 글꼴로 421~460px에서 '선택 기능'이 꺾였다) */
+/* 탭 글씨는 글씨 크기를 키워도 보통 크기까지만(U-1) — 크게 고른 뒤 그 설정이 있는 '앱' 탭이 밀려나 보이지 않게.
+   탭이 8개라 탭 이름이 두 줄로 꺾이지 않게 하고(어느 폭에서나), 넘치면 가로로 밀어 본다
+   (데이터 탭 I-013·I-014, 선택 기능 탭 I-032, 앱 탭 I-038 — 한글 폭이 1em인 휴대폰 글꼴로 421~460px에서 '선택 기능'이 꺾였다) */
 .settings-tabs { overflow-x: auto; scrollbar-width: none; }
 .settings-tabs::-webkit-scrollbar { display: none; }
 .settings-tabs .tab { white-space: nowrap; }
 /* 좁은 화면에서는 글자를 줄인다 (한글 폭이 1em인 글꼴에서 탭 글자끼리 붙어 보이지 않게 480px까지) */
 @media (max-width: 480px) {
   .settings-tabs { padding: 0 8px; }
-  .settings-tabs .tab { flex: 1 0 auto; padding: 12px 6px; font-size: 13px; }
+  .settings-tabs .tab { flex: 1 0 auto; padding: 12px 6px; font-size: calc(13px * min(var(--fs), 1)); }
 }
 /* 360~400px 휴대폰에서도 8개 탭이 한 줄에 다 보이게 (가려진 탭이 없도록 — 12px 글꼴로 약 350px).
-   그보다 좁으면 가로로 밀어 맨 끝의 '정보'를 본다 */
+   그보다 좁으면 가로로 밀어 맨 끝의 '앱'을 본다(고른 탭은 저절로 보이게 민다) */
 @media (max-width: 400px) {
   .settings-tabs { padding: 0 2px; }
-  .settings-tabs .tab { padding: 12px 3px; font-size: 12px; letter-spacing: -0.3px; }
+  .settings-tabs .tab { padding: 12px 3px; font-size: calc(12px * min(var(--fs), 1)); letter-spacing: -0.3px; }
 }
 
 /* ── 설정 › 데이터 ── */
@@ -509,13 +510,13 @@
   border-radius: 10px;
   background: var(--surface);
 }
-.data-member-name { flex: 1; min-width: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.data-member-name { flex: 1; min-width: 0; font-size: calc(15px * var(--fs)); display: flex; align-items: center; gap: 6px; }
 .data-member-badge {
-  font-size: 11px;
+  font-size: calc(11px * var(--fs));
   padding: 1px 7px;
   border-radius: 999px;
-  background: #EFF6FF;
-  color: var(--primary-dark);
+  background: var(--c-blue-50);
+  color: var(--primary-text-strong);
   font-weight: 600;
 }
 .data-device-row {
@@ -525,15 +526,15 @@
   gap: 12px;
   margin-top: 4px;
 }
-.data-device-row span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-.data-device-row small { font-size: 11px; color: var(--text-muted); }
+.data-device-row span { display: flex; flex-direction: column; gap: 2px; font-size: calc(13px * var(--fs)); }
+.data-device-row small { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
 .data-device-row select,
 .data-export-row select,
 .data-export-row input {
   padding: 8px 10px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--fs));
   font-family: inherit;
   background: var(--surface);
 }
@@ -541,16 +542,16 @@
 .data-export-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .data-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .data-actions button { flex: 1 1 160px; }
-.data-message { font-size: 13px; color: #047857; margin-bottom: 8px; }
-.data-muted { font-size: 13px; color: var(--text-muted); }
+.data-message { font-size: calc(13px * var(--fs)); color: var(--c-emerald-700); margin-bottom: 8px; }
+.data-muted { font-size: calc(13px * var(--fs)); color: var(--text-muted); }
 /* 가계부 파일로 바꾸기 (I-035) */
 .data-file-input {
   width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 10px;
-  border: 1.5px dashed var(--border); border-radius: 10px; background: var(--bg); font-size: 13px;
+  border: 1.5px dashed var(--border); border-radius: 10px; background: var(--bg); font-size: calc(13px * var(--fs));
 }
-.data-replace-compare { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid #FDE68A; border-radius: 10px; background: #FFFBEB; }
-.data-replace-compare > div:not(.data-actions) { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text); }
-.data-replace-compare b { font-size: 13px; }
+.data-replace-compare { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--c-amber-200); border-radius: 10px; background: var(--c-amber-50); }
+.data-replace-compare > div:not(.data-actions) { display: flex; flex-direction: column; gap: 2px; font-size: calc(12px * var(--fs)); color: var(--text); }
+.data-replace-compare b { font-size: calc(13px * var(--fs)); }
 .data-replace-compare .data-actions { margin: 4px 0 0; }
 .data-backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .data-backup-row {
@@ -563,29 +564,40 @@
   background: var(--surface);
 }
 .data-backup-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.data-backup-main b { font-size: 14px; }
-.data-backup-main small { font-size: 11px; color: var(--text-muted); }
-.data-backup-btn { flex: none; padding: 6px 12px; font-size: 13px; }
+.data-backup-main b { font-size: calc(14px * var(--fs)); }
+.data-backup-main small { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
+.data-backup-btn { flex: none; padding: 6px 12px; font-size: calc(13px * var(--fs)); }
 
 /* 결제일을 바꿀 때 앞으로의 거래도 옮길지 묻는 창 (I-037) */
 .rmove { display: flex; flex-direction: column; gap: 10px; }
-.rmove-title { margin: 0; font-size: 17px; }
-.rmove-lead { margin: 0; font-size: 14px; line-height: 1.6; }
-.rmove-list { margin: 0; padding: 10px 12px; list-style: none; display: flex; flex-direction: column; gap: 4px; border-radius: 10px; background: var(--bg); font-size: 14px; }
-.rmove-more { color: var(--text-muted); font-size: 13px; }
-.rmove-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.rmove-title { margin: 0; font-size: calc(17px * var(--fs)); }
+.rmove-lead { margin: 0; font-size: calc(14px * var(--fs)); line-height: 1.6; }
+.rmove-list { margin: 0; padding: 10px 12px; list-style: none; display: flex; flex-direction: column; gap: 4px; border-radius: 10px; background: var(--bg); font-size: calc(14px * var(--fs)); }
+.rmove-more { color: var(--text-muted); font-size: calc(13px * var(--fs)); }
+.rmove-note { margin: 0; font-size: calc(13px * var(--fs)); line-height: 1.5; color: var(--text-muted); }
 .rmove-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .rmove-actions button { width: 100%; }
 
-/* 설정 › 정보 (I-038) — 앱 버전·운영·문의·처리방침·약관. 문제 알리기는 common/ProblemReport.css */
+/* 설정 › 앱 (I-038) — 앱 버전·운영·문의·처리방침·약관. 문제 알리기는 common/ProblemReport.css */
 .about-section { display: flex; flex-direction: column; gap: 20px; }
 .about-block { padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .about-block:last-child { border-bottom: none; padding-bottom: 0; }
-.about-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-.about-facts { margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.about-title { font-size: calc(14px * var(--fs)); font-weight: 600; margin-bottom: 8px; }
+.about-facts { margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; font-size: calc(13px * var(--fs)); }
 .about-facts > div { display: flex; gap: 10px; }
 .about-facts dt { flex: 0 0 36px; color: var(--text-muted); }
 .about-facts dd { margin: 0; color: var(--text); word-break: break-all; }
-.about-desc { margin: 0 0 10px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
-.about-links { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
-.about-links a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.about-desc { margin: 0 0 10px; font-size: calc(12px * var(--fs)); line-height: 1.6; color: var(--text-muted); }
+.about-links { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: calc(13px * var(--fs)); }
+.about-links a { color: var(--primary-text); text-decoration: underline; text-underline-offset: 2px; }
+/* 설정 › 앱 › 이 기기 화면 (U-1 글씨 크기, U-2 화면 테마) */
+.disp-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.disp-label { font-size: calc(13px * var(--fs)); font-weight: 600; color: var(--text); }
+.disp-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.disp-option {
+  flex: 1 1 auto; min-width: 64px; padding: 9px 6px; word-break: keep-all;
+  border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text);
+  font-size: calc(13px * var(--fs)); cursor: pointer;
+}
+.disp-option--on { border-color: var(--primary); background: var(--c-blue-50); color: var(--primary-text); font-weight: 700; }
+.disp-preview { margin: -2px 0 12px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: calc(15px * var(--fs)); color: var(--text); }

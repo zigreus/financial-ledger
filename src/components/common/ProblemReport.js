@@ -33,7 +33,7 @@ async function copyText(text) {
 /**
  * 문제 알리기 (I-038, ROADMAP M-5) — 이 기기에 남은 오류 기록(services/errorLog)과 앱 정보를 글로 보여 주고,
  * 사용자가 읽어 본 뒤 직접 복사하거나 메일로 보낸다. 앱이 어디로도 자동으로 보내지 않는다(AGENTS §1, ROADMAP F-4).
- * 설정 › 정보, 가계부를 불러오지 못한 화면(App), 화면을 그리다 멈춘 화면(common/ErrorBoundary)에서 쓴다 —
+ * 설정 › 앱, 가계부를 불러오지 못한 화면(App), 화면을 그리다 멈춘 화면(common/ErrorBoundary)에서 쓴다 —
  * 뒤의 둘은 열 때 불러온다(./lazyProblemReport).
  * drive: 'OneDrive' | 'Google Drive' (모르면 '')
  */

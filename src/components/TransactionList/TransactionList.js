@@ -720,11 +720,11 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
             </div>
             <div style={{ padding: '16px 20px' }}>
               <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>날짜</div>
-                <div style={{ fontSize: '16px', fontWeight: '600' }}>{selectedDetail.date}</div>
+                <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>날짜</div>
+                <div style={{ fontSize: 'calc(16px * var(--fs))', fontWeight: '600' }}>{selectedDetail.date}</div>
               </div>
               <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>카테고리</div>
+                <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>카테고리</div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span
                     style={{
@@ -735,15 +735,15 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                       backgroundColor: categoryColor(selectedDetail.budget_category)
                     }}
                   />
-                  <span style={{ fontSize: '15px' }}>{selectedDetail.budget_category}</span>
+                  <span style={{ fontSize: 'calc(15px * var(--fs))' }}>{selectedDetail.budget_category}</span>
                   {selectedDetail.event_id && eventMap[selectedDetail.event_id] && (
-                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                    <span style={{ fontSize: 'calc(13px * var(--fs))', color: 'var(--text-muted)' }}>
                       / {eventMap[selectedDetail.event_id].name}
                     </span>
                   )}
                   {selectedDetail.sub_category && (
                     <span style={{
-                      fontSize: '13px',
+                      fontSize: 'calc(13px * var(--fs))',
                       color: 'var(--text-muted)',
                       textDecoration: hasSubCategoryIssue(selectedDetail, validationCtx) ? 'underline' : 'none'
                     }}>
@@ -753,24 +753,24 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                 </div>
               </div>
               <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>결제수단</div>
-                <div style={{ fontSize: '15px' }}>{selectedDetail.payment_method}</div>
+                <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>결제수단</div>
+                <div style={{ fontSize: 'calc(15px * var(--fs))' }}>{selectedDetail.payment_method}</div>
               </div>
               {selectedDetail.member && (
                 <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>누가</div>
-                  <div style={{ fontSize: '15px' }}>{selectedDetail.member}</div>
+                  <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>누가</div>
+                  <div style={{ fontSize: 'calc(15px * var(--fs))' }}>{selectedDetail.member}</div>
                 </div>
               )}
               {selectedDetail.detail && (
                 <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>세부내역</div>
-                  <div style={{ fontSize: '15px' }}>{selectedDetail.detail}</div>
+                  <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>세부내역</div>
+                  <div style={{ fontSize: 'calc(15px * var(--fs))' }}>{selectedDetail.detail}</div>
                 </div>
               )}
               <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>금액</div>
-                <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--primary)' }}>
+                <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>금액</div>
+                <div style={{ fontSize: 'calc(18px * var(--fs))', fontWeight: '700', color: 'var(--primary-text)' }}>
                   {formatAmount(selectedDetail.amount)}원
                   {(() => {
                     try {
@@ -778,15 +778,15 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
                       const entries = Object.entries(fa).filter(([, v]) => v > 0);
                       if (!entries.length) return null;
                       const text = entries.map(([cur, v]) => `${Number(v).toLocaleString()} ${cur}`).join(', ');
-                      return <span style={{ fontSize: '14px', fontWeight: '400', color: 'var(--text-muted)', marginLeft: '6px' }}>({text})</span>;
+                      return <span style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '400', color: 'var(--text-muted)', marginLeft: '6px' }}>({text})</span>;
                     } catch { return null; }
                   })()}
                 </div>
               </div>
               {selectedDetail.discount_amount > 0 && (
                 <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>할인</div>
-                  <div style={{ fontSize: '15px', color: 'var(--success)' }}>
+                  <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', marginBottom: '4px' }}>할인</div>
+                  <div style={{ fontSize: 'calc(15px * var(--fs))', color: 'var(--success)' }}>
                     -{formatAmount(selectedDetail.discount_amount)}원
                     {selectedDetail.discount_note && ` (${selectedDetail.discount_note})`}
                   </div>
@@ -796,7 +796,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
             <div className="form-actions" style={{ padding: '0 20px 20px' }}>
               <button
                 className="btn-danger"
-                style={{ marginRight: 'auto', flex: 'none', padding: '8px 14px', fontSize: '13px' }}
+                style={{ marginRight: 'auto', flex: 'none', padding: '8px 14px', fontSize: 'calc(13px * var(--fs))' }}
                 onClick={() => handleDetailDelete(selectedDetail)}
               >
                 삭제

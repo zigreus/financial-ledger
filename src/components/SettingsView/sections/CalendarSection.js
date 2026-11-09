@@ -116,7 +116,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
                       </div>
                       <input
                         className="settings-inline-input"
-                        style={{ width: 80, flexShrink: 0, fontFamily: 'monospace', fontSize: 13 }}
+                        style={{ width: 80, flexShrink: 0, fontFamily: 'monospace', fontSize: 'calc(13px * var(--fs))' }}
                         value={editingTypeColor}
                         onChange={e => setEditingTypeColor(e.target.value)}
                         onBlur={e => {
@@ -144,7 +144,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
                   ) : deletingTypeId === t.id ? (
                     /* 삭제 확인 행 */
                     <div className="settings-item" style={{ gap: '8px' }}>
-                      <span style={{ flex: 1, fontSize: '13px' }}>
+                      <span style={{ flex: 1, fontSize: 'calc(13px * var(--fs))' }}>
                         {usageCount > 0
                           ? `${usageCount}개 일정에서 사용 중 — 삭제 불가`
                           : `"${t.label}" 유형을 삭제할까요?`
@@ -177,11 +177,11 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
                       >
                         <span className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-muted)', marginRight: '4px' }}><IconGrip /></span>
                         <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, flexShrink: 0, display: 'inline-block' }} />
-                        <span style={{ flex: 1, fontSize: '14px' }}>{t.label}</span>
+                        <span style={{ flex: 1, fontSize: 'calc(14px * var(--fs))' }}>{t.label}</span>
                         {t.value !== 'general' && (
                           <button
                             className={`goal-display-toggle${t.is_trip_type ? ' goal-display-toggle--on' : ''}`}
-                            style={{ fontSize: '10px', padding: '0 6px', height: '24px', minWidth: '44px' }}
+                            style={{ fontSize: 'calc(10px * var(--fs))', padding: '0 6px', height: '24px', minWidth: '44px' }}
                             onClick={() => { setCalendarEventTypeTripFlag(db, t.id, !t.is_trip_type); onChanged(); }}
                             title="국가/통화 입력 활성화"
                           >
@@ -213,7 +213,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
               </div>
               <input
                 className="settings-inline-input"
-                style={{ width: 80, flexShrink: 0, flexGrow: 0, fontFamily: 'monospace', fontSize: 13 }}
+                style={{ width: 80, flexShrink: 0, flexGrow: 0, fontFamily: 'monospace', fontSize: 'calc(13px * var(--fs))' }}
                 value={newTypeColor}
                 onChange={e => {
                   const v = e.target.value;
@@ -238,13 +238,13 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
             </div>
             <button className="btn-primary" style={{ width: '100%' }} onClick={handleAddType}>+ 추가</button>
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+          <div style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)', marginTop: '6px' }}>
             슬라이더 ON = 해당 유형 일정 선택 시 국가/통화 입력 활성화
           </div>
 
           {/* 여행 일정 자동 카테고리 */}
           <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>여행 일정 자동 카테고리</div>
+            <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '8px' }}>여행 일정 자동 카테고리</div>
             <select
               className="settings-inline-input"
               style={{ width: '100%' }}
@@ -259,7 +259,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+            <div style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)', marginTop: '6px' }}>
               거래 추가 시 여행 유형 일정을 선택하면 이 카테고리가 자동 선택됩니다.
             </div>
           </div>
@@ -279,17 +279,17 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
       {subTab === 'display' && (
         <div>
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>달력 버튼 표시 (거래내역)</div>
+            <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '12px' }}>달력 버튼 표시 (거래내역)</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: '13px' }}>PC</div>
+                <div style={{ fontSize: 'calc(13px * var(--fs))' }}>PC</div>
                 <button
                   className={`goal-display-toggle${showCalBtnPc ? ' goal-display-toggle--on' : ''}`}
                   onClick={() => { setSetting(db, 'show_calendar_btn_pc', showCalBtnPc ? '0' : '1'); onChanged(); }}
                 ><span className="goal-display-toggle-knob" /></button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: '13px' }}>모바일</div>
+                <div style={{ fontSize: 'calc(13px * var(--fs))' }}>모바일</div>
                 <button
                   className={`goal-display-toggle${showCalBtnMobile ? ' goal-display-toggle--on' : ''}`}
                   onClick={() => { setSetting(db, 'show_calendar_btn_mobile', showCalBtnMobile ? '0' : '1'); onChanged(); }}
@@ -299,7 +299,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
           </div>
 
           <div style={{ padding: '16px 0', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600' }}>달력 금액 단위</div>
+            <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600' }}>달력 금액 단위</div>
             <select
               className="rule-form-select"
               style={{ flex: 'none', width: 'auto', minWidth: '100px' }}
@@ -313,7 +313,7 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
           </div>
 
           <div style={{ padding: '16px 0', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600' }}>빈 날짜 클릭 시</div>
+            <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600' }}>빈 날짜 클릭 시</div>
             <select
               className="rule-form-select"
               style={{ flex: 'none', width: 'auto', minWidth: '120px' }}

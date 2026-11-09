@@ -13,11 +13,11 @@
 .amount-input > input.input-error { border-color: var(--danger); }
 
 .formula-preview {
-  font-size: 12px;
-  color: var(--primary);
+  font-size: calc(12px * var(--fs));
+  color: var(--primary-text);
   font-weight: 600;
 }
-.formula-error { font-size: 12px; color: var(--danger); }
+.formula-error { font-size: calc(12px * var(--fs)); color: var(--danger); }
 
 /* 키보드 바로 위에 붙는 연산자 툴바 (터치 기기) — 모든 팝업보다 위 */
 .formula-toolbar {
@@ -28,23 +28,23 @@
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  background: #d1d5db;
-  border-top: 1px solid #b0b3b8;
+  background: var(--c-gray-300);
+  border-top: 1px solid var(--c-gray-350);
   box-shadow: 0 -1px 4px rgba(0,0,0,0.12);
 }
 .formula-toolbar-btn {
   flex: 1;
   padding: 10px 4px;
-  font-size: 18px;
+  font-size: calc(18px * var(--fs));
   font-weight: 600;
-  background: #fff;
+  background: var(--surface);
   border: none;
   border-radius: 8px;
   color: var(--text);
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
-  box-shadow: 0 2px 0 #9ca3af;
+  box-shadow: 0 2px 0 var(--c-gray-400);
 }
 .formula-toolbar-btn:active {
   background: var(--primary);

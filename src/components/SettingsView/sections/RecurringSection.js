@@ -213,7 +213,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
           </button>
 
           {recurringList.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px', fontSize: '13px' }}>
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px', fontSize: 'calc(13px * var(--fs))' }}>
               등록된 정기지출이 없습니다.
             </div>
           ) : (
@@ -223,7 +223,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
                 if (items.length === 0) return null;
                 return (
                   <div key={freq} style={{ marginBottom: '16px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <div style={{ fontSize: 'calc(12px * var(--fs))', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       {freq === 'monthly' ? '📋 월별 반복' : '📅 연간 반복'}
                     </div>
                     {items.map(r => {
@@ -234,15 +234,15 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
                         <div key={r.id} className="settings-item">
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                              <span style={{ fontWeight: '600', fontSize: '14px', flexShrink: 0, maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.detail || r.sub_category || r.budget_category}</span>
+                              <span style={{ fontWeight: '600', fontSize: 'calc(14px * var(--fs))', flexShrink: 0, maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.detail || r.sub_category || r.budget_category}</span>
                               {subscriptionsOn && !!r.is_subscription && <span className="sub-badge">구독</span>}
-                              <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.budget_category}{r.sub_category ? ` / ${r.sub_category}` : ''}</span>
-                              {lastRegistered && <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>최근 {lastRegistered}</span>}
+                              <span style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.budget_category}{r.sub_category ? ` / ${r.sub_category}` : ''}</span>
+                              {lastRegistered && <span style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)', flexShrink: 0 }}>최근 {lastRegistered}</span>}
                             </div>
-                            <div style={{ fontSize: '13px', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                              <span style={{ color: 'var(--primary)', fontWeight: '600', flexShrink: 0 }}>{r.amount.toLocaleString()}원</span>
+                            <div style={{ fontSize: 'calc(13px * var(--fs))', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                              <span style={{ color: 'var(--primary-text)', fontWeight: '600', flexShrink: 0 }}>{r.amount.toLocaleString()}원</span>
                               {r.discount_amount > 0 && (
-                                <span style={{ fontSize: '12px', color: '#16A34A', flexShrink: 0 }}>-{r.discount_amount.toLocaleString()}원 할인</span>
+                                <span style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--c-green-600)', flexShrink: 0 }}>-{r.discount_amount.toLocaleString()}원 할인</span>
                               )}
                               <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.payment_method} · {scheduleLabel}</span>
                             </div>
@@ -263,7 +263,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
       ) : (
         /* 추가/편집 폼 */
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ fontWeight: '600', fontSize: '15px', marginBottom: '4px' }}>
+          <div style={{ fontWeight: '600', fontSize: 'calc(15px * var(--fs))', marginBottom: '4px' }}>
             {editingRecurringId !== null ? '정기지출 수정' : '정기지출 추가'}
           </div>
 
@@ -368,11 +368,11 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
           <div className="rule-form-row">
             <label className="rule-form-label">반복주기</label>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'calc(14px * var(--fs))' }}>
                 <input type="radio" name="freq" value="monthly" checked={recurringForm.frequency === 'monthly'} onChange={() => setRecurringForm(f => ({ ...f, frequency: 'monthly' }))} />
                 월별
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'calc(14px * var(--fs))' }}>
                 <input type="radio" name="freq" value="annual" checked={recurringForm.frequency === 'annual'} onChange={() => setRecurringForm(f => ({ ...f, frequency: 'annual' }))} />
                 연간
               </label>
@@ -407,7 +407,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
                 placeholder="1~31, 0=말일"
                 style={{ width: '90px' }}
               />
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>일 (0 = 말일)</span>
+              <span style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)' }}>일 (0 = 말일)</span>
             </div>
           </div>
 
@@ -426,7 +426,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
             <>
               <div className="rule-form-row">
                 <label className="rule-form-label" htmlFor="recurring-is-subscription">구독</label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'calc(14px * var(--fs))' }}>
                   <input
                     id="recurring-is-subscription"
                     type="checkbox"

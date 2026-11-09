@@ -2,12 +2,12 @@
 .g-reconnect {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px;
-  background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; font-size: 13px;
+  background: var(--c-amber-50); border: 1px solid var(--c-amber-200); color: var(--c-amber-800); font-size: calc(13px * var(--fs));
 }
 .g-reconnect-text { min-width: 0; overflow-wrap: anywhere; }
 .g-reconnect-notice { font-weight: 600; }
 .g-reconnect-btn {
   flex-shrink: 0; min-height: 36px; padding: 6px 12px; border-radius: 8px; border: none;
-  background: var(--primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--primary); color: #fff; font-size: calc(13px * var(--fs)); font-weight: 600; cursor: pointer;
 }
 .g-reconnect-btn:disabled { opacity: .7; cursor: default; }

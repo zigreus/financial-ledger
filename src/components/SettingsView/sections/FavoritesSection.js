@@ -144,9 +144,9 @@ export default function FavoritesSection({ db, dataVersion, onChanged, setError 
                     >
                       <span className="drag-handle">≡</span>
                       <div style={{ flex: 1, overflow: 'hidden' }}>
-                        <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}{item.sub_category ? `/${item.sub_category}` : ''}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.amount == null ? '금액 직접 입력' : `${item.amount.toLocaleString()}원`} · {item.use_count}회 사용</div>
+                        <div style={{ fontWeight: '600', fontSize: 'calc(14px * var(--fs))' }}>{item.name}</div>
+                        <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)' }}>{item.payment_method} · {item.budget_category}{item.sub_category ? `/${item.sub_category}` : ''}</div>
+                        <div style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)' }}>{item.amount == null ? '금액 직접 입력' : `${item.amount.toLocaleString()}원`} · {item.use_count}회 사용</div>
                       </div>
                       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                         <button className="btn-icon" onClick={() => openFavoriteForm(item)} title="수정"><IconEdit /></button>
@@ -159,7 +159,7 @@ export default function FavoritesSection({ db, dataVersion, onChanged, setError 
               {dropIdx === favoriteList.length && dragId !== null && <div className="drop-indicator" />}
             </div>
           ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '24px' }}>등록된 즐겨찾기가 없습니다.</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 'calc(13px * var(--fs))', textAlign: 'center', padding: '24px' }}>등록된 즐겨찾기가 없습니다.</div>
           )}
           <button className="btn-secondary" style={{ width: '100%', marginTop: '12px' }} onClick={() => openFavoriteForm()}>+ 새 즐겨찾기 추가</button>
         </div>
@@ -197,7 +197,7 @@ export default function FavoritesSection({ db, dataVersion, onChanged, setError 
             <input type="text" value={favoriteForm.detail} onChange={e => setFavoriteForm({...favoriteForm, detail: e.target.value})} placeholder="선택사항" />
           </div>
           <div className="form-group">
-            <label>금액 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '12px' }}>(선택)</span></label>
+            <label>금액 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 'calc(12px * var(--fs))' }}>(선택)</span></label>
             <AmountInput value={favoriteForm.amount ?? ''} onChange={v => setFavoriteForm({...favoriteForm, amount: v})} placeholder="비워두면 거래 추가 시 직접 입력" />
           </div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
@@ -210,12 +210,12 @@ export default function FavoritesSection({ db, dataVersion, onChanged, setError 
       {/* 자동 패턴 섹션 */}
       {detectedPatterns.length > 0 && (
         <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>자동 결제수단 패턴</div>
+          <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '12px' }}>자동 결제수단 패턴</div>
           {detectedPatterns.map(pat => (
             <div key={pat.sub_category} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px', marginBottom: '8px', background: 'var(--bg)', borderRadius: '8px' }}>
-              <div style={{ flex: 1, fontSize: '13px' }}>
+              <div style={{ flex: 1, fontSize: 'calc(13px * var(--fs))' }}>
                 <div>{pat.sub_category} → {pat.payment_method}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>({pat.count}건, {Math.round(pat.count / pat.total * 100)}%)</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 'calc(11px * var(--fs))' }}>({pat.count}건, {Math.round(pat.count / pat.total * 100)}%)</div>
               </div>
               <button type="button" className={`goal-display-toggle${pat.is_disabled ? '' : ' goal-display-toggle--on'}`} onClick={() => handleToggleAutoPattern(pat.sub_category, pat.is_disabled)} title={pat.is_disabled ? '켜기' : '끄기'} style={{ marginRight: '8px' }}>
                 <span className="goal-display-toggle-knob" />

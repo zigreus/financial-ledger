@@ -3,14 +3,17 @@ import { CONTACT_EMAIL, OPERATOR_NAME, PRIVACY_URL, TERMS_URL } from '../../../c
 import { appVersion } from '../../../services/errorLog';
 import { currentDriveName } from '../../../services/storage/driveName';
 import ProblemReport from '../../common/ProblemReport';
+import DisplaySettings from './DisplaySettings';
 
 /**
- * 설정 › 정보 (I-038, ROADMAP M-5) — 앱 버전, 운영·문의, 개인정보처리방침·이용약관, 문제 알리기(common/ProblemReport).
+ * 설정 › 앱 — 이 기기 화면(글씨 크기·테마, U-1·U-2), 앱 정보(버전·운영·문의·처리방침·약관, I-038, ROADMAP M-5),
+ * 문제 알리기(common/ProblemReport).
  */
 export default function AboutSection() {
   const drive = currentDriveName();
   return (
     <div className="about-section">
+      <DisplaySettings />
       <div className="about-block">
         <div className="about-title">지금 가계부</div>
         <dl className="about-facts">

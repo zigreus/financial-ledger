@@ -7,11 +7,15 @@ import { msalInstance } from './auth/msalConfig';
 import { registerServiceWorker } from './services/serviceWorker';
 import { installErrorLog } from './services/errorLog';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import { applyDisplayPrefs } from './services/displayPrefs';
 import {
   completeGoogleRedirect, rememberGoogleResult, shouldReconnectAtStart, startGoogleLogin,
 } from './auth/googleAuth';
 
-// 처리하지 못한 오류를 이 기기에만 남긴다 — 설정 › 정보의 '문제 알리기'에서 사용자가 보고 직접 보낸다(I-038)
+// 이 기기의 글씨 크기·화면 테마 (U-1·U-2) — index.html이 먼저 적용했고, 위쪽 막대 색·기기 모드 따라가기를 여기서 맞춘다
+applyDisplayPrefs();
+
+// 처리하지 못한 오류를 이 기기에만 남긴다 — 설정 › 앱의 '문제 알리기'에서 사용자가 보고 직접 보낸다(I-038)
 installErrorLog();
 
 // 연결 없이 열기·공유 받기 (I-024)

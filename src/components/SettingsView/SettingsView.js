@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './SettingsView.css';
 import PaymentSection from './sections/PaymentSection';
 import DiscountRulesSection from './sections/DiscountRulesSection';
@@ -50,6 +50,17 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
     switchSection(section);
   };
 
+  // 고른 탭이 가로로 밀려 안 보이면 보이게 민다(좁은 화면·탭 8개) — 세로로는 움직이지 않는다
+  const tabsRef = useRef(null);
+  useEffect(() => {
+    const bar = tabsRef.current;
+    const tab = bar?.querySelector('.tab.active');
+    if (!bar || !tab) return;
+    const left = tab.offsetLeft - bar.offsetLeft;
+    if (left < bar.scrollLeft) bar.scrollLeft = left;
+    else if (left + tab.offsetWidth > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = left + tab.offsetWidth - bar.clientWidth;
+  }, [activeSection]);
+
   useEffect(() => {
     if (!scrollTarget) return;
     document.getElementById(scrollTarget)?.scrollIntoView?.({ block: 'start' });
@@ -63,7 +74,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
   return (
     <div className="settings-page">
       {/* 섹션 탭 */}
-      <div className="settings-tabs">
+      <div className="settings-tabs" ref={tabsRef}>
         <button className={activeSection === 'payment' ? 'tab active' : 'tab'} onClick={() => switchSection('payment')}>결제수단</button>
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={(activeSection === 'budget' || activeSection === 'recurring') ? 'tab active' : 'tab'} onClick={() => { switchSection(financeSubTab); setRecurringKey(k => k + 1); }}>지출계획</button>
@@ -71,7 +82,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
         <button className={activeSection === 'features' ? 'tab active' : 'tab'} onClick={() => switchSection('features')}>선택 기능</button>
         <button className={activeSection === 'ai' ? 'tab active' : 'tab'} onClick={() => switchSection('ai')}>AI</button>
         <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
-        <button className={activeSection === 'about' ? 'tab active' : 'tab'} onClick={() => switchSection('about')}>정보</button>
+        <button className={activeSection === 'about' ? 'tab active' : 'tab'} onClick={() => switchSection('about')}>앱</button>
       </div>
 
       {/* 드릴다운 뒤로가기 */}

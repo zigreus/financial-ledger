@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /**
- * 앱 버전 (I-038) — 설정 › 정보와 '문제 알리기'에 보인다. 빌드한 시각(한국 시각)과 커밋 앞 7자리.
+ * 앱 버전 (I-038) — 설정 › 앱과 '문제 알리기'에 보인다. 빌드한 시각(한국 시각)과 커밋 앞 7자리.
  * Vercel은 커밋을 환경값(VERCEL_GIT_COMMIT_SHA)으로 주고, 내 PC에서는 git에 묻는다(없으면 시각만).
  */
 function appVersion() {

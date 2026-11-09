@@ -35,22 +35,22 @@
 
 /* ── 배너 ────────────────────────────────────────────────── */
 .error-banner {
-  background: #FEE2E2;
+  background: var(--c-red-100);
   color: var(--danger);
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   cursor: pointer;
-  border-bottom: 1px solid #FECACA;
+  border-bottom: 1px solid var(--c-red-200);
 }
 
 .toast-banner {
-  background: #DCFCE7;
-  color: #166534;
+  background: var(--c-green-100);
+  color: var(--c-green-800);
   padding: 8px 16px;
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   font-weight: 600;
   text-align: center;
-  border-bottom: 1px solid #86EFAC;
+  border-bottom: 1px solid var(--c-green-300);
   animation: fadeInOut 2.5s ease forwards;
 }
 
@@ -62,12 +62,12 @@
 }
 
 .unsaved-banner {
-  background: #FEF9C3;
-  color: #854D0E;
+  background: var(--c-yellow-100);
+  color: var(--c-yellow-800);
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: calc(12px * var(--fs));
   text-align: center;
-  border-bottom: 1px solid #FDE047;
+  border-bottom: 1px solid var(--c-yellow-300);
 }
 
 /* ── 메인 콘텐츠 ─────────────────────────────────────────── */
@@ -101,10 +101,10 @@
   color: var(--text-muted);
   padding: 8px 0;
 }
-.nav-item.active { color: var(--primary); }
-.nav-icon { font-size: 20px; }
+.nav-item.active { color: var(--primary-text); }
+.nav-icon { font-size: calc(20px * var(--fs)); }
 .nav-label {
-  font-size: 10px;
+  font-size: calc(10px * var(--fs));
   margin-top: 2px;
 }
 
@@ -123,9 +123,9 @@
   box-shadow: 0 4px 12px rgba(37,99,235,.4);
   margin-bottom: 8px;
 }
-.nav-icon-add { font-size: 28px; line-height: 1; }
+.nav-icon-add { font-size: calc(28px * var(--fs)); line-height: 1; }
 .nav-add--event { background: #7C3AED; box-shadow: 0 4px 12px rgba(124,58,237,.4); }
-.nav-add--event .nav-icon-add { font-size: 22px; }
+.nav-add--event .nav-icon-add { font-size: calc(22px * var(--fs)); }
 
 /* 화면 위 알림(바로 넣은 거래·되돌리기) — 입력 창(모달) 위에도 보이게 띄운다 (I-022) */
 .toast-banner.toast-top {
@@ -139,7 +139,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  border: 1px solid #86EFAC;
+  border: 1px solid var(--c-green-300);
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   animation: none;
@@ -148,15 +148,15 @@
   flex-shrink: 0;
   min-height: 32px;
   padding: 6px 12px;
-  border: 1px solid #166534;
+  border: 1px solid var(--c-green-800);
   border-radius: 8px;
-  background: white;
-  color: #166534;
-  font-size: 13px;
+  background: var(--surface);
+  color: var(--c-green-800);
+  font-size: calc(13px * var(--fs));
   font-weight: 700;
   cursor: pointer;
 }
 
 /* 가계부를 불러오지 못한 화면의 문제 알리기 (I-038) */
 .load-report { width: 100%; max-width: 480px; padding: 0 16px; box-sizing: border-box; }
-.load-report-wait { font-size: 13px; color: var(--text-muted); text-align: center; }
+.load-report-wait { font-size: calc(13px * var(--fs)); color: var(--text-muted); text-align: center; }

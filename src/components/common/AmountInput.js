@@ -22,6 +22,7 @@ import './AmountInput.css';
  */
 
 const SYMBOLS = ['+', '-', '×', '÷', '(', ')'];
+/** 툴바 높이를 아직 잴 수 없을 때 — 실제 높이는 글씨 크기(U-1)에 따라 달라 그려진 툴바에서 잰다 */
 const TOOLBAR_HEIGHT = 52;
 
 const isTouchDevice = typeof window !== 'undefined'
@@ -95,6 +96,7 @@ export default function AmountInput({
   const inputRef = useRef(null);
   const containerRef = useRef(null);
   const touchHandledRef = useRef(false);
+  const toolbarRef = useRef(null);
 
   const scrollIntoVisibleArea = () => {
     const vv = window.visualViewport;
@@ -104,7 +106,7 @@ export default function AmountInput({
     if (!scrollable) return;
     // rect는 visual viewport 기준 — 툴바와 여백을 뺀 높이가 실제로 보이는 영역
     const rect = container.getBoundingClientRect();
-    const visibleBottom = vv.height - TOOLBAR_HEIGHT - 8;
+    const visibleBottom = vv.height - (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) - 8;
     if (rect.bottom > visibleBottom) {
       scrollable.scrollTop += rect.bottom - visibleBottom;
     }
@@ -122,7 +124,7 @@ export default function AmountInput({
       const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
       setToolbarBottom(kb);
       if (scrollable) {
-        scrollable.style.paddingBottom = kb > 0 ? `${kb + TOOLBAR_HEIGHT + 16}px` : originalPadding;
+        scrollable.style.paddingBottom = kb > 0 ? `${kb + (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) + 16}px` : originalPadding;
       }
       requestAnimationFrame(scrollIntoVisibleArea);
     };
@@ -188,7 +190,7 @@ export default function AmountInput({
         {...inputProps}
       />
       {focused && isTouchDevice && (
-        <div className="formula-toolbar" style={{ bottom: toolbarBottom }}>
+        <div className="formula-toolbar" style={{ bottom: toolbarBottom }} ref={toolbarRef}>
           {SYMBOLS.map(sym => (
             <button
               key={sym}

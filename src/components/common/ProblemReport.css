@@ -1,20 +1,20 @@
-/* 문제 알리기 (I-038) — 설정 › 정보, 불러오기 실패 화면, 화면 오류 화면에서 함께 쓴다 */
+/* 문제 알리기 (I-038) — 설정 › 앱, 불러오기 실패 화면, 화면 오류 화면에서 함께 쓴다 */
 .preport { text-align: left; }
-.preport-desc { margin: 0 0 10px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.preport-desc { margin: 0 0 10px; font-size: calc(12px * var(--fs)); line-height: 1.6; color: var(--text-muted); }
 .preport-note {
   width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 10px 12px;
   border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface);
-  font: inherit; font-size: 14px; line-height: 1.5; resize: vertical;
+  font: inherit; font-size: calc(14px * var(--fs)); line-height: 1.5; resize: vertical;
 }
-.preport-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.preport-label { font-size: calc(12px * var(--fs)); color: var(--text-muted); margin-bottom: 4px; }
 .preport-text {
   margin: 0 0 10px; padding: 10px 12px; max-height: 240px; overflow: auto;
   border-radius: 10px; background: var(--bg); border: 1px solid var(--border);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(11px * var(--fs)); line-height: 1.5;
   white-space: pre-wrap; word-break: break-all; color: var(--text);
 }
 .preport-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .preport-actions > * { flex: 1 1 140px; }
 .preport-mail { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
-.preport-message { font-size: 13px; color: #047857; }
+.preport-message { font-size: calc(13px * var(--fs)); color: var(--c-emerald-700); }
 .preport-message--fail { color: var(--danger); }

@@ -19,8 +19,8 @@
 }
 
 .login-icon { width: 64px; height: 64px; margin-bottom: 12px; }
-.login-card h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
-.login-subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: 14px; }
+.login-card h1 { font-size: calc(28px * var(--fs)); font-weight: 700; margin-bottom: 8px; }
+.login-subtitle { color: var(--text-muted); margin-bottom: 28px; font-size: calc(14px * var(--fs)); }
 
 .btn-login {
   display: flex;
@@ -33,28 +33,28 @@
   color: white;
   border: none;
   border-radius: var(--radius);
-  font-size: 16px;
+  font-size: calc(16px * var(--fs));
   font-weight: 600;
   cursor: pointer;
   transition: background .2s;
 }
 .btn-login:hover { background: var(--primary-dark); }
 .btn-login:disabled { opacity: .7; cursor: default; }
-.ms-icon { font-size: 18px; }
+.ms-icon { font-size: calc(18px * var(--fs)); }
 /* Google 로그인 (M-1) */
 .btn-login--google { margin-top: 10px; background: #fff; color: #1F2937; border: 1px solid var(--border); }
 .btn-login--google:hover { background: #F8FAFC; }
-.g-icon { font-weight: 800; color: #4285F4; font-size: 18px; }
-.login-hint { margin-top: 12px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.g-icon { font-weight: 800; color: #4285F4; font-size: calc(18px * var(--fs)); }
+.login-hint { margin-top: 12px; font-size: calc(12px * var(--fs)); color: var(--text-muted); line-height: 1.5; }
 
-.login-error { color: var(--danger); font-size: 13px; margin-top: 12px; }
+.login-error { color: var(--danger); font-size: calc(13px * var(--fs)); margin-top: 12px; }
 
 .config-warning {
-  background: #FEF3C7;
-  border: 1px solid #FCD34D;
+  background: var(--c-amber-100);
+  border: 1px solid var(--c-amber-300);
   border-radius: var(--radius);
   padding: 16px;
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   line-height: 1.6;
 }
 .config-warning code {
@@ -66,7 +66,7 @@
 
 /* 앱 소개·처리방침·약관 (I-038) — 로그인하지 않고도 무슨 앱인지, 데이터가 어디에 있는지 보이게(Google 브랜드 확인에도 필요) */
 .login-intro { margin: -12px 0 24px; padding: 0; list-style: none; text-align: left; display: flex; flex-direction: column; gap: 6px; }
-.login-intro li { position: relative; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--text); }
-.login-intro li::before { content: '✓'; position: absolute; left: 0; color: var(--primary); font-weight: 700; }
-.login-links { margin-top: 20px; display: flex; justify-content: center; gap: 16px; font-size: 12px; }
+.login-intro li { position: relative; padding-left: 18px; font-size: calc(13px * var(--fs)); line-height: 1.5; color: var(--text); }
+.login-intro li::before { content: '✓'; position: absolute; left: 0; color: var(--primary-text); font-weight: 700; }
+.login-links { margin-top: 20px; display: flex; justify-content: center; gap: 16px; font-size: calc(12px * var(--fs)); }
 .login-links a { color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px; }

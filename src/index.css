@@ -14,12 +14,241 @@
   --radius: 12px;
   --shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
   --shadow-lg: 0 10px 25px rgba(0,0,0,.15);
+  /* 글씨 배율 (U-1) — 설정 › 앱 › 글씨 크기. 모든 글씨는 calc(Npx * var(--fs))로 쓴다(displayPrefs 테스트가 지킨다) */
+  --fs: 1;
+  color-scheme: light;
+  /* 글씨로 쓰는 강조색 — 채움(버튼 배경)은 --primary, 글씨는 이것(어두운 테마에서 밝게) */
+  --primary-text: #2563EB;
+  --primary-text-strong: #1D4ED8;
+  /* 말풍선(저장 버튼 위 안내) 배경 — 어두운 표면과 같아지지 않게 */
+  --c-tooltip: #1E293B;
+  /* 색 (U-2) — 화면 CSS는 색을 직접 쓰지 않고 이 토큰을 쓴다. 밝은 테마 값은 예전에 쓰던 색 그대로이고,
+     어두운 테마는 아래 [data-theme] 블록이 바꾼다. 흰 글씨를 얹는 채움 색(버튼·배지 배경)은 그대로 써도 된다 */
+  --c-amber-100: #FEF3C7;
+  --c-amber-200: #FDE68A;
+  --c-amber-300: #FCD34D;
+  --c-amber-50: #FFFBEB;
+  --c-amber-600: #D97706;
+  --c-amber-700: #B45309;
+  --c-amber-800: #92400E;
+  --c-blue-100: #DBEAFE;
+  --c-blue-200: #BFDBFE;
+  --c-blue-50: #EFF6FF;
+  --c-blue-500: #3B82F6;
+  --c-blue-50b: #F8FBFF;
+  --c-blue-800: #1E40AF;
+  --c-emerald-100: #D1FAE5;
+  --c-emerald-50: #ECFDF5;
+  --c-emerald-500: #10B981;
+  --c-emerald-600: #059669;
+  --c-emerald-700: #047857;
+  --c-emerald-800: #065F46;
+  --c-gold-700: #B07800;
+  --c-gray-100: #F3F4F6;
+  --c-gray-200: #E5E7EB;
+  --c-gray-300: #D1D5DB;
+  --c-gray-350: #B0B3B8;
+  --c-gray-400: #9CA3AF;
+  --c-gray-500: #6B7280;
+  --c-gray-600: #4B5563;
+  --c-green-100: #DCFCE7;
+  --c-green-300: #86EFAC;
+  --c-green-50: #F0FDF4;
+  --c-green-600: #16A34A;
+  --c-green-700: #15803D;
+  --c-green-800: #166534;
+  --c-indigo-100: #E0E7FF;
+  --c-indigo-50: #EEF2FF;
+  --c-indigo-700: #4338CA;
+  --c-indigo-800: #3730A3;
+  --c-orange-200: #FED7AA;
+  --c-orange-50: #FFF7ED;
+  --c-orange-50b: #FFF8F0;
+  --c-orange-700: #C2410C;
+  --c-red-100: #FEE2E2;
+  --c-red-200: #FECACA;
+  --c-red-50: #FEF2F2;
+  --c-red-500: #EF4444;
+  --c-red-600: #DC2626;
+  --c-red-700: #B91C1C;
+  --c-red-800: #991B1B;
+  --c-rose-50: #FFF1F2;
+  --c-sky-200: #BAE6FD;
+  --c-sky-50: #F0F9FF;
+  --c-slate-100: #F1F5F9;
+  --c-slate-300: #CBD5E1;
+  --c-violet-100: #EDE9FE;
+  --c-violet-200: #DDD6FE;
+  --c-violet-50: #F5F3FF;
+  --c-violet-600: #7C3AED;
+  --c-violet-700: #6D28D9;
+  --c-yellow-100: #FEF9C3;
+  --c-yellow-300: #FDE047;
+  --c-yellow-800: #854D0E;
+}
+
+/* 어두운 테마 (U-2) — 이 기기 설정이 '어둡게'이거나, '기기 설정 따라'이고 기기가 어두운 모드일 때.
+   두 블록은 같은 값이다(CSS만으로는 한 번에 쓸 수 없다) — 하나를 고치면 다른 하나도 고친다(displayPrefs 테스트가 같은지 본다) */
+:root[data-theme="dark"] {
+  --primary: #2563EB;
+  --primary-dark: #1D4ED8;
+  --primary-text: #60A5FA;
+  --primary-text-strong: #93C5FD;
+  --c-tooltip: #475569;
+  --bg: #0F172A;
+  --surface: #1E293B;
+  --border: #334155;
+  --text: #E2E8F0;
+  --text-muted: #94A3B8;
+  --shadow: 0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
+  --shadow-lg: 0 10px 25px rgba(0,0,0,.6);
+  color-scheme: dark;
+  --c-amber-100: #3A2E12;
+  --c-amber-200: #6B5414;
+  --c-amber-300: #8A6A10;
+  --c-amber-50: #2E2614;
+  --c-amber-600: #FBBF24;
+  --c-amber-700: #FCD34D;
+  --c-amber-800: #FDE68A;
+  --c-blue-100: #1E3A5F;
+  --c-blue-200: #1E40AF;
+  --c-blue-50: #172238;
+  --c-blue-500: #60A5FA;
+  --c-blue-50b: #1A2333;
+  --c-blue-800: #BFDBFE;
+  --c-emerald-100: #12352A;
+  --c-emerald-50: #11291F;
+  --c-emerald-500: #34D399;
+  --c-emerald-600: #34D399;
+  --c-emerald-700: #6EE7B7;
+  --c-emerald-800: #A7F3D0;
+  --c-gold-700: #FBBF24;
+  --c-gray-100: #273449;
+  --c-gray-200: #334155;
+  --c-gray-300: #475569;
+  --c-gray-350: #475569;
+  --c-gray-400: #64748B;
+  --c-gray-500: #94A3B8;
+  --c-gray-600: #CBD5E1;
+  --c-green-100: #14321F;
+  --c-green-300: #166534;
+  --c-green-50: #132A1E;
+  --c-green-600: #4ADE80;
+  --c-green-700: #86EFAC;
+  --c-green-800: #BBF7D0;
+  --c-indigo-100: #272554;
+  --c-indigo-50: #1E1B3A;
+  --c-indigo-700: #A5B4FC;
+  --c-indigo-800: #C7D2FE;
+  --c-orange-200: #7C3A12;
+  --c-orange-50: #2F2216;
+  --c-orange-50b: #2A1F10;
+  --c-orange-700: #FDBA74;
+  --c-red-100: #3B1C22;
+  --c-red-200: #7F1D1D;
+  --c-red-50: #2D1A1F;
+  --c-red-500: #F87171;
+  --c-red-600: #F87171;
+  --c-red-700: #FCA5A5;
+  --c-red-800: #FECACA;
+  --c-rose-50: #2D1A20;
+  --c-sky-200: #075985;
+  --c-sky-50: #14243A;
+  --c-slate-100: #273449;
+  --c-slate-300: #475569;
+  --c-violet-100: #2E2257;
+  --c-violet-200: #4C1D95;
+  --c-violet-50: #221B3A;
+  --c-violet-600: #A78BFA;
+  --c-violet-700: #C4B5FD;
+  --c-yellow-100: #35310F;
+  --c-yellow-300: #7A6A10;
+  --c-yellow-800: #FDE68A;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --primary: #2563EB;
+    --primary-dark: #1D4ED8;
+    --primary-text: #60A5FA;
+    --primary-text-strong: #93C5FD;
+    --c-tooltip: #475569;
+    --bg: #0F172A;
+    --surface: #1E293B;
+    --border: #334155;
+    --text: #E2E8F0;
+    --text-muted: #94A3B8;
+    --shadow: 0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
+    --shadow-lg: 0 10px 25px rgba(0,0,0,.6);
+    color-scheme: dark;
+    --c-amber-100: #3A2E12;
+    --c-amber-200: #6B5414;
+    --c-amber-300: #8A6A10;
+    --c-amber-50: #2E2614;
+    --c-amber-600: #FBBF24;
+    --c-amber-700: #FCD34D;
+    --c-amber-800: #FDE68A;
+    --c-blue-100: #1E3A5F;
+    --c-blue-200: #1E40AF;
+    --c-blue-50: #172238;
+    --c-blue-500: #60A5FA;
+    --c-blue-50b: #1A2333;
+    --c-blue-800: #BFDBFE;
+    --c-emerald-100: #12352A;
+    --c-emerald-50: #11291F;
+    --c-emerald-500: #34D399;
+    --c-emerald-600: #34D399;
+    --c-emerald-700: #6EE7B7;
+    --c-emerald-800: #A7F3D0;
+    --c-gold-700: #FBBF24;
+    --c-gray-100: #273449;
+    --c-gray-200: #334155;
+    --c-gray-300: #475569;
+    --c-gray-350: #475569;
+    --c-gray-400: #64748B;
+    --c-gray-500: #94A3B8;
+    --c-gray-600: #CBD5E1;
+    --c-green-100: #14321F;
+    --c-green-300: #166534;
+    --c-green-50: #132A1E;
+    --c-green-600: #4ADE80;
+    --c-green-700: #86EFAC;
+    --c-green-800: #BBF7D0;
+    --c-indigo-100: #272554;
+    --c-indigo-50: #1E1B3A;
+    --c-indigo-700: #A5B4FC;
+    --c-indigo-800: #C7D2FE;
+    --c-orange-200: #7C3A12;
+    --c-orange-50: #2F2216;
+    --c-orange-50b: #2A1F10;
+    --c-orange-700: #FDBA74;
+    --c-red-100: #3B1C22;
+    --c-red-200: #7F1D1D;
+    --c-red-50: #2D1A1F;
+    --c-red-500: #F87171;
+    --c-red-600: #F87171;
+    --c-red-700: #FCA5A5;
+    --c-red-800: #FECACA;
+    --c-rose-50: #2D1A20;
+    --c-sky-200: #075985;
+    --c-sky-50: #14243A;
+    --c-slate-100: #273449;
+    --c-slate-300: #475569;
+    --c-violet-100: #2E2257;
+    --c-violet-200: #4C1D95;
+    --c-violet-50: #221B3A;
+    --c-violet-600: #A78BFA;
+    --c-violet-700: #C4B5FD;
+    --c-yellow-100: #35310F;
+    --c-yellow-300: #7A6A10;
+    --c-yellow-800: #FDE68A;
+  }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+  font-size: calc(16px * var(--fs)); /* 크기를 따로 정하지 않은 글씨도 배율을 따르게 (U-1) */
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -33,7 +262,7 @@ body {
   color: white;
   border: none;
   border-radius: 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   font-weight: 600;
   cursor: pointer;
   transition: background .2s;
@@ -47,7 +276,7 @@ body {
   color: var(--text);
   border: 1.5px solid var(--border);
   border-radius: 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   cursor: pointer;
 }
 
@@ -58,9 +287,9 @@ body {
   color: white;
   border: none;
   border-radius: 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   font-weight: 600;
   cursor: pointer;
 }
 
-.error-msg { color: var(--danger); font-size: 14px; }
+.error-msg { color: var(--danger); font-size: calc(14px * var(--fs)); }

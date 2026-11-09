@@ -539,7 +539,7 @@ function App() {
             )}
             {error && <p className="error-msg">{error}</p>}
             <button className="btn-primary" onClick={() => loadDb()}>가계부 불러오기</button>
-            {/* 설정 › 정보에 갈 수 없는 화면이라 여기서도 문제를 알릴 수 있게 (I-038) */}
+            {/* 설정 › 앱에 갈 수 없는 화면이라 여기서도 문제를 알릴 수 있게 (I-038) */}
             {error && !showLoadReport && (
               <button type="button" className="btn-secondary" onClick={() => setShowLoadReport(true)}>문제 알리기</button>
             )}

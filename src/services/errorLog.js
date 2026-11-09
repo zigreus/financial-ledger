@@ -7,7 +7,7 @@
  *  - 최근 ERROR_LOG_MAX개만 둔다. 이미 있는 오류가 또 나면 새로 넣지 않고 횟수를 늘려 맨 뒤(최근)로 옮긴다.
  *  - 오류가 아니라 늘 있는 상태 안내(연결 없음·로그인 시간 끝 등, EXPECTED)는 남기지 않는다 — 자리만 차지해 진짜 오류를 밀어낸다.
  *  - 취소(AbortError)와 다른 사이트 스크립트의 내용 없는 오류('Script error.')도 남기지 않는다.
- *  - 보여 주고 보낼 글은 ./problemReport.js가 만든다(설정 › 정보와 불러오기 실패·화면 오류 화면의 '문제 알리기').
+ *  - 보여 주고 보낼 글은 ./problemReport.js가 만든다(설정 › 앱과 불러오기 실패·화면 오류 화면의 '문제 알리기').
  */
 /* global __APP_VERSION__ */
 import { toDateStr } from './dateUtils';

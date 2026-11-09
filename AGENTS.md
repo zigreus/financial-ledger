@@ -10,7 +10,7 @@
 
 - 가족이 함께 쓰는 가계부 웹앱입니다. 서버가 없습니다.
 - **운영자에게 가는 데이터가 없습니다.** 사용 지표·오류도 자동으로 보내지 않습니다(익명이라도, 외부 분석 도구도). 오류 보고가 필요하면 사용자가 내용을 보고 직접 보내는 방식만 씁니다. (사용자 결정, ROADMAP F-4)
-  - 오류는 `services/errorLog.js`가 이 기기에만 남기고(가린 메시지·위치·시각), 설정 › 정보의 '문제 알리기'에서 사용자가 보고 직접 복사·메일로 보냅니다. (I-038)
+  - 오류는 `services/errorLog.js`가 이 기기에만 남기고(가린 메시지·위치·시각), 설정 › 앱의 '문제 알리기'에서 사용자가 보고 직접 복사·메일로 보냅니다. (I-038)
   - **앱이 기기 밖으로 보내는 것(새 외부 서비스, AI로 보내는 범위)이나 기기에 두는 것을 바꾸면 `public/privacy.html`(개인정보처리방침)도 함께 고칩니다.** 운영자 이름·문의 메일은 `src/config.js`와 두 정적 페이지(`privacy.html`·`terms.html`)가 같아야 합니다. (I-038)
 - 기술: React 18, Vite 6(개발 서버·빌드), Vitest(테스트), sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`). 선택으로 Google 로그인 + Google Drive(`financial-ledger/ledger.db`, M-1·I-031)
 - 모바일 우선, UI 문구는 한국어입니다.
@@ -35,7 +35,8 @@
 | `src/services/quickEntry.js` + `components/AIEntry` | 'AI 입력' 하나로 사진·카드 문자·말을 갈래 지어 읽고, 늘 넣던 거래만 바로 넣기(`familiarity`). 바로 넣은 것은 App 알림·확인 화면의 되돌리기(`removeAddedTransactions`, 그 순간의 DB에서 넣은 그대로인 행만) |
 | `src/services/txFilters.js` + txSummary | 거래내역 필터(기간·여러 개 선택·순지출 금액 범위·저장한 필터)와 걸러진 결과의 집계·AI 요약(집계만 보냄) |
 | `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
-| `src/services/errorLog.js` + problemReport + `components/common/ProblemReport.js` | 문제 알리기: 처리 못 한 오류·화면 오류(`common/ErrorBoundary`)·화면에 알린 오류를 이 기기에만 남김(최근 20건, 가림, 늘 있는 상태 안내는 뺌) / 보낼 글 / 미리 보기와 복사·메일. 설정 › 정보(`SettingsView/sections/AboutSection.js`), 가계부를 불러오지 못한 화면, 화면 오류 화면에서 쓴다(뒤의 둘은 `common/lazyProblemReport`). 앱 버전은 빌드가 적는다(`__APP_VERSION__`, vite.config.mjs) (I-038) |
+| `src/services/errorLog.js` + problemReport + `components/common/ProblemReport.js` | 문제 알리기: 처리 못 한 오류·화면 오류(`common/ErrorBoundary`)·화면에 알린 오류를 이 기기에만 남김(최근 20건, 가림, 늘 있는 상태 안내는 뺌) / 보낼 글 / 미리 보기와 복사·메일. 설정 › 앱(`SettingsView/sections/AboutSection.js`), 가계부를 불러오지 못한 화면, 화면 오류 화면에서 쓴다(뒤의 둘은 `common/lazyProblemReport`). 앱 버전은 빌드가 적는다(`__APP_VERSION__`, vite.config.mjs) (I-038) |
+| `src/services/displayPrefs.js` + `SettingsView/sections/DisplaySettings.js` | 이 기기 화면: 글씨 크기(`--fs`)·화면 테마(`data-theme`, 기본 밝게) — 설정 › 앱. 앱을 열 때는 `index.html`의 스크립트가 먼저 적용 (U-1·U-2, I-039·I-040) |
 | `public/privacy.html` + `terms.html` + `src/config.js` | 개인정보처리방침·이용약관(로그인 없이 열리는 정적 페이지, 서비스 워커는 앱 화면으로 대신하지 않음) / 설정값: Azure 클라이언트 ID(`VITE_AZURE_CLIENT_ID`로 덮어씀), 운영자 이름·문의 메일(정하기 전: 앱 이름·빈 값) (I-038) |
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/data/starterTemplates.js` + `components/Onboarding` | 첫 실행 기본값(가구 유형별 카테고리·결제수단)과 안내. 빈 가계부(`isBlankLedger`)에만, 확정할 때 `applyStarterSetup`으로 한 번에 넣음 |
@@ -148,6 +149,10 @@
 - **첫 화면(거래내역)에 필요 없는 새 탭·창은 `App/screens.js`에 `lazyScreen`으로 추가합니다** — 열 때 불러오고 로그인 뒤 미리 불러 둡니다. App에서 그 화면 모듈을 직접 import하면 다시 첫 화면 코드에 섞입니다. (I-033)
   - 창은 `<Suspense fallback={<ModalLoading />}>`로 감쌉니다. 빌드는 나눈 파일을 index.html에 prefetch로 적어 서비스 워커가 함께 받아 둡니다(vite.config.mjs).
   - CSS는 한 파일입니다(`cssCodeSplit: false`). 순서는 첫 화면과 함께 불러오는 화면 → 나눈 화면이므로, 화면 CSS는 자기 접두어 클래스로 쓰고 다른 화면의 같은 선택자를 덮어쓰지 않습니다.
+- **글씨 크기는 `calc(Npx * var(--fs))`로 씁니다** (CSS의 `font-size`, 인라인 `fontSize: 'calc(13px * var(--fs))'`). 설정 › 앱의 글씨 크기가 `--fs`(배율)를 바꿉니다. px를 그대로 쓰면 그 글씨만 커지지 않습니다. (ROADMAP U-1, I-039 — `displayPrefs.test.js`가 지킵니다)
+  - 한 줄에 다 보여야 하는 곳(설정 탭, 머리글 제목)은 `calc(14px * min(var(--fs), 1))`처럼 배율에 상한을 둡니다 — 크게 고르면 탭이 밀려나 그 설정으로 돌아갈 수 없게 되지 않게.
+- **색은 `src/index.css`의 토큰을 씁니다** (`var(--text)`·`var(--surface)`·`var(--c-amber-100)` 등). 어두운 테마(설정 › 앱 › 화면 테마)가 토큰 값만 바꾸므로, 배경에 밝은 색(`#fff`·`#FEF3C7` 등)을 그대로 쓰면 어두운 화면에 흰 판이 남습니다. 흰 글씨를 얹는 채움 색(버튼·배지 배경)과 그 위의 글씨는 그대로 써도 됩니다. 강조색을 글씨로 쓸 때는 `var(--primary-text)`(채움은 `var(--primary)`)를 씁니다 — 어두운 테마에서 글씨만 밝아집니다. 새 색은 `:root`와 두 어두운 블록에 함께 더합니다. (ROADMAP U-2, I-040 — 같은 테스트)
+- 이 기기의 화면 설정(글씨 크기·테마)은 `services/displayPrefs.js`(localStorage)에 두고, 앱을 열 때 `index.html`의 짧은 스크립트가 그리기 전에 먼저 적용합니다(같은 열쇠·값 — 테스트가 봅니다).
 
 ## 7. AI 연동
 

@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-// 설정 › 정보 (I-038, ROADMAP M-5) — 버전·운영·문의, 처리방침·약관 링크, 문제 알리기(보고 직접 복사·메일, 자동으로 보내지 않음)
+// 설정 › 앱 (I-038, ROADMAP M-5) — 버전·운영·문의, 처리방침·약관 링크, 문제 알리기(보고 직접 복사·메일, 자동으로 보내지 않음)
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import AboutSection from '../SettingsView/sections/AboutSection';
@@ -126,4 +126,29 @@ test('메일에는 최근 오류 5건만 담고, 그보다 많으면 복사하�
   expect(body).toContain('(7건 중 최근 5건)');
   expect(body).not.toContain(' 오류 1\n');
   expect(container.textContent).toContain('메일에는 최근 오류 5건만 담겨요');
+});
+
+describe('이 기기 화면 (U-1 글씨 크기, U-2 화면 테마)', () => {
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.style.removeProperty('--fs');
+  });
+  // 묶음 이름(aria-labelledby)이 실제 이름표를 가리키는지까지 — 화면 낭독기가 '글씨 크기'로 읽게
+  const group = (name) => [...container.querySelectorAll('[role="radiogroup"]')]
+    .find(g => document.getElementById(g.getAttribute('aria-labelledby'))?.textContent === name);
+  const radio = (name, label) => [...group(name).querySelectorAll('[role="radio"]')].find(b => b.textContent === label);
+
+  test('고르면 바로 화면 전체에 적용되고, 고른 것이 표시된다 — 기본은 보통·밝게', async () => {
+    await show();
+    expect(radio('글씨 크기', '보통').getAttribute('aria-checked')).toBe('true');
+    expect(radio('화면 테마', '밝게').getAttribute('aria-checked')).toBe('true');
+    act(() => { radio('글씨 크기', '아주 크게').click(); });
+    expect(document.documentElement.style.getPropertyValue('--fs')).toBe('1.3');
+    expect(radio('글씨 크기', '아주 크게').getAttribute('aria-checked')).toBe('true');
+    expect(radio('글씨 크기', '보통').getAttribute('aria-checked')).toBe('false');
+    act(() => { radio('화면 테마', '어둡게').click(); });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(radio('화면 테마', '어둡게').getAttribute('aria-checked')).toBe('true');
+    expect(window.localStorage.getItem('ledger_theme')).toBe('dark');
+  });
 });

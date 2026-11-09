@@ -9,6 +9,22 @@
     <link rel="apple-touch-icon" href="/logo192_transparent.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>지금 가계부</title>
+    <script>
+      // 이 기기의 화면 설정(글씨 크기·테마, ROADMAP U-1·U-2)을 그리기 전에 적용한다 — 어두운 테마가 밝게 번쩍이지 않게.
+      // src/services/displayPrefs.js와 같은 열쇠·값이다(displayPrefs 테스트가 같은지 본다). 앱이 열리면 그 파일이 다시 적용한다.
+      (function () {
+        try {
+          var scale = { small: 0.9, large: 1.15, xlarge: 1.3 }[localStorage.getItem('ledger_font_scale')];
+          if (scale) document.documentElement.style.setProperty('--fs', String(scale));
+          var theme = localStorage.getItem('ledger_theme');
+          if (theme === 'dark' || theme === 'system') document.documentElement.setAttribute('data-theme', theme);
+          // 위쪽 막대 색도 — 어두우면 머리글과 같은 색(displayPrefs.js의 DARK_BAR_COLOR, 밝은 색은 data-light에 둔다)
+          var dark = theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var bar = document.querySelector('meta[name="theme-color"]');
+          if (dark && bar) { bar.setAttribute('data-light', bar.getAttribute('content')); bar.setAttribute('content', '#1E293B'); }
+        } catch (e) { /* 저장소가 막혀 있으면 기본(보통·밝게) */ }
+      })();
+    </script>
   </head>
   <body>
     <noscript>

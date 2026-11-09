@@ -715,7 +715,7 @@ export function AccountForm({ account, onSave, onCancel }) {
           <label>
             잔액 기준일
             <input type="date" value={balanceDate} onChange={e => setBalanceDate(e.target.value)} />
-            <small style={{ fontSize: '11px', fontWeight: 400, lineHeight: 1.5 }}>
+            <small style={{ fontSize: 'calc(11px * var(--fs))', fontWeight: 400, lineHeight: 1.5 }}>
               기준일이 시작될 때(그날 거래 전)의 잔액을 입력하세요.
               기준일부터의 내역만 잔액에 더하고, 그 전 내역은 기록으로만 남습니다.
             </small>
@@ -1165,7 +1165,7 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
                 <input type="checkbox" checked={includeDuplicates} onChange={e => setIncludeDuplicates(e.target.checked)} />
                 <span>
                   이미 있는 내역과 같은 {duplicateCount}건도 불러오기
-                  <small style={{ display: 'block', fontSize: '11px', fontWeight: 400 }}>
+                  <small style={{ display: 'block', fontSize: 'calc(11px * var(--fs))', fontWeight: 400 }}>
                     날짜·구분·금액·내용이 같은 내역이 이 계좌에 이미 있습니다. 보통은 체크하지 않습니다.
                   </small>
                 </span>
@@ -1204,7 +1204,7 @@ function AccountImportModal({ db, accountId, onImport, onClose }) {
 
         {step === 'done' && (
           <div className="acct-form" style={{ textAlign: 'center', paddingTop: '24px' }}>
-            <p style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>완료!</p>
+            <p style={{ fontSize: 'calc(18px * var(--fs))', fontWeight: '600', marginBottom: '8px' }}>완료!</p>
             <p className="acct-import-info">{importedCount}건이 추가되었습니다.</p>
             <div className="acct-form-actions" style={{ marginTop: '20px' }}>
               <button className="acct-btn-save" onClick={onImport}>확인</button>

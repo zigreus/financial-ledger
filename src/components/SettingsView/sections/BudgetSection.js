@@ -42,12 +42,12 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
   return (
     <div>
       <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>목표금액 표시</div>
+        <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600', marginBottom: '12px' }}>목표금액 표시</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div style={{ fontSize: '13px' }}>PC</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>화면 너비 640px 초과</div>
+              <div style={{ fontSize: 'calc(13px * var(--fs))' }}>PC</div>
+              <div style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)' }}>화면 너비 640px 초과</div>
             </div>
             <button
               className={`goal-display-toggle${showGoalPc ? ' goal-display-toggle--on' : ''}`}
@@ -59,8 +59,8 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div style={{ fontSize: '13px' }}>모바일</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>화면 너비 640px 이하</div>
+              <div style={{ fontSize: 'calc(13px * var(--fs))' }}>모바일</div>
+              <div style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)' }}>화면 너비 640px 이하</div>
             </div>
             <button
               className={`goal-display-toggle${showGoalMobile ? ' goal-display-toggle--on' : ''}`}
@@ -73,7 +73,7 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
         </div>
       </div>
       <div style={{ marginBottom: '20px', opacity: (showGoalPc || showGoalMobile) ? 1 : 0.4, pointerEvents: (showGoalPc || showGoalMobile) ? 'auto' : 'none', transition: 'opacity .2s' }}>
-        <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+        <div style={{ fontSize: 'calc(13px * var(--fs))', color: 'var(--text-muted)', marginBottom: '8px' }}>
           상시 월 목표금액 — 개별 월에서 덮어쓰기 가능합니다.
         </div>
         {editingDefaultGoal ? (
@@ -95,7 +95,7 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '20px', fontWeight: '700', color: 'var(--primary)' }}>
+            <span style={{ fontSize: 'calc(20px * var(--fs))', fontWeight: '700', color: 'var(--primary-text)' }}>
               {defaultGoal !== '' ? `${Number(defaultGoal).toLocaleString()}원` : '미설정'}
             </span>
             <button
@@ -108,7 +108,7 @@ export default function BudgetSection({ db, dataVersion, onChanged, setError }) 
           </div>
         )}
       </div>
-      <div style={{ fontSize: '13px', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+      <div style={{ fontSize: 'calc(13px * var(--fs))', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
         개별 월 목표금액은 거래내역 화면의 월 헤더에서 설정할 수 있습니다.
       </div>
 

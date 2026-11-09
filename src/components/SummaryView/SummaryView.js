@@ -629,7 +629,7 @@ function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onT
                               background: r.color || eventTypeMap[r.event_type]?.color || '#9CA3AF' }} />
                             <div style={{ overflow: 'hidden' }}>
                               <span style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.event_title}<span className="drilldown-arrow">›</span></span>
-                              <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              <span style={{ display: 'block', fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {eventTypeMap[r.event_type]?.label ?? r.event_type}
                                 {r.date_from && <> · {r.date_from.slice(5)}{r.date_to ? ` ~ ${r.date_to.slice(5)}` : ''}</>}
                               </span>
@@ -807,7 +807,7 @@ function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onT
                         <td className="total-cell">{formatAmount(g.total - g.discount)}원</td>
                       </tr>
                       {g.types.length > 1 && g.types.map(t => (
-                        <tr key={t.event_type} style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <tr key={t.event_type} style={{ fontSize: 'calc(12px * var(--fs))', color: 'var(--text-muted)' }}>
                           <td style={{ paddingLeft: 16 }}>
                             <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
                               background: eventTypeMap[t.event_type]?.color || '#9CA3AF', marginRight: 5, verticalAlign: 'middle' }} />

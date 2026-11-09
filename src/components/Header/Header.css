@@ -12,16 +12,17 @@
   padding: 0 16px;
 }
 
-.header-left { display: flex; align-items: center; gap: 6px; }
+.header-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .header-logo { width: 32px; height: 32px; }
-.header-title { font-size: 20px; font-weight: 700; }
-.header-right { display: flex; align-items: center; gap: 8px; }
+/* 한 줄로 — 고정 높이(56px) 머리글을 넘지 않게, 크게 고를수록 1.15배까지만 (U-1) */
+.header-title { font-size: calc(20px * min(var(--fs), 1.15)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .header-offline {
   padding: 4px 8px;
   border-radius: 999px;
-  background: #FEF3C7;
-  color: #92400E;
-  font-size: 12px;
+  background: var(--c-amber-100);
+  color: var(--c-amber-800);
+  font-size: calc(12px * var(--fs));
   font-weight: 700;
   white-space: nowrap;
 }
@@ -31,13 +32,13 @@
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
-  font-size: 13px;
+  font-size: calc(13px * var(--fs));
   cursor: pointer;
   white-space: nowrap;
 }
 .btn-header:disabled { opacity: .5; cursor: not-allowed; }
 .btn-save { background: var(--primary); color: white; border-color: var(--primary); font-weight: 600; }
-.btn-refresh { font-size: 16px; padding: 6px 10px; }
-.btn-settings { font-size: 16px; padding: 6px 10px; }
+.btn-refresh { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
+.btn-settings { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
 .btn-settings.active { background: var(--primary); border-color: var(--primary); }
-.btn-user { max-width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.btn-user { max-width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: calc(12px * var(--fs)); }

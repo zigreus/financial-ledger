@@ -97,8 +97,8 @@ export function OptionalFeatureHead({ featureKey, enabled, onToggle }) {
   return (
     <div className="cb-settings-head" id={featureAnchorId(f.key)}>
       <div>
-        <div style={{ fontSize: '14px', fontWeight: '600' }}>{f.label}</div>
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>필요할 때만 켜세요. {f.desc}</div>
+        <div style={{ fontSize: 'calc(14px * var(--fs))', fontWeight: '600' }}>{f.label}</div>
+        <div style={{ fontSize: 'calc(11px * var(--fs))', color: 'var(--text-muted)' }}>필요할 때만 켜세요. {f.desc}</div>
       </div>
       <FeatureSwitch label={f.label} on={enabled} onToggle={onToggle} />
     </div>

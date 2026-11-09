@@ -248,7 +248,7 @@ export function EventForm({ db, editingEvent, initialDateFrom, onSave, onDelete,
           <button className="cv-bs-close" onClick={onCancel}>✕</button>
         </div>
         <div className="cv-form-body">
-          {error && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</div>}
+          {error && <div style={{ color: 'var(--danger)', fontSize: 'calc(13px * var(--fs))' }}>{error}</div>}
 
           <div className="cv-form-field">
             <label className="cv-form-label">제목 *</label>

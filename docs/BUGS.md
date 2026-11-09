@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-039
+다음 번호: B-094, I-041
 
 ## 요약표
 
@@ -147,6 +147,8 @@
 | I-036 | ✅ | - | 알림 | 예산·잔액·리포트 알림이 띠 여러 개로 흩어지고, 구독이 결제되기 전에 알 길이 없음 — 푸시(서버) 대신 앱을 열 때 한 카드로 (ROADMAP C-12) |
 | I-037 | ✅ | - | 정기지출 | 정기지출의 결제일을 바꾸면 미리 등록된 앞으로의 거래는 옛 날짜로 남아 하나씩 고쳐야 함 |
 | I-038 | ✅ | - | 출시 준비 | 처리방침·약관이 없고, 로그인 화면에 앱 소개가 없으며, 문제가 생겨도 알릴 길이 없음 (ROADMAP M-5 중 바로 할 수 있는 것) |
+| I-039 | ✅ | - | 화면 | 글씨 크기가 15px 등으로 고정돼 부모님·작은 휴대폰에서 읽기 어렵고 키울 방법이 없음 (ROADMAP U-1) |
+| I-040 | ✅ | - | 화면 | 밝은 화면뿐이라 밤에 적을 때 눈부시고 휴대폰의 다크 모드를 따르지 않음 (ROADMAP U-2) |
 
 
 ## 상세
@@ -1291,3 +1293,19 @@
 - 원인: 지금까지 가족끼리만 써서 출시 문서와 문의 창구를 만들지 않았다.
 - 해결: 정적 페이지 public/privacy.html·terms.html(운영자는 자동으로 수집·보관하지 않음, 드라이브·AI(기능별 범위)·기기 저장, 직접 보낸 문의·문제 알리기의 항목·목적·보유 기간, 운영자 이름은 앱 이름·문의는 준비 중)과 로그인 화면 소개·링크, 설정 › 정보(버전·운영·문의·링크)와 '문제 알리기'(이 기기에만 남는 오류 기록 20건 — 가린 메시지·위치·시각, 늘 있는 상태 안내는 뺌 — 과 앱 정보를 보여 주고 사용자가 직접 복사·메일, 자동으로 보내지 않음; 불러오기 실패 화면과 새 화면 오류 화면(ErrorBoundary)에서도), 빌드 버전 표시, Azure 클라이언트 ID를 환경값으로 덮어쓰게, 서비스 워커는 연결이 없을 때 두 페이지를 앱 화면으로 대신하지 않게.
 - 파일: public/privacy.html·terms.html·sw.js, index.html, src/services/errorLog.js·problemReport.js, src/components/common/ProblemReport.js·ProblemReport.css·lazyProblemReport.js·ErrorBoundary.js·ErrorBoundary.css, src/components/SettingsView/sections/AboutSection.js·SettingsView.js·SettingsView.css, src/components/LoginPage/LoginPage.js·LoginPage.css, src/components/App/App.js·App.css·screens.js, src/index.js, src/config.js, vite.config.mjs, src/services/__tests__/errorLog.test.js, src/components/__tests__/About.ui.test.js, src/components/App/__tests__/App.google.test.js·App.problemReport.test.js, AGENTS.md, SETUP.md, docs/ROADMAP.md
+
+### I-039 글씨 크기가 고정돼 부모님·작은 휴대폰에서 읽기 어렵고 키울 방법이 없음 (ROADMAP U-1)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 화면
+- 문제: 화면 글씨가 15px 등 px로 고정돼 있어, 글씨를 크게 보고 싶은 가족이 앱 안에서 키울 방법이 없다(사용자 요청).
+- 원인: 글씨 크기를 화면마다 px로 직접 적었고(약 640곳) 배율 설정이 없었다.
+- 해결: 모든 글씨를 calc(Npx * var(--fs))로 바꾸고(본문 기본 16px 포함), 설정 › 앱 › 이 기기 화면에서 작게·보통·크게·아주 크게(0.9·1·1.15·1.3)를 고르면 기기별로 저장해 바로 적용, 앱을 열 때 index.html이 그리기 전에 적용, 새 px 글씨는 테스트가 막는다(한 줄에 다 보여야 하는 설정 탭·머리글 제목은 배율 상한).
+- 파일: src/services/displayPrefs.js, src/components/SettingsView/sections/DisplaySettings.js·AboutSection.js·SettingsView.js·SettingsView.css, index.html, src/index.js, src/index.css, 화면 CSS·인라인 fontSize(38개 파일), src/services/__tests__/displayPrefs.test.js, src/components/__tests__/About.ui.test.js, AGENTS.md, SETUP.md
+
+### I-040 밝은 화면뿐이라 밤에 적을 때 눈부시고 휴대폰의 다크 모드를 따르지 않음 (ROADMAP U-2)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 화면
+- 문제: 어두운 테마가 없어 밤에 가계부를 적을 때 흰 화면이 눈부시고, 휴대폰을 다크 모드로 써도 앱은 밝게 보인다(사용자 요청).
+- 원인: 화면 CSS에 색을 직접 적은 곳이 약 300곳이라 테마로 바꿀 수 없었다.
+- 해결: 하드코딩 색을 테마 토큰(--c-*, 밝은 값은 원래 색 그대로)으로 바꾸고 index.css에 어두운 값을 두어, 설정 › 앱 › 이 기기 화면에서 밝게(기본)·어둡게·기기 설정 따라를 고르면 기기별로 적용(위쪽 막대 색 포함), 흰 글씨를 얹는 채움 색과 그 위 글씨는 그대로, 강조색 글씨는 글씨 전용 토큰(--primary-text)으로 어두운 화면에서 밝게, 배경에 밝은 색·글씨에 직접 색을 쓰면 테스트가 막는다.
+- 파일: src/index.css, src/services/displayPrefs.js, index.html, 화면 CSS(색 토큰), src/components/SettingsView/sections/RecurringSection.js, src/components/TransactionList/TransactionList.css(쓰지 않던 .dark 규칙 삭제), src/services/__tests__/displayPrefs.test.js, AGENTS.md, SETUP.md

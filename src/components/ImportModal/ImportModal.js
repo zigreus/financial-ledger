@@ -630,7 +630,7 @@ function ImportModal({ db, dataVersion, onImport, onClose }) {
         {step === 'done' && (
           <div className="tx-form">
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <p style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>완료!</p>
+              <p style={{ fontSize: 'calc(18px * var(--fs))', fontWeight: '600', marginBottom: '8px' }}>완료!</p>
               <p className="import-info">{importedCount}건이 추가되었습니다.</p>
             </div>
             <div className="form-actions">
