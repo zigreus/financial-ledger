@@ -516,8 +516,12 @@
   font-size: 13px;
   line-height: 1.5;
 }
-.balance-alert-icon { flex-shrink: 0; }
-.balance-alert-list { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+/* 확인할 것 (I-036) — 알림을 한 카드에. 앱을 열면 이 카드로 스크롤한다(띄울 높이는 잰 필터바 높이로 — 인라인 style) */
+.open-notices-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.open-notices-title { margin: 0; font-size: 12px; font-weight: 700; color: #B45309; }
+.open-notices-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.open-notice { display: flex; align-items: flex-start; gap: 6px; }
+.open-notice-icon { flex-shrink: 0; }
 .balance-alert-link {
   display: block;
   width: 100%;

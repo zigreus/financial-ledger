@@ -10,7 +10,7 @@ import * as M from '../../services/dbManager';
 import { currentYearMonth } from '../../services/dateUtils';
 import CategoryBudgetSettings from '../SettingsView/sections/CategoryBudgetSettings';
 import CategoryBudgetPanel, { shortWon } from '../SummaryView/CategoryBudgetPanel';
-import BudgetAlertBanner from '../TransactionList/BudgetAlertBanner';
+import OpenNotices from '../TransactionList/OpenNotices';
 import TransactionList from '../TransactionList/TransactionList';
 import SummaryView, { showSummaryMonth } from '../SummaryView/SummaryView';
 
@@ -227,22 +227,22 @@ describe('거래내역 — 예산 알림', () => {
       { category: '식비', budget: 100000, spent: 85000, ratio: 0.85, level: 'warn' },
       { category: '교통', budget: 50000, spent: 51000, ratio: 1.02, level: 'over' },
     ];
-    await render(<BudgetAlertBanner alerts={alerts} onOpenBudget={onOpenBudget} />);
+    await render(<OpenNotices budgetAlerts={alerts} onOpenBudget={onOpenBudget} />);
     expect(container.textContent).toContain('식비 이번 달 예산의 85%를 썼어요 (15,000원 남음)');
     expect(container.textContent).toContain('교통 이번 달 예산 50,000원을 1,000원 넘었어요');
     await click(container.querySelector('.balance-alert-link'));
     expect(onOpenBudget).toHaveBeenCalled();
     await click(container.querySelector('.balance-alert-close'));
-    expect(container.querySelector('.budget-alert')).toBeNull();
+    expect(container.querySelector('.open-notice-budget')).toBeNull();
     await render(<div />);
-    await render(<BudgetAlertBanner alerts={alerts} onOpenBudget={onOpenBudget} />);
-    expect(container.querySelector('.budget-alert')).toBeNull();
+    await render(<OpenNotices budgetAlerts={alerts} onOpenBudget={onOpenBudget} />);
+    expect(container.querySelector('.open-notice-budget')).toBeNull();
     // 식비가 80% 아래로 내려가도 이미 닫은 교통 초과는 다시 뜨지 않는다
-    await render(<BudgetAlertBanner alerts={[alerts[1]]} onOpenBudget={onOpenBudget} />);
-    expect(container.querySelector('.budget-alert')).toBeNull();
+    await render(<OpenNotices budgetAlerts={[alerts[1]]} onOpenBudget={onOpenBudget} />);
+    expect(container.querySelector('.open-notice-budget')).toBeNull();
     // 식비가 주의에서 초과로 바뀌면 그것만 새로 알린다
-    await render(<BudgetAlertBanner alerts={[{ ...alerts[0], spent: 120000, ratio: 1.2, level: 'over' }, alerts[1]]} onOpenBudget={onOpenBudget} />);
-    expect([...container.querySelectorAll('.budget-alert li')].map(li => li.textContent)).toEqual([
+    await render(<OpenNotices budgetAlerts={[{ ...alerts[0], spent: 120000, ratio: 1.2, level: 'over' }, alerts[1]]} onOpenBudget={onOpenBudget} />);
+    expect([...container.querySelectorAll('.open-notice-budget')].map(li => li.textContent)).toEqual([
       expect.stringContaining('식비 이번 달 예산 100,000원을 20,000원 넘었어요'),
     ]);
   });
@@ -251,12 +251,12 @@ describe('거래내역 — 예산 알림', () => {
     M.setDefaultCategoryBudget(db, '식비', 100000);
     spend('식비', 90000);
     await render(<TransactionList {...props()} />);
-    expect(container.querySelector('.budget-alert')).toBeNull();              // 꺼져 있다
+    expect(container.querySelector('.open-notice-budget')).toBeNull();              // 꺼져 있다
     M.setCategoryBudgetEnabled(db, true);
     const onOpenBudget = vi.fn();
     await render(<TransactionList {...props()} dataVersion={1} onOpenBudget={onOpenBudget} />);
-    expect(container.querySelector('.budget-alert').textContent).toContain('식비');
-    await click(container.querySelector('.budget-alert .balance-alert-link'));
+    expect(container.querySelector('.open-notice-budget').textContent).toContain('식비');
+    await click(container.querySelector('.open-notice-budget .balance-alert-link'));
     expect(onOpenBudget).toHaveBeenCalledWith(MONTH);
   });
 });

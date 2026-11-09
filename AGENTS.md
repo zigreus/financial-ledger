@@ -9,13 +9,14 @@
 ## 1. 프로젝트 한눈에
 
 - 가족이 함께 쓰는 가계부 웹앱입니다. 서버가 없습니다.
+- **운영자에게 가는 데이터가 없습니다.** 사용 지표·오류도 자동으로 보내지 않습니다(익명이라도, 외부 분석 도구도). 오류 보고가 필요하면 사용자가 내용을 보고 직접 보내는 방식만 씁니다. (사용자 결정, ROADMAP F-4)
 - 기술: React 18, Vite 6(개발 서버·빌드), Vitest(테스트), sql.js(브라우저 SQLite), Microsoft Graph(MSAL), OneDrive 파일 하나(`Apps/financial-ledger/ledger.db`). 선택으로 Google 로그인 + Google Drive(`financial-ledger/ledger.db`, M-1·I-031)
 - 모바일 우선, UI 문구는 한국어입니다.
 
 | 위치 | 역할 |
 |---|---|
 | `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
-| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것), monthlyReport(월간 리포트, 선택 기능 — 규칙으로 계산, 문장 다듬기는 services/monthlyReportAI), taxSummary(연말정산 참고 합계, 선택 기능 — 결제수단 유형·카테고리 항목, 공제액은 계산하지 않음), tripSplit(여행 일행 정산, 선택 기능 — 사람은 이름으로 참조). 내부 도우미는 common·recurringDates |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것, 결제 예정), monthlyReport(월간 리포트, 선택 기능 — 규칙으로 계산, 문장 다듬기는 services/monthlyReportAI), taxSummary(연말정산 참고 합계, 선택 기능 — 결제수단 유형·카테고리 항목, 공제액은 계산하지 않음), tripSplit(여행 일행 정산, 선택 기능 — 사람은 이름으로 참조). 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |
@@ -35,6 +36,7 @@
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/data/starterTemplates.js` + `components/Onboarding` | 첫 실행 기본값(가구 유형별 카테고리·결제수단)과 안내. 빈 가계부(`isBlankLedger`)에만, 확정할 때 `applyStarterSetup`으로 한 번에 넣음 |
 | `src/components/*` | 화면 |
+| `src/components/TransactionList/OpenNotices.js` | 확인할 것: 앱을 열면 거래내역 맨 위에 보이는 알림 카드 하나(잔액 위험·예산·구독 결제 예정·지난달 리포트, 닫은 기록은 기기별). 거래내역은 이 카드가 있으면 이번 달 대신 이 카드로 열린다 (I-036, B-093) |
 | `src/components/App/screens.js` + `common/lazyScreen.js` | 열 때 불러오는 화면(요약·캘린더·계좌·설정·창들, 입력 창의 AI 입력은 `AIEntry/lazyAIEntry.js`)과 미리 불러오기(`preloadScreens`), 못 불러왔을 때의 다시 시도 (I-033) |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
 
@@ -132,6 +134,7 @@
 - 모바일 우선입니다. UI 문구는 한국어로 쓰고 존댓말 안내체를 씁니다.
 - **모든 가족이 쓰지 않을 기능은 선택 기능으로 만듭니다.** 설정에서 켜고 끄고(기본은 꺼짐), 꺼 두면 그 기능의 화면이 보이지 않습니다. 끄면 화면만 감추고 정해 둔 값은 남깁니다. 가족 공통이면 가계부 DB의 `settings`, 기기별 취향이면 localStorage에 둡니다. (사용자 요청, I-025)
   - 새 선택 기능은 `SettingsView/optionalFeatures.js`의 `OPTIONAL_FEATURES`에 한 줄 더해 설정 › 선택 기능에 나오게 하고, 원래 자리의 스위치는 `OptionalFeatureHead`를 씁니다(이름·설명이 두 곳에서 같게). (I-032)
+- **알림은 앱을 열 때 거래내역의 '확인할 것' 카드 한 곳에만 보입니다.** 새 알림은 `TransactionList/OpenNotices.js`에 항목으로 더하고 띠를 따로 만들지 않습니다. 앱이 꺼져 있을 때의 푸시 알림은 쓰지 않습니다. (사용자 결정, I-036, B-093)
 - 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
 - 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)
 - `dangerouslySetInnerHTML`은 쓰지 않습니다. AI 응답과 사용자 입력은 텍스트로만 렌더링합니다.

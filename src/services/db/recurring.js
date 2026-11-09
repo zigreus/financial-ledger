@@ -1,7 +1,7 @@
 // 정기지출 템플릿과 자동등록(빠진 달 보충 포함), 등록 기록.
 
 import { todayLocal, withTransaction } from './common';
-import { resolveDay, ymOf } from './recurringDates';
+import { recurringTxDateFor, ymOf } from './recurringDates';
 import { evaluateDiscountRule, getDiscountRules } from './discounts';
 
 // ── 정기지출 템플릿 ───────────────────────────────────────────────
@@ -181,7 +181,7 @@ export function runAutoRegister(db, now = new Date()) {
       }
 
       candidates.slice(-AUTO_REGISTER_MAX_BACKFILL).forEach(ym => {
-        const [year, month] = ym.split('-').map(Number);
+        const month = Number(ym.slice(5, 7));
         if (r.frequency === 'annual' && Number(r.month_of_year) !== month) return;
 
         const alreadyDone = db.exec(
@@ -190,8 +190,7 @@ export function runAutoRegister(db, now = new Date()) {
         );
         if (alreadyDone[0]?.values.length) return;
 
-        const day = resolveDay(year, month, r.day_of_month);
-        const txDate = `${ym}-${String(day).padStart(2, '0')}`;
+        const txDate = recurringTxDateFor(r, ym);
 
         // 자동 할인 계산: template에 할인이 없으면 결제수단 규칙 적용
         const discountAmt = recurringDiscount(db, r);

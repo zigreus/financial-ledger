@@ -51,7 +51,7 @@ export const OPTIONAL_FEATURES = [
   {
     key: 'subscriptions',
     label: '구독 모아보기',
-    desc: '켜면 정기지출 중 구독을 모아 월·연 합계와 바뀐 금액을 보여 줘요.',
+    desc: '켜면 정기지출 중 구독을 모아 월·연 합계와 바뀐 금액을 보여 주고, 결제 3일 전부터 거래내역에 알려 줘요.',
     isOn: isSubscriptionsEnabled,
     setOn: setSubscriptionsEnabled,
     place: { section: 'recurring', label: '지출계획 › 정기지출', what: '구독 고르기' },

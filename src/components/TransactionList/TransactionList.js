@@ -1,12 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus, isMonthlyReportEnabled, getMonthlyReportHeadline } from '../../services/dbManager';
+import { getTransactions, getAllPaymentMethods, getAllBudgetCategories, getAvailableMonths, getAllMonthlyGoals, setMonthlyGoal, getSetting, getDailyTotals, getCalendarEvents, getSplitGroupTransactions, getMemberNames, getBalanceAlerts, isBlankLedger, getAllSubCategories, isCategoryBudgetEnabled, getCategoryBudgetStatus, isMonthlyReportEnabled, getMonthlyReportHeadline, isSubscriptionsEnabled, getUpcomingSubscriptionPayments } from '../../services/dbManager';
 import { buildValidationContext, hasIssue, hasSubCategoryIssue } from '../../services/txValidator';
 import { formatAmount, evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import CalendarMini from './CalendarMini';
-import BalanceAlertBanner from './BalanceAlertBanner';
-import BudgetAlertBanner from './BudgetAlertBanner';
-import MonthlyReportBanner, { REPORT_BANNER_DAYS, isReportSeen } from './MonthlyReportBanner';
+import OpenNotices, { REPORT_BANNER_DAYS, isReportSeen } from './OpenNotices';
 import FirstEntryGuide from './FirstEntryGuide';
 import FilterPanel from './FilterPanel';
 import FilterSummary from './FilterSummary';
@@ -65,6 +63,7 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
   const txDateRefs = useRef({}); // { 'YYYY-MM-DD': [domNode, ...] }
 
   const currentMonthRef = useRef(null);
+  const noticesRef = useRef(null);
   const filterBarRef = useRef(null);
   const [filterBarHeight, setFilterBarHeight] = useState(58);
 
@@ -140,6 +139,10 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
     const headline = getMonthlyReportHeadline(live.db, ym);
     return headline.count ? headline : null;
   }, [live, reportDay]);
+  // 곧 결제될 구독 (I-036) — 구독 모아보기를 켰을 때만
+  const duePayments = useMemo(() => (isSubscriptionsEnabled(live.db)
+    ? getUpcomingSubscriptionPayments(live.db, reportDay)
+    : []), [live, reportDay]);
   const eventMap = useMemo(() => {
     const map = {};
     getCalendarEvents(live.db).forEach(ev => { map[ev.id] = { name: ev.title, schedule: ev.date_from || '' }; });
@@ -204,12 +207,12 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
     } catch (e) {}
   }, [expandedMonths]);
 
-  // 마운트 시 현재 월로 스크롤
+  // 마운트 시 현재 월로 스크롤 — 확인할 것(알림 카드)이 있으면 그 카드로. 이번 달로 내리면 맨 위의 카드가
+  // 화면 밖으로 밀려 앱을 열어도 알림이 보이지 않는다 (B-093). 카드 바로 아래가 (접힌 앞으로의 달과) 이번 달이다
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (currentMonthRef.current) {
-        currentMonthRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      const target = noticesRef.current || currentMonthRef.current;
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 150);
     return () => clearTimeout(timer);
   }, []);
@@ -474,9 +477,21 @@ function TransactionList({ db, dataVersion = 0, goTodayKey, onAdd, onEdit, onDel
         />
       )}
 
-      {!deleteMode && <BalanceAlertBanner alerts={balanceAlerts} onOpenAccount={onOpenAccount} />}
-      {!deleteMode && <BudgetAlertBanner alerts={budgetAlerts} onOpenBudget={() => onOpenBudget && onOpenBudget(currentMonth)} />}
-      {!deleteMode && <MonthlyReportBanner report={lastMonthReport} onOpen={ym => onOpenReport && onOpenReport(ym)} />}
+      {/* 확인할 것 — 잔액 위험·예산·구독 결제 예정·지난달 리포트를 한 카드에 (I-036) */}
+      {!deleteMode && (
+        <OpenNotices
+          anchorRef={noticesRef}
+          scrollMargin={(showFilters ? 0 : filterBarHeight) + 8}
+          balanceAlerts={balanceAlerts}
+          budgetAlerts={budgetAlerts}
+          payments={duePayments}
+          report={lastMonthReport}
+          onOpenAccount={onOpenAccount}
+          onOpenBudget={() => onOpenBudget && onOpenBudget(currentMonth)}
+          onOpenSubscriptions={() => onOpenSettings && onOpenSettings('recurring')}
+          onOpenReport={ym => onOpenReport && onOpenReport(ym)}
+        />
+      )}
 
       {/* 거래 목록 */}
       {transactions.length === 0 && !hasFilters ? (

@@ -6,6 +6,7 @@ import {
   deleteRecurringTransaction, runAutoRegister, addDiscountRule, getTransactions,
   isSubscriptionsEnabled, setSubscriptionsEnabled, getSubscriptions, getSubscriptionTotals,
   setRecurringSubscription, setSubscriptionNote, looksLikeSubscription, keepSubscriptionAmount,
+  getUpcomingSubscriptionPayments, SUBSCRIPTION_DUE_DAYS,
 } from '../dbManager';
 import { attachChangeLog, getChangeLog, replayChanges } from '../changeLog';
 
@@ -144,6 +145,85 @@ describe('금액이 바뀐 구독 알림', () => {
     expect(getSubscriptions(db, '2026-12-10')[0].changed).toBe(false);
     paid(db, id, '2027-01-05', 9900);
     expect(getSubscriptions(db, '2027-01-10')[0].changed).toBe(true);
+  });
+});
+
+describe('곧 결제될 구독 (I-036)', () => {
+  test('미리 등록된 거래 중 오늘부터 3일 뒤까지, 날짜순 — 구독이 아닌 정기지출·지난 결제·그 뒤 결제는 빼고', () => {
+    const { db, ids } = makeDb();
+    expect(SUBSCRIPTION_DUE_DAYS).toBe(3);
+    paid(db, ids['넷플릭스'], '2026-11-14', 13500);                         // 어제 — 지났다
+    paid(db, ids['넷플릭스'], '2026-11-17', 13500);                         // 모레
+    paid(db, ids['도메인'], '2026-11-15', 24000);                           // 오늘
+    paid(db, ids['넷플릭스'], '2026-11-19', 13500);                         // 4일 뒤 — 아직
+    paid(db, ids['쿠팡 와우'], '2026-11-16', 7890);                         // 구독이 아님
+    expect(getUpcomingSubscriptionPayments(db, TODAY)).toEqual([
+      expect.objectContaining({ recurringId: ids['도메인'], name: '도메인', date: '2026-11-15', daysUntil: 0, amount: 24000 }),
+      expect.objectContaining({ recurringId: ids['넷플릭스'], name: '넷플릭스', date: '2026-11-17', daysUntil: 2, amount: 13500 }),
+    ]);
+    paid(db, ids['넷플릭스'], '2026-11-18', 13500);
+    expect(getUpcomingSubscriptionPayments(db, TODAY).map(p => p.daysUntil)).toEqual([0, 2, 3]);
+  });
+
+  test('사용자가 고친 거래를 따른다 — 금액(할인 전)·내용·날짜, 지운 결제는 알리지 않고, 나눠 결제는 몫을 합친다', () => {
+    const { db, ids } = makeDb();
+    paid(db, ids['넷플릭스'], '2026-11-16', 17000, { discount_amount: 1000 });
+    db.run("UPDATE transactions SET detail = '넷플릭스 프리미엄' WHERE date = '2026-11-16'");
+    paid(db, ids['도메인'], '2026-11-17', 12000, { split_group_id: 'g1' });
+    db.run(`INSERT INTO transactions (payment_method, date, budget_category, detail, amount, split_group_id)
+            VALUES ('국민카드', '2026-11-17', '문화', '도메인', 12000, 'g1')`);
+    expect(getUpcomingSubscriptionPayments(db, TODAY).map(p => [p.name, p.amount])).toEqual([
+      ['넷플릭스 프리미엄', 17000], ['도메인', 24000],
+    ]);
+    db.run("DELETE FROM transactions WHERE date = '2026-11-16'");            // 해지하며 지웠다
+    db.run("UPDATE transactions SET date = '2026-11-25' WHERE split_group_id = 'g1'");  // 날짜를 옮겼다
+    expect(getUpcomingSubscriptionPayments(db, TODAY)).toEqual([]);
+  });
+
+  test('구독 표시를 빼면 알리지 않고, 내용이 비면 정기지출의 이름으로', () => {
+    const { db, ids } = makeDb();
+    paid(db, ids['넷플릭스'], '2026-11-16', 13500);
+    db.run("UPDATE transactions SET detail = '' WHERE date = '2026-11-16'");
+    expect(getUpcomingSubscriptionPayments(db, TODAY)[0].name).toBe('넷플릭스');
+    setRecurringSubscription(db, ids['넷플릭스'], false);
+    expect(getUpcomingSubscriptionPayments(db, TODAY)).toEqual([]);
+  });
+
+  test('자동등록한 달은 미리 들어간 거래로 — 그 거래를 지우면(해지) 정기지출의 날짜로 다시 세지 않는다', () => {
+    const { db, ids } = makeDb();
+    updateRecurringTransaction(db, ids['넷플릭스'], { ...template(db, ids['넷플릭스']), day_of_month: 2 });
+    runAutoRegister(db, new Date(2026, 9, 1));                             // 처음 — 12월만
+    runAutoRegister(db, new Date(2026, 10, 1));                            // 1월
+    const due = getUpcomingSubscriptionPayments(db, '2026-12-30');        // 해를 넘겨도
+    expect(due.map(p => [p.date, p.daysUntil, p.amount, typeof p.id])).toEqual([['2027-01-02', 3, 13500, 'number']]);
+    db.run('DELETE FROM transactions WHERE id = ?', [due[0].id]);
+    expect(getUpcomingSubscriptionPayments(db, '2026-12-30')).toEqual([]);
+  });
+
+  test('등록된 거래를 아직 등록 전인 달로 옮겨 오면 그 거래로 한 번만 알린다', () => {
+    const { db, ids } = makeDb();
+    updateRecurringTransaction(db, ids['넷플릭스'], { ...template(db, ids['넷플릭스']), day_of_month: 17 });
+    runAutoRegister(db, new Date(2026, 10, 15));                           // 처음 — 2027-01만 등록
+    const jan = getTransactions(db, {}).find(t => t.recurring_source_id === ids['넷플릭스']);
+    expect(jan.date).toBe('2027-01-17');
+    db.run('UPDATE transactions SET date = ? WHERE id = ?', ['2026-11-16', jan.id]);
+    expect(getUpcomingSubscriptionPayments(db, TODAY).map(p => [p.id, p.date])).toEqual([[jan.id, '2026-11-16']]);
+    db.run('UPDATE transactions SET date = ? WHERE id = ?', ['2026-11-02', jan.id]);   // 11월 안 — 창 밖
+    expect(getUpcomingSubscriptionPayments(db, TODAY)).toEqual([]);
+  });
+
+  test('아직 자동등록하지 않은 달(새로 만든 구독은 두 달 뒤부터 등록)은 정기지출의 결제일·금액으로', () => {
+    const { db, ids } = makeDb();
+    updateRecurringTransaction(db, ids['넷플릭스'], { ...template(db, ids['넷플릭스']), day_of_month: 0 });   // 말일
+    runAutoRegister(db, new Date(2026, 10, 28));                           // 처음 — 2027-01만 등록
+    expect(getUpcomingSubscriptionPayments(db, '2026-11-28')).toEqual([
+      { id: `r${ids['넷플릭스']}`, recurringId: ids['넷플릭스'], name: '넷플릭스', date: '2026-11-30', daysUntil: 2, amount: 13500 },
+    ]);
+    // 연간 구독은 그 달에만
+    updateRecurringTransaction(db, ids['도메인'], { ...template(db, ids['도메인']), month_of_year: 12, day_of_month: 1 });
+    expect(getUpcomingSubscriptionPayments(db, '2026-11-28').map(p => [p.name, p.date])).toEqual([
+      ['넷플릭스', '2026-11-30'], ['도메인', '2026-12-01'],
+    ]);
   });
 });
 

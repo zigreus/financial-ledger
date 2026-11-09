@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-036
+다음 번호: B-094, I-037
 
 ## 요약표
 
@@ -108,6 +108,7 @@
 | B-090 | ✅ | 낮음 | 저장·동기화 | 불러오는 사이 이 기기 저장이 성공하면 옛 파일로 바꿔 방금 입력이 화면에서 사라짐 |
 | B-091 | ✅ | 중간 | 저장·동기화 | 합칠 때 들어가지 않은 내 행을 가리키는 수정이 같은 번호의 다른 기기 행을 고치거나 지움 |
 | B-092 | ✅ | 중간 | 정기지출 | 정기지출 금액을 바꿔도 미리 자동 등록된 앞으로의 거래는 옛 금액 그대로 남음 |
+| B-093 | ✅ | 중간 | 거래내역 | 앱을 열면 목록이 이번 달로 내려가 맨 위의 알림(잔액 위험·예산·리포트)이 화면 밖으로 밀려 보이지 않음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -143,6 +144,7 @@
 | I-033 | ✅ | - | 성능 | 앱 코드가 한 파일로 커져 휴대폰에서 첫 화면 전에 읽고 실행할 양이 많음 (ROADMAP Q-3) |
 | I-034 | ✅ | - | 가져오기 | 쓰던 엑셀 가계부·은행·카드·다른 앱 내역은 양식이 제각각이라 이 앱 양식으로 고쳐야만 가져올 수 있음 (ROADMAP M-7) |
 | I-035 | ✅ | - | 데이터·저장 | 다른 계정(OneDrive ↔ Google Drive)으로 옮길 때 거래 CSV뿐이라 카테고리·계좌·정기지출·일정·설정이 빠짐 (ROADMAP F-5) |
+| I-036 | ✅ | - | 알림 | 예산·잔액·리포트 알림이 띠 여러 개로 흩어지고, 구독이 결제되기 전에 알 길이 없음 — 푸시(서버) 대신 앱을 열 때 한 카드로 (ROADMAP C-12) |
 
 
 ## 상세
@@ -975,6 +977,15 @@
 - 해결: 일정·결제수단·카테고리·내용은 그대로 두고 금액·할인만 바꾸면, 오늘 뒤의 손대지 않은 거래(금액·할인·할인 메모·결제수단·카테고리·내용이 예전 템플릿 그대로 — 할인 규칙 템플릿이면 규칙 전에 할인 0으로 등록된 것도, 분할 결제 아님)를 새 금액·다시 계산한 할인으로 바꾼다.
 - 파일: src/services/db/recurring.js, src/services/__tests__/subscriptions.test.js, SETUP.md
 
+### B-093 앱을 열면 목록이 이번 달로 내려가 맨 위의 알림(잔액 위험·예산·리포트)이 화면 밖으로 밀려 보이지 않음
+- 상태: ✅ 해결 (2026-11-09)
+- 심각도: 중간
+- 영역: 거래내역
+- 문제: 잔액 위험·예산 초과·지난달 리포트 알림을 거래내역 맨 위에 두었지만, 앱을 열면 목록이 이번 달 머리로 스크롤돼 위로 올려야만 보인다.
+- 원인: 거래내역이 처음 그려질 때 이번 달(미리 등록된 앞으로의 달 아래)로 스크롤하는 동작이 알림 띠보다 먼저 있었고, 알림을 더할 때(B-066·I-025·I-028) 이를 고려하지 않았다(I-036에서 찾음).
+- 해결: 확인할 것(알림 카드)이 보이면 처음 열 때 이번 달 대신 그 카드로 스크롤하고(카드 위에는 잰 필터바 높이만큼 띄워 가리지 않게) — 카드 아래가 (접힌 앞으로의 달과) 이번 달이며, 알림이 없거나 닫았으면 전처럼 이번 달로.
+- 파일: src/components/TransactionList/TransactionList.js·TransactionList.css, src/components/TransactionList/__tests__/OpenNotices.test.js
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -1254,3 +1265,11 @@
 - 원인: 가계부를 통째로 바꾸는 길이 백업으로 되돌리기뿐이고, 되돌리기는 다른 기기의 밀린 변경을 이어서 저장하는데 다른 가계부라면 같은 번호의 엉뚱한 행을 고치게 된다.
 - 해결: 설정 › 데이터에 '가계부 파일로 바꾸기'(고른 파일을 살펴 지금 가계부와 견주고 확정할 때만, 되돌리기와 같은 절차로 지금 파일을 먼저 백업)를 두고, 바꾼 가계부에 SQLite application_id로 새 세대를 찍어 저장 안 된 변경은 세대가 같을 때만 다시 실행하며(병합·다시 열기·바꾸는 동안 입력), 다르면 그 변경이 담긴 그 기기의 가계부를 백업으로 남기고 알린다 — 세대는 파일 바이트에서 읽는다(ROADMAP F-5, 사용자 요청).
 - 파일: src/services/ledgerFile.js(새), src/services/changeLog.js, src/hooks/useLedgerSync.js, src/components/SettingsView/sections/DataSection.js·SettingsView.css, src/components/App/App.js, src/components/Onboarding/Onboarding.js, src/hooks/__tests__/useLedgerSync.replace.test.js(새), src/components/__tests__/ReplaceLedger.ui.test.js(새), SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-036 예산·잔액·리포트 알림이 띠 여러 개로 흩어지고, 구독이 결제되기 전에 알 길이 없음 — 푸시(서버) 대신 앱을 열 때 한 카드로 (ROADMAP C-12)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 알림
+- 문제: 알림 띠가 잔액·예산·리포트마다 따로 쌓이고, 해지할 구독을 결제 전에 알려 줄 길이 없다 — 로드맵은 서버가 필요한 푸시 알림(C-12)이었다.
+- 원인: 알림을 기능마다 따로 만들었고, 앱이 꺼져 있을 때 알리려면 서버가 깨워야 해 2단계(서버)로 미뤄 두었다.
+- 해결: 푸시 대신 앱을 열면 거래내역 맨 위 '확인할 것' 카드 하나에 잔액 위험·예산·구독 결제 예정(3일 전부터, 구독 모아보기를 켰을 때)·지난달 리포트를 모으고(닫기는 하나, 닫은 기록은 알림마다 전과 같은 규칙), 결제 예정은 미리 등록된 거래(지웠으면 알리지 않음)나 아직 등록 전인 달은 정기지출의 결제일로 센다(B-093 함께, 사용자 요청).
+- 파일: src/components/TransactionList/OpenNotices.js(새, Balance·Budget·MonthlyReportBanner를 합침), src/components/TransactionList/TransactionList.js·TransactionList.css, src/services/db/subscriptions.js, src/services/db/recurringDates.js·recurring.js(결제일 계산을 함께 씀), src/components/SettingsView/optionalFeatures.js, src/components/TransactionList/__tests__/OpenNotices.test.js(BalanceAlertBanner.test.js를 옮김), src/components/__tests__/CategoryBudget.ui.test.js·MonthlyReport.ui.test.js, src/services/__tests__/subscriptions.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

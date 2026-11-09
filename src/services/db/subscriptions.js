@@ -11,13 +11,19 @@
 //    그래야 금액을 올린 직후 옛 금액의 지난 결제로 다시 알리지 않고, 외화 결제처럼 조금씩 다른 금액에 매달 알리지 않는다.
 //  - 해지 메모(cancel_note): 해지 방법·해지할 때 등을 적어 둔다.
 
+//  - 곧 결제될 구독(getUpcomingSubscriptionPayments): 거래내역 '확인할 것'에 결제 며칠 전부터 알린다(I-036).
+
+import { addDays, parseDateStr } from '../dateUtils';
 import { dbRowsToObjects, todayLocal } from './common';
 import { getSetting, setSetting } from './settings';
 import { getRecurringTransactions, recurringDiscount } from './recurring';
+import { recurringTxDateFor } from './recurringDates';
 
 export const SUBSCRIPTIONS_SETTING = 'subscriptions_enabled';
 /** 최근 결제가 등록 금액과 이만큼(비율) 넘게 달라야 알린다 */
 export const SUBSCRIPTION_CHANGE_TOLERANCE = 0.03;
+/** 결제 예정 알림을 결제일 며칠 전부터 보이는지 — 알림은 앱을 열 때만 보이므로 하루 전보다 넉넉히 */
+export const SUBSCRIPTION_DUE_DAYS = 3;
 
 export function isSubscriptionsEnabled(db) {
   return !!db && getSetting(db, SUBSCRIPTIONS_SETTING, '0') === '1';
@@ -98,6 +104,68 @@ export function getSubscriptions(db, today = todayLocal()) {
         changed,
       };
     });
+}
+
+/**
+ * 곧 결제될 구독 (I-036, ROADMAP C-12) — 오늘부터 days일 뒤까지 결제될 구독, 날짜순.
+ *  - 자동등록한 달은 그때 미리 들어간 거래를 본다 — 사용자가 그 거래를 지웠거나(해지) 날짜·금액·내용을 고쳤으면 따른다.
+ *  - 아직 자동등록하지 않은 달(새로 만든 정기지출은 두 달 뒤부터 등록된다)은 정기지출의 결제일·금액으로 센다.
+ *    그 달에 이 정기지출의 거래가 있으면(다른 달에 등록된 거래를 옮겨 온 것) 그 거래로 본다 — 한 결제를 두 번 알리지 않게.
+ *  - 결제일을 바꿔도 미리 등록된 거래의 날짜는 그대로다(B-092 — 목록과 같게). 그 거래의 날짜를 고치면 알림도 따른다.
+ * [{ id, recurringId, name, date, daysUntil, amount }]
+ *  - id: 목록 항목 구별용(미리 들어간 거래의 id, 등록 전이면 'r<정기지출 id>'). 닫은 기록의 열쇠로 쓰지 않는다 —
+ *    닫은 기록은 recurringId@date로 남긴다(등록 전 일정으로 닫은 결제가 자동등록돼 거래 id가 생겨도 다시 뜨지 않게)
+ *  - amount: 결제액(할인 전 — 카드로 실제 나가는 금액). 나눠 결제한 회차는 몫을 합친 금액
+ */
+export function getUpcomingSubscriptionPayments(db, today = todayLocal(), days = SUBSCRIPTION_DUE_DAYS) {
+  const subs = getRecurringTransactions(db).filter(r => r.is_subscription);
+  if (!subs.length) return [];
+  const until = addDays(today, days);
+  const start = parseDateStr(today);
+  const daysUntil = date => Math.round((parseDateStr(date) - start) / 86400000);
+  const nameOf = r => r.detail || r.sub_category || r.budget_category;
+
+  const registered = dbRowsToObjects(db.exec(
+    `SELECT t.id, t.date, t.amount, t.detail, COALESCE(t.split_group_id, '') AS split_group_id, t.recurring_source_id
+     FROM transactions t JOIN recurring_transactions r ON r.id = t.recurring_source_id
+     WHERE r.is_subscription = 1 AND t.date >= ? AND t.date <= ?`,
+    [today, until],
+  )).map(t => {
+    let amount = Number(t.amount) || 0;
+    if (t.split_group_id) {
+      amount = Number(db.exec(
+        'SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE split_group_id = ?',
+        [t.split_group_id],
+      )[0].values[0][0]) || 0;
+    }
+    const r = subs.find(s => s.id === t.recurring_source_id);
+    return { id: t.id, recurringId: r.id, name: t.detail || nameOf(r), date: t.date, daysUntil: daysUntil(t.date), amount };
+  });
+
+  // 아직 등록하지 않은 달 — 등록한 달이면(거래를 지웠어도) 정기지출의 날짜로 다시 세지 않는다.
+  // 그 달에 이 정기지출의 거래가 있어도(다른 달 것을 옮겨 옴) 세지 않는다
+  const months = [...new Set([today.slice(0, 7), until.slice(0, 7)])];
+  const logged = new Set(dbRowsToObjects(db.exec(
+    `SELECT recurring_id, registered_for_month FROM recurring_registration_log
+     WHERE registered_for_month IN (${months.map(() => '?').join(', ')})`,
+    months,
+  )).map(l => `${l.recurring_id}|${l.registered_for_month}`));
+  const scheduled = [];
+  subs.forEach(r => months.forEach(ym => {
+    if (logged.has(`${r.id}|${ym}`)) return;
+    if (r.frequency === 'annual' && Number(r.month_of_year) !== Number(ym.slice(5, 7))) return;
+    const date = recurringTxDateFor(r, ym);
+    if (date < today || date > until) return;
+    const moved = db.exec(
+      'SELECT 1 FROM transactions WHERE recurring_source_id = ? AND date >= ? AND date <= ? LIMIT 1',
+      [r.id, `${ym}-01`, `${ym}-31`],
+    );
+    if (moved[0]?.values.length) return;
+    scheduled.push({ id: `r${r.id}`, recurringId: r.id, name: nameOf(r), date, daysUntil: daysUntil(date), amount: r.amount });
+  }));
+
+  const order = p => (typeof p.id === 'number' ? p.id : Number.MAX_SAFE_INTEGER - p.recurringId);
+  return [...registered, ...scheduled].sort((a, b) => a.date.localeCompare(b.date) || order(a) - order(b));
 }
 
 /** 구독 합계 — { count, monthly, annual } (월 환산은 연간 구독을 모두 더한 뒤 12로 나눠 반올림) */

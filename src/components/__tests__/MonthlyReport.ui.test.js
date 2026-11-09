@@ -10,7 +10,7 @@ import * as M from '../../services/dbManager';
 import { currentYearMonth, addMonths } from '../../services/dateUtils';
 import SummaryView from '../SummaryView/SummaryView';
 import MonthlyReport from '../SummaryView/MonthlyReport';
-import MonthlyReportBanner from '../TransactionList/MonthlyReportBanner';
+import OpenNotices from '../TransactionList/OpenNotices';
 import TransactionList from '../TransactionList/TransactionList';
 import MonthlyReportSettings from '../SettingsView/sections/MonthlyReportSettings';
 import { polishReportWithAI } from '../../services/monthlyReportAI';
@@ -95,21 +95,21 @@ test('달을 넘겨 볼 수 있고, 거래가 없는 달은 비어 있다고 알
 test('지난달 리포트 알림 — 열거나 닫으면 이 기기에서는 그 달 알림이 다시 보이지 않는다', async () => {
   const report = M.getMonthlyReportHeadline(db, LAST);
   let opened = null;
-  await render(<MonthlyReportBanner report={report} onOpen={ym => { opened = ym; }} />);
+  await render(<OpenNotices report={report} onOpenReport={ym => { opened = ym; }} />);
   expect(container.textContent).toContain(`${Number(LAST.slice(5))}월 리포트가 나왔어요 — 순지출 500,000원, 지난달보다 200,000원 더 썼어요`);
   await click(container.querySelector('.balance-alert-link'));
   expect(opened).toBe(LAST);
   expect(container.innerHTML).toBe('');
   await act(async () => root.unmount());
   root = createRoot(container);
-  await render(<MonthlyReportBanner report={report} onOpen={() => {}} />);
+  await render(<OpenNotices report={report} onOpenReport={() => {}} />);
   expect(container.innerHTML).toBe('');                                  // 다시 열어도 안 보인다
-  await render(<MonthlyReportBanner report={{ ...report, month: BEFORE }} onOpen={() => {}} />);
+  await render(<OpenNotices report={{ ...report, month: BEFORE }} onOpenReport={() => {}} />);
   await act(async () => root.unmount());
   root = createRoot(container);
-  await render(<MonthlyReportBanner report={{ ...report, month: BEFORE }} onOpen={() => {}} />);
+  await render(<OpenNotices report={{ ...report, month: BEFORE }} onOpenReport={() => {}} />);
   expect(container.textContent).toContain('리포트가 나왔어요');           // 다른 달은 보인다
-  await click(button('리포트 알림 닫기'));
+  await click(button('알림 닫기'));
   expect(container.innerHTML).toBe('');
 });
 
@@ -157,18 +157,18 @@ describe('날짜를 정해 둔 경우 (2026-11-03)', () => {
       onOpenCardCheck: vi.fn(), onOpenAccount: vi.fn(), onOpenOnboarding: vi.fn(), onOpenSettings: vi.fn(), onOpenReport,
     };
     await render(<TransactionList {...props} />);
-    const banner = container.querySelector('.report-alert');
+    const banner = container.querySelector('.open-notice-report');
     expect(banner.textContent).toContain('10월 리포트가 나왔어요 — 순지출 450,000원, 앞 2개월 평균보다 150,000원 더 썼어요');
     await click(banner.querySelector('.balance-alert-link'));
     expect(onOpenReport).toHaveBeenCalledWith('2026-10');
     act(() => root.unmount()); root = createRoot(container);
     await render(<TransactionList {...props} dataVersion={2} />);
-    expect(container.querySelector('.report-alert')).toBeNull();          // 본 달은 다시 보이지 않는다
+    expect(container.querySelector('.open-notice-report')).toBeNull();          // 본 달은 다시 보이지 않는다
     window.localStorage.clear();
     vi.setSystemTime(new Date(2026, 10, 8, 10, 0, 0));
     act(() => root.unmount()); root = createRoot(container);
     await render(<TransactionList {...props} dataVersion={3} />);
-    expect(container.querySelector('.report-alert')).toBeNull();
+    expect(container.querySelector('.open-notice-report')).toBeNull();
   });
 });
 
