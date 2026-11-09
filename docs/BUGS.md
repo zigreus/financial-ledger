@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-029
+다음 번호: B-093, I-030
 
 ## 요약표
 
@@ -136,6 +136,7 @@
 | I-026 | ✅ | - | 요약 | 지출만 보여 이번 달 수입 대비 얼마 남았는지·저축률을 알 수 없음 (ROADMAP C-6) |
 | I-027 | ✅ | - | 정기지출 | 구독이 정기지출에 섞여 한 달·한 해에 구독으로 얼마 나가는지, 값이 오른 구독이 무엇인지 알 수 없음 (ROADMAP C-8) |
 | I-028 | ✅ | - | 요약 | 한 달이 끝나도 평소보다 무엇에 더 썼는지·큰 지출·무지출일·예산 결과를 한눈에 돌아볼 곳이 없음 (ROADMAP C-9) |
+| I-029 | ✅ | - | 요약 | 연말정산 때 한 해 신용카드·체크카드·현금영수증 사용액과 의료비·교육비 등을 따로 더해 봐야 함 (ROADMAP C-10) |
 
 
 ## 상세
@@ -1191,3 +1192,11 @@
 - 원인: 한 달을 앞 달들과 견주어 정리하는 화면과 계산이 없다.
 - 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 요약에 '리포트' 탭을 두어, 앞 3개월(거래가 있는 달만, 달 중간에 시작한 첫 달 제외) 평균 대비 크게 늘거나 준 카테고리(3만 원 이상·30% 이상, 준 것은 두 달 이상 쓴 카테고리만), 가장 큰 지출 3건(분할은 합침), 무지출일, 월 목표·카테고리 예산·수지(진행 중인 달은 지금까지)를 규칙으로 계산해 보이고, 매달 1~7일 거래내역 첫 화면에 지난달 리포트를 알리며, '✨ AI 한마디'는 합계 수준의 숫자만 보내 문장으로 다듬는다(ROADMAP C-9, 사용자 요청).
 - 파일: src/services/db/monthlyReport.js(새), src/services/monthlyReportAI.js(새), src/services/dbManager.js, src/components/SummaryView/MonthlyReport.js·MonthlyReport.css(새)·SummaryView.js·SummaryView.css, src/components/TransactionList/MonthlyReportBanner.js(새)·TransactionList.js, src/components/App/App.js, src/components/SettingsView/sections/MonthlyReportSettings.js(새)·BudgetSection.js, src/services/__tests__/monthlyReport.test.js, src/components/__tests__/MonthlyReport.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-029 연말정산 때 한 해 신용카드·체크카드·현금영수증 사용액과 의료비·교육비 등을 따로 더해 봐야 함 (ROADMAP C-10)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 요약
+- 문제: 연말정산(1월)에 홈택스 간소화 자료와 견주려면 한 해 결제를 신용카드·체크카드·현금영수증별, 의료비·교육비·대중교통 같은 항목별로 손으로 더해야 한다.
+- 원인: 결제수단에 유형이 없고, 카테고리를 연말정산 항목으로 묶는 곳이 없다.
+- 해결: 설정에서 켜는 선택 기능(가족 공통, 기본 꺼짐)으로 결제수단 유형(payment_methods.tax_type)과 카테고리·세부카테고리 항목(budget_categories·sub_categories.tax_tag, 세부가 먼저·'-'는 해당 없음, 행에 붙어 이름 변경·삭제를 따라감)을 두고, 요약 '연말정산' 탭에 해마다 유형별·항목별 결제액(할인 전, 환불 뺌, 외화 결제는 따로, 환차손익 조정·오늘 이후 미리 등록된 거래 제외)을 보이며 공제액은 계산하지 않는다(ROADMAP C-10, 사용자 요청).
+- 파일: src/services/db/taxSummary.js(새), src/services/db/schema.js·common.js(hasForeignAmount), src/services/cardStatement.js, src/services/dbManager.js, src/components/SummaryView/TaxSummary.js·TaxSummary.css(새)·SummaryView.js, src/components/SettingsView/sections/TaxSummarySettings.js(새)·BudgetSection.js, src/components/App/App.js, src/services/__tests__/taxSummary.test.js, src/components/__tests__/TaxSummary.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md

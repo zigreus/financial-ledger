@@ -16,7 +16,7 @@ import { analyzeWithAI, AIError } from './aiClient';
 import {
   buildDataContext, classify, findTrip, normalizeName, suggestionToTransaction,
 } from './receiptAssistant';
-import { addTransaction, withTransaction } from './dbManager';
+import { addTransaction, withTransaction, hasForeignAmount } from './dbManager';
 import { todayStr, addDays, isValidDateStr, parseDateStr } from './dateUtils';
 
 export const TOLERANCE_DAYS = 3;
@@ -227,14 +227,7 @@ function fxClose(a, b) {
   return a > 0 && b > 0 && Math.abs(a - b) <= a * 0.1;
 }
 
-function hasForeign(tx) {
-  try {
-    const f = tx.foreign_amounts ? JSON.parse(tx.foreign_amounts) : {};
-    return Object.keys(f).some(k => k !== 'KRW' && Number(f[k]));
-  } catch (e) {
-    return false;
-  }
-}
+const hasForeign = tx => hasForeignAmount(tx.foreign_amounts);
 
 function amountMatches(row, tx) {
   return row.amount === gross(tx) || (net(tx) !== gross(tx) && row.amount === net(tx));

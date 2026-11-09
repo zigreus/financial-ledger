@@ -40,6 +40,21 @@ export function withTransaction(db, fn) {
 
 export const todayLocal = todayStr;
 
+/**
+ * 외화 금액이 있는 거래(해외 결제)인지 — transactions.foreign_amounts(JSON {통화: 금액})에 원화(KRW)가 아닌 통화의 0 아닌 금액이 있으면.
+ * 일정 통화는 직접 적을 수 있어 국내 일정의 'KRW'만 적힌 거래도 있다 — 그건 해외 결제가 아니다. 깨진 JSON은 국내로 본다.
+ * (카드 대조·연말정산 참고 합계가 같이 쓴다)
+ */
+export function hasForeignAmount(foreignAmounts) {
+  if (!foreignAmounts) return false;
+  try {
+    const f = JSON.parse(foreignAmounts);
+    return !!f && typeof f === 'object' && Object.keys(f).some(k => k.trim().toUpperCase() !== 'KRW' && Number(f[k]));
+  } catch (e) {
+    return false;
+  }
+}
+
 export function dbRowsToObjects(result) {
   if (!result.length) return [];
   const { columns, values } = result[0];

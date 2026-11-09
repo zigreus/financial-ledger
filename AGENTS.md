@@ -15,7 +15,7 @@
 | 위치 | 역할 |
 |---|---|
 | `src/services/dbManager.js` | DB 함수의 단일 진입점(재내보내기만). 컴포넌트는 여기서 import |
-| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것), monthlyReport(월간 리포트, 선택 기능 — 규칙으로 계산, 문장 다듬기는 services/monthlyReportAI). 내부 도우미는 common·recurringDates |
+| `src/services/db/*.js` | 실제 구현: schema(스키마·마이그레이션), transactions, masterData, members(가족 구성원), calendar, tripCash, summary, settings, recurring, favorites, patterns, accounts(잔액 예측·위험 알림 포함), discounts, categoryBudgets(카테고리별 예산, 선택 기능), monthlyBalance(수입·월 수지, 선택 기능 — 수입은 고른 계좌의 입금, 지출은 가계부 순지출), subscriptions(구독 모아보기, 선택 기능 — 정기지출 중 구독 표시한 것), monthlyReport(월간 리포트, 선택 기능 — 규칙으로 계산, 문장 다듬기는 services/monthlyReportAI), taxSummary(연말정산 참고 합계, 선택 기능 — 결제수단 유형·카테고리 항목, 공제액은 계산하지 않음). 내부 도우미는 common·recurringDates |
 | `src/services/changeLog.js` | 쓰기 기록, 충돌 시 재실행(병합) |
 | `src/hooks/useLedgerSync.js` | 불러오기·자동 저장·충돌 병합·미저장 변경 보관 |
 | `src/services/storage/provider.js` | 저장소 계약: `read→{bytes,version}`, `write(bytes,version)`(버전이 다르면 `ConflictError`), 백업 폴더·설정 파일. 오류 클래스 |
@@ -108,6 +108,7 @@
 - **순지출은 `amount - discount_amount`입니다.** 화면 막대·합계·정렬이 같은 값을 써야 합니다. (B-051)
   - 예외로, 계좌의 카드 결제 자동 금액(`getCardPaymentTotal`)은 할인을 빼지 않은 `amount` 합계를 씁니다. (I-016)
   - 카드 할인은 대부분 캐시백이라 결제일에는 할인 전 금액이 빠져나갑니다. 할인을 빼면 출금이 적게 잡혀 잔액 부족을 늦게 알게 됩니다.
+  - 같은 이유로 연말정산 참고 합계(`getTaxSummary`, I-029)도 할인 전 `amount`를 씁니다(카드사가 국세청에 알리는 금액). 할인 합계는 따로 보입니다.
 - **분할 결제는 몫마다 한 행이고 `split_group_id`로 묶습니다.**
   - 할인은 몫의 금액 기준으로 계산합니다. (B-030)
   - 수정할 때는 저장된 몫·환율을 유지합니다. (B-033)

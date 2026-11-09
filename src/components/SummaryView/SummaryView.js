@@ -9,6 +9,7 @@ import {
   getMemberSummary, getMemberNames,
   getCalendarEvents, getMonthlyTotalsWithGoals, getSetting, getCalendarEventTypes,
   isMonthlyBalanceEnabled, getMonthlyIncome, isMonthlyReportEnabled, getReportMonths,
+  isTaxSummaryEnabled, getTaxYears,
 } from '../../services/dbManager';
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
@@ -18,6 +19,7 @@ import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import CategoryBudgetPanel from './CategoryBudgetPanel';
 import MonthlyBalanceCard from './MonthlyBalanceCard';
 import MonthlyReport from './MonthlyReport';
+import TaxSummary from './TaxSummary';
 
 // 날짜 포맷 헬퍼
 const _fmt = toDateStr;
@@ -36,6 +38,7 @@ const _filterState = {
   eventTypeFilter: '',
   eventSortType: 'date_desc',
   reportMonth: '',
+  taxYear: '',
 };
 
 /** 다음에 요약을 열 때 그 달 보기로 연다 — 거래내역의 예산 알림에서 넘어올 때 (I-025) */
@@ -113,7 +116,7 @@ function aggregateForeign(rows) {
 
 // dataVersion: DB에 쓰기가 있을 때마다 App이 올리는 숫자. sql.js는 같은 db 객체를 제자리에서 바꾸므로
 // db를 읽는 memo는 [db]만으로는 다시 계산되지 않는다 — dataVersion을 함께 의존성에 둔다.
-function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onTabChange, onDrilldownChange, onOpenSettings }) {
+function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onTabChange, onDrilldownChange, onOpenSettings, onChanged }) {
   const [monthlySubTab, setMonthlySubTab] = useState('list'); // 'list' | 'chart'
   const [monthlyLimit, setMonthlyLimit] = useState(24);
   const [filterType, setFilterType] = useState(() => _filterState.filterType);
@@ -144,7 +147,18 @@ function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onT
   const live = useDbSnapshot(db, dataVersion);
   // 월간 리포트 (I-028) — 켰을 때만 '리포트' 탭이 있다. 끈 채로 리포트 탭이 열리면 월별 추이를 보인다
   const reportEnabled = useMemo(() => isMonthlyReportEnabled(live.db), [live]);
-  const tab = tabProp === 'report' && !reportEnabled ? 'monthly' : tabProp;
+  // 연말정산 참고 합계 (I-029) — 켰을 때만 '연말정산' 탭이 있다
+  const taxEnabled = useMemo(() => isTaxSummaryEnabled(live.db), [live]);
+  const tab = (tabProp === 'report' && !reportEnabled) || (tabProp === 'tax' && !taxEnabled) ? 'monthly' : tabProp;
+  // 보는 해: 고른 해, 아니면 1·2월(연말정산 때)은 작년·그 밖에는 올해(그 해에 거래가 없으면 가장 최근 해)
+  const [pickedTaxYear, setPickedTaxYear] = useState(() => _filterState.taxYear);
+  const taxYears = useMemo(() => (taxEnabled ? getTaxYears(live.db) : []), [live, taxEnabled]);
+  const preferredTaxYear = String(Number(currentMonth.slice(0, 4)) - (Number(currentMonth.slice(5, 7)) <= 2 ? 1 : 0));
+  const taxYear = pickedTaxYear || (taxYears.includes(preferredTaxYear) || !taxYears.length ? preferredTaxYear : taxYears[0]);
+  const pickTaxYear = (y) => {
+    _filterState.taxYear = y;
+    setPickedTaxYear(y);
+  };
   // 보는 달: 사용자가 고른 달(알림에서 연 달 포함). 고르지 않았으면 지난달(거래가 없으면 가장 최근 달)
   const [pickedReportMonth, setPickedReportMonth] = useState(() => _filterState.reportMonth);
   const reportMonths = useMemo(() => (reportEnabled ? getReportMonths(live.db) : []), [live, reportEnabled]);
@@ -320,14 +334,30 @@ function SummaryView({ db, dataVersion = 0, tab: tabProp, drilldownCategory, onT
   return (
     <div className="summary-page">
       {/* 메인 탭 */}
-      <div className={`summary-tabs${reportEnabled ? ' summary-tabs--many' : ''}`}>
+      <div className={`summary-tabs${reportEnabled || taxEnabled ? ' summary-tabs--many' : ''}`}>
         <button className={tab === 'monthly' ? 'tab active' : 'tab'} onClick={() => onTabChange('monthly')}>월별 추이</button>
         <button className={tab === 'category' ? 'tab active' : 'tab'} onClick={() => onTabChange('category')}>카테고리</button>
         <button className={tab === 'payment' ? 'tab active' : 'tab'} onClick={() => onTabChange('payment')}>결제수단</button>
         {reportEnabled && (
           <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => onTabChange('report')}>리포트</button>
         )}
+        {taxEnabled && (
+          <button className={tab === 'tax' ? 'tab active' : 'tab'} onClick={() => onTabChange('tax')}>연말정산</button>
+        )}
       </div>
+
+      {tab === 'tax' && (
+        <div className="summary-section">
+          <TaxSummary
+            db={db}
+            dataVersion={dataVersion}
+            year={taxYear}
+            years={taxYears}
+            onYearChange={pickTaxYear}
+            onChanged={onChanged}
+          />
+        </div>
+      )}
 
       {tab === 'report' && (
         <div className="summary-section" style={{ paddingTop: 12 }}>

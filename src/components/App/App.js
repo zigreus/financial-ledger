@@ -568,6 +568,7 @@ function App() {
             drilldownCategory={summaryDrilldown}
             onTabChange={(t) => navigate({ summaryTab: t, summaryDrilldown: null })}
             onDrilldownChange={(d) => navigate({ summaryDrilldown: d })}
+            onChanged={() => saveWithToast()}
             onOpenSettings={(section) => {
               navigate({
                 activeTab: 'settings', settingsSection: section,

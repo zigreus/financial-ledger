@@ -19,4 +19,5 @@ export * from './db/categoryBudgets';
 export * from './db/monthlyBalance';
 export * from './db/subscriptions';
 export * from './db/monthlyReport';
-export { withTransaction } from './db/common';
+export * from './db/taxSummary';
+export { withTransaction, hasForeignAmount } from './db/common';
