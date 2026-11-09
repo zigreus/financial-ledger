@@ -10,6 +10,7 @@ import initSqlJs from 'sql.js/dist/sql-asm.js';
 import * as M from '../../../services/dbManager';
 import { attachChangeLog } from '../../../services/changeLog';
 import App from '../App';
+import { preloadScreens } from '../screens';
 
 const shared = vi.hoisted(() => ({ db: null, accounts: [{ homeAccountId: 'me', username: 'me@outlook.com' }], instance: {}, reload: null }));
 
@@ -45,6 +46,8 @@ vi.mock('../../../hooks/useLedgerSync', async () => {
 global.IS_REACT_ACT_ENVIRONMENT = true;
 let SQL;
 beforeAll(async () => {
+  // 열 때 불러오는 화면(I-033)을 미리 불러 둔다 — 화면이 기다림 없이 바로 그려지게
+  expect(await preloadScreens()).toBe(true);
   SQL = await initSqlJs();
   if (!window.matchMedia) window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };

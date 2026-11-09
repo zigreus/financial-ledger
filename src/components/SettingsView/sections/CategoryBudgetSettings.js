@@ -8,6 +8,7 @@ import { evaluateFormula, isIncompleteFormula, formatAmount } from '../../../ser
 import { categoryColor } from '../../common/categoryColor';
 import AmountInput from '../../common/AmountInput';
 import { IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
+import { OptionalFeatureHead } from '../optionalFeatures';
 
 /**
  * 지출계획 › 예산 › 카테고리별 예산 (I-025, ROADMAP C-5) — 필요한 사람만 켜는 선택 기능(가족 공통 설정).
@@ -71,23 +72,7 @@ export default function CategoryBudgetSettings({ db, dataVersion, onChanged, set
 
   return (
     <div className="cb-settings">
-      <div className="cb-settings-head">
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: '600' }}>카테고리별 예산</div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            필요할 때만 켜세요. 켜면 요약 › 카테고리에 예산 대비가, 거래내역에 80%·100% 알림이 보여요.
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`goal-display-toggle${enabled ? ' goal-display-toggle--on' : ''}`}
-          onClick={toggle}
-          title={enabled ? '카테고리별 예산 끄기' : '카테고리별 예산 켜기'}
-          aria-pressed={enabled}
-        >
-          <span className="goal-display-toggle-knob" />
-        </button>
-      </div>
+      <OptionalFeatureHead featureKey="categoryBudget" enabled={enabled} onToggle={toggle} />
 
       {enabled && (
         <>

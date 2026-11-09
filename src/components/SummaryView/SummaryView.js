@@ -14,43 +14,17 @@ import {
 import { formatAmount } from '../../services/formulaEvaluator';
 import { categoryColor } from '../common/categoryColor';
 import './SummaryView.css';
-import { toDateStr, toYearMonth, currentYearMonth, addMonths } from '../../services/dateUtils';
+import { currentYearMonth, addMonths } from '../../services/dateUtils';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import CategoryBudgetPanel from './CategoryBudgetPanel';
 import MonthlyBalanceCard from './MonthlyBalanceCard';
 import MonthlyReport from './MonthlyReport';
 import TaxSummary from './TaxSummary';
+import { summaryFilterState, showSummaryMonth, showSummaryReportMonth } from './summaryState';
 
-// 날짜 포맷 헬퍼
-const _fmt = toDateStr;
-
-// 앱 종료 전까지 필터 상태 유지 (모듈 레벨)
-const _initNow = new Date();
-const _initWeekAgo = new Date(_initNow);
-_initWeekAgo.setDate(_initNow.getDate() - 6);
-const _filterState = {
-  filterType: 'month',
-  selectedMonth: toYearMonth(_initNow),
-  selectedYear: String(_initNow.getFullYear()),
-  dateFrom: _fmt(_initWeekAgo),
-  dateTo: _fmt(_initNow),
-  selectedEventId: '',
-  eventTypeFilter: '',
-  eventSortType: 'date_desc',
-  reportMonth: '',
-  taxYear: '',
-};
-
-/** 다음에 요약을 열 때 그 달 보기로 연다 — 거래내역의 예산 알림에서 넘어올 때 (I-025) */
-export function showSummaryMonth(yearMonth) {
-  _filterState.filterType = 'month';
-  _filterState.selectedMonth = yearMonth;
-}
-
-/** 다음에 요약 › 리포트를 열 때 그 달 리포트로 연다 — 거래내역의 지난달 리포트 알림에서 넘어올 때 (I-028) */
-export function showSummaryReportMonth(yearMonth) {
-  _filterState.reportMonth = yearMonth;
-}
+// 앱 종료 전까지 필터 상태 유지 (모듈 레벨) — 다른 화면이 정해 두는 함수와 함께 summaryState.js에 있다 (I-033)
+const _filterState = summaryFilterState;
+export { showSummaryMonth, showSummaryReportMonth };
 
 // 막대 길이(%) — 환불로 0 이하가 된 값은 빈 막대로 (음수 너비는 CSS가 무시해 막대가 가득 차 보인다)
 function barPercent(value, maxValue) {

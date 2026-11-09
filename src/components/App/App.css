@@ -17,6 +17,9 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* 열 때 불러오는 화면(I-033)을 기다리는 동안 — 보통은 미리 불러 두어 보이지 않는다 */
+.screen-loading { display: flex; justify-content: center; padding: 48px 16px; }
+
 /* ── 앱 레이아웃 ─────────────────────────────────────────── */
 .app-container {
   display: flex;

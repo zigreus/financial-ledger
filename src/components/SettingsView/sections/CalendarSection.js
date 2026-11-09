@@ -8,6 +8,7 @@ import {
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import { dropTargetIndex } from '../settingsUtils';
+import { OptionalFeatureHead } from '../optionalFeatures';
 import { IconGrip, IconEdit, IconTrash, IconCheck, IconClose } from '../icons';
 
 /**
@@ -265,23 +266,11 @@ export default function CalendarSection({ db, dataVersion, onChanged, subTab, on
 
           {/* 여행 정산 — 일행 N빵 (I-030) — 선택 기능 */}
           <div className="cb-settings">
-            <div className="cb-settings-head">
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: '600' }}>일행 정산 (N빵)</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                  필요할 때만 켜세요. 켜면 여행 일정에 &apos;일행 정산&apos;이 생겨, 누가 냈고 누구 몫인지로 &quot;누가 누구에게 얼마&quot;를 계산하고 공유할 글을 만들어 줘요.
-                </div>
-              </div>
-              <button
-                type="button"
-                className={`goal-display-toggle${tripSplitOn ? ' goal-display-toggle--on' : ''}`}
-                onClick={() => { setTripSplitEnabled(db, !tripSplitOn); onChanged(); }}
-                title={tripSplitOn ? '일행 정산 끄기' : '일행 정산 켜기'}
-                aria-pressed={tripSplitOn}
-              >
-                <span className="goal-display-toggle-knob" />
-              </button>
-            </div>
+            <OptionalFeatureHead
+              featureKey="tripSplit"
+              enabled={tripSplitOn}
+              onToggle={() => { setTripSplitEnabled(db, !tripSplitOn); onChanged(); }}
+            />
           </div>
         </div>
       )}

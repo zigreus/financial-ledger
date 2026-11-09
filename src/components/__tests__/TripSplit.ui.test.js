@@ -183,6 +183,6 @@ test('캘린더 설정에서 켜고 끈다', async () => {
   await act(async () => {
     root.render(<CalendarSection db={db} dataVersion={version += 1} onChanged={() => {}} subTab="types" onSubTabChange={() => {}} />);
   });
-  await act(async () => { button('일행 정산 켜기').click(); });
+  await act(async () => { button('일행 정산 (N빵) 켜기').click(); });
   expect(M.isTripSplitEnabled(db)).toBe(true);
 });

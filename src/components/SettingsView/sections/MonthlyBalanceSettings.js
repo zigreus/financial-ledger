@@ -3,6 +3,7 @@ import {
   isMonthlyBalanceEnabled, setMonthlyBalanceEnabled, getIncomeAccounts, setAccountCountsIncome,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
+import { OptionalFeatureHead } from '../optionalFeatures';
 
 /**
  * 지출계획 › 예산 › 수입·월 수지 (I-026, ROADMAP C-6) — 필요한 사람만 켜는 선택 기능(가족 공통 설정).
@@ -55,23 +56,7 @@ export default function MonthlyBalanceSettings({ db, dataVersion, onChanged }) {
 
   return (
     <div className="cb-settings mb-settings">
-      <div className="cb-settings-head">
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: '600' }}>수입·월 수지</div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            필요할 때만 켜세요. 켜면 요약 › 월별 추이에 수입·남은 돈·저축률이 보여요.
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`goal-display-toggle${enabled ? ' goal-display-toggle--on' : ''}`}
-          onClick={toggle}
-          title={enabled ? '수입·월 수지 끄기' : '수입·월 수지 켜기'}
-          aria-pressed={enabled}
-        >
-          <span className="goal-display-toggle-knob" />
-        </button>
-      </div>
+      <OptionalFeatureHead featureKey="monthlyBalance" enabled={enabled} onToggle={toggle} />
 
       {enabled && (
         <>

@@ -5,8 +5,34 @@ import react from '@vitejs/plugin-react';
 // - JSX가 들어 있는 .js 파일을 그대로 쓴다 (파일 이름을 .jsx로 바꾸지 않음)
 // - 개발 서버는 3000번: Azure 앱 등록의 리디렉션 주소(http://localhost:3000)와 맞춘다
 // - 출력 폴더는 CRA와 같은 build: Vercel 설정을 바꾸지 않아도 된다 (vercel.json에도 명시)
+
+/**
+ * 열 때 불러오는 화면(I-033, src/components/App/screens.js)의 빌드 파일을 index.html에 미리 받기(prefetch)로 적는다.
+ * 서비스 워커(public/sw.js)는 index.html이 가리키는 /assets/* 파일만 받아 두므로(연결 없이 열기, I-024),
+ * 여기 적어야 나눈 파일도 함께 받아 둔다. prefetch는 받아만 두고 실행하지 않아 첫 화면을 늦추지 않는다.
+ */
+function prefetchLazyChunks() {
+  let base = '/';
+  return {
+    name: 'prefetch-lazy-chunks',
+    apply: 'build',
+    configResolved(config) { base = config.base; },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!ctx.bundle) return html;
+        return Object.keys(ctx.bundle)
+          // 소스맵(.map)은 사용자에게 받게 하지 않는다(sourcemap을 켜도)
+          .filter(name => name.startsWith('assets/') && !name.endsWith('.map') && !html.includes(name))
+          .sort()
+          .map(name => ({ tag: 'link', attrs: { rel: 'prefetch', href: `${base}${name}` }, injectTo: 'head' }));
+      },
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react({ include: /\.(js|jsx)$/ })],
+  plugins: [react({ include: /\.(js|jsx)$/ }), prefetchLazyChunks()],
   esbuild: {
     loader: 'jsx',
     include: /src\/.*\.jsx?$/,
@@ -21,11 +47,16 @@ export default defineConfig({
   // sql.js는 Node 전용 분기에서 fs·path·crypto를 require한다 — 브라우저에서는 실행되지 않아
   // 빌드 시 'externalized for browser compatibility' 경고가 나와도 무해하다.
   // 크기 경고 기준은 gzip 전 1MB. 라이브러리(React·MSAL·sql.js)는 따로 묶는다 — 앱 코드만 바뀐 배포는 라이브러리 파일을
-  // 다시 받지 않는다. 나눈 파일도 index.html이 미리 불러오기(modulepreload)로 가리키므로, 서비스 워커가 index.html이
-  // 가리키는 빌드 파일을 모두 받아 두는 방식(연결 없이 열기, I-024)과 맞는다. 늦게 불러오는(dynamic import) 나누기는 쓰지 않는다.
+  // 다시 받지 않는다. 첫 화면에 필요 없는 화면은 열 때 불러오는(dynamic import) 파일로 나누고(I-033), 위 플러그인이
+  // index.html에 prefetch로 적어 서비스 워커가 index.html이 가리키는 빌드 파일을 모두 받아 두는 방식(I-024)과 맞춘다.
+  // CSS는 나누지 않는다(cssCodeSplit: false) — 화면끼리 함께 쓰는 클래스가 있어, 나누면 아직 열지 않은 화면의 CSS가
+  // 없어 다른 화면이 깨져 보일 수 있다. CSS는 한 파일(gzip 약 20kB)로 처음부터 불러온다.
+  // 한 파일 안의 순서는 앱과 함께 불러오는 화면의 CSS → 나눈 화면의 CSS 순이다. 화면 CSS는 자기 접두어 클래스로 쓰고
+  // 다른 화면의 같은 선택자를 덮어쓰지 않는다(순서에 기대지 않게).
   build: {
     outDir: 'build',
     chunkSizeWarningLimit: 1000,
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks: {

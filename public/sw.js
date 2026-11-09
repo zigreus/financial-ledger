@@ -3,6 +3,7 @@
  * 지금 가계부 서비스 워커 (I-024, ROADMAP C-4)
  *
  *  1) 연결 없이 열기 — 앱 화면(index.html과 그것이 가리키는 /assets/* 빌드 파일, sql-wasm.wasm, 아이콘)을 이 기기에 둔다.
+ *     열 때 불러오는 화면의 파일(I-033)도 빌드가 index.html에 prefetch로 적어 두므로 함께 받아 둔다(vite.config.mjs).
  *     - index.html은 그것이 가리키는 빌드 파일(앱이 바뀌었으면 sql-wasm.wasm도)을 모두 받아 둔 뒤에만 바꾼다
  *       — 둔 화면이 없는 파일을 찾아 흰 화면이 되거나, 새 JS와 옛 wasm이 섞여 열리지 않는 일이 없게.
  *       설치할 때(첫 방문 포함) 한 번, 그리고 페이지를 서버에서 새로 받을 때마다. 지금 index.html이 가리키지 않는 빌드 파일은 지운다.
@@ -82,7 +83,9 @@ async function within(network) {
 
 /**
  * index.html을 둔다 — 그것이 가리키는 빌드 파일을 모두 받아 둔 뒤에만. 하나라도 못 받으면 옛 것을 그대로 둔다.
- * 그다음 지금 index.html이 가리키지 않는 빌드 파일은 지운다(배포마다 쌓이지 않게, 쓰는 파일은 남게)
+ * 그다음 새 index.html과 바로 전 index.html이 가리키지 않는 빌드 파일은 지운다(배포마다 쌓이지 않게, 쓰는 파일은 남게).
+ * 바로 전 것도 남기는 이유: 연결이 느려 둔 옛 화면으로 열린 사이 새 화면이 받아지면, 열려 있는 옛 화면이
+ * 아직 불러오지 않은 화면 파일(I-033)을 찾을 수 있어야 한다. 그다음 열 때(두 index.html이 같아지면) 지워진다
  */
 async function keepIndex(res) {
   const type = res.headers.get('content-type') || '';
@@ -92,7 +95,7 @@ async function keepIndex(res) {
   const assets = await caches.open(ASSET_CACHE);
   for (const path of refs) {
     // eslint-disable-next-line no-await-in-loop
-    if (!(await assets.match(path))) {
+    if (!(await assets.match(path, { ignoreVary: true }))) {
       // eslint-disable-next-line no-await-in-loop
       const got = await fetch(path);
       if (!got.ok) return;
@@ -103,13 +106,14 @@ async function keepIndex(res) {
   const shell = await caches.open(SHELL_CACHE);
   // 앱이 바뀌었으면(새 배포) sql-wasm.wasm도 함께 새로 받아 둔다 — wasm은 HTML에 나오지 않지만 앱 JS와 버전이 맞아야 한다(B-013)
   const old = await shell.match('/index.html');
-  if (!old || (await old.text()) !== html) {
+  const oldHtml = old ? await old.text() : '';
+  if (oldHtml !== html) {
     const wasm = await fetch('/sql-wasm.wasm', { cache: 'reload' });
     if (!wasm.ok) return;
     await shell.put('/sql-wasm.wasm', wasm);
   }
   await shell.put('/index.html', new Response(html, { headers: { 'Content-Type': type } }));
-  const keep = new Set(refs);
+  const keep = new Set([...refs, ...(oldHtml.match(ASSET_RE) || [])]);
   const keys = await assets.keys();
   await Promise.all(keys.filter(k => !keep.has(new URL(k.url).pathname)).map(k => assets.delete(k)));
 }
@@ -136,10 +140,15 @@ function openPage(event) {
   })();
 }
 
-/** 빌드 파일 — 둔 것이 먼저, 없으면 받아서 둔다 */
+/**
+ * 빌드 파일 — 둔 것이 먼저, 없으면 받아서 둔다.
+ * Vary는 보지 않는다(ignoreVary) — 이름에 내용 해시가 붙어 바뀌지 않는 파일이다. 서버가 'Vary: Origin'을 붙이면
+ * Origin 없이 받아 둔 것(미리 받기·keepIndex)을 Origin을 보내는 요청(늦게 불러오는 import, crossorigin 스크립트)이
+ * 찾지 못해 연결이 없을 때 화면을 열 수 없다 (I-033에서 확인 — vite preview가 그렇게 응답한다)
+ */
 async function assetFirst(request) {
   const assets = await caches.open(ASSET_CACHE);
-  const cached = await assets.match(request);
+  const cached = await assets.match(request, { ignoreVary: true });
   if (cached) return cached;
   const res = await fetch(request);
   if (res.ok) await assets.put(request, res.clone());

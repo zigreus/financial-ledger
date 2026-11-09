@@ -10,6 +10,7 @@ import * as M from '../../../services/dbManager';
 import { ReconnectRequiredError } from '../../../services/storage/provider';
 import { startGoogleLogin, rememberGoogleResult, clearGoogleNotice } from '../../../auth/googleAuth';
 import App from '../App';
+import { preloadScreens } from '../screens';
 
 vi.mock('../../../auth/googleAuth', async (orig) => ({ ...(await orig()), startGoogleLogin: vi.fn() }));
 
@@ -42,6 +43,8 @@ vi.mock('../../../hooks/useLedgerSync', async () => {
 global.IS_REACT_ACT_ENVIRONMENT = true;
 let SQL;
 beforeAll(async () => {
+  // 열 때 불러오는 화면(I-033)을 미리 불러 둔다 — 화면이 기다림 없이 바로 그려지게
+  expect(await preloadScreens()).toBe(true);
   SQL = await initSqlJs();
   if (!window.matchMedia) window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };

@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import TransactionForm from '../TransactionForm';
 import * as M from '../../../services/dbManager';
+import AIEntry from '../../AIEntry/lazyAIEntry';
 
 vi.mock('../../AIEntry/AIEntry', () => ({ default: (props) => { global.__aiProps = props; return null; } }));
 
@@ -14,8 +15,10 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 let SQL;
 beforeAll(async () => {
   SQL = await initSqlJs();
+  // AI 입력은 열 때 불러온다(I-033) — 미리 불러 두어 폼과 함께 바로 그려지게
+  expect(await AIEntry.preload()).toBe(true);
 });
-beforeEach(() => { try { window.localStorage.clear(); } catch (e) {} });
+beforeEach(() => { try { window.localStorage.clear(); } catch (e) {} global.__aiProps = null; });
 
 function makeDb() {
   const { db } = M.createDatabase(SQL);

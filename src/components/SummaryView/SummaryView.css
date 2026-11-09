@@ -7,19 +7,23 @@
   background: var(--surface);
 }
 
-.tab {
+/* 요약 화면의 탭만 (I-033) — 예전에는 설정 화면 CSS의 '.tab'이 뒤에서 덮어써 그 값으로 보였다
+   (위아래 여백 12px, 밑줄 없음, 글자 굵기 500). 범위를 좁히며 보이던 모양을 그대로 옮겼다 */
+.summary-tabs .tab {
   flex: 1;
-  padding: 14px;
+  padding: 12px 0;
   border: none;
   background: none;
   font-size: 14px;
+  font-weight: 500;
+  text-align: center;
   cursor: pointer;
   color: var(--text-muted);
-  border-bottom: 2px solid transparent;
+  transition: color .2s, border-color .2s;
 }
-.tab.active {
+.summary-tabs .tab:hover { color: var(--text); }
+.summary-tabs .tab.active {
   color: var(--primary);
-  border-bottom-color: var(--primary);
   font-weight: 600;
 }
 /* 선택 기능 탭(리포트 등)이 늘면 좁은 화면에서 줄바꿈하지 않게 — 선택 기능을 켰을 때만 (I-028) */

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import { getPaymentMethods, getBudgetCategories, getSubCategories, getCalendarEvents, getCalendarEventTypes, getAutoPaymentMethod, getTripDefaultCategory, getSplitGroupTransactions, getMemberNames } from '../../services/dbManager';
 import { resolveDeviceMember } from '../../services/deviceMember';
 import { evaluateFormula, today, parseForeignAmount } from '../../services/formulaEvaluator';
 import './TransactionForm.css';
 import ModalOverlay from '../common/ModalOverlay';
 import { useStoredToggle } from '../../hooks/useStoredToggle';
-import AIEntry from '../AIEntry/AIEntry';
+import AIEntry from '../AIEntry/lazyAIEntry';
 import { useDbSnapshot } from '../../hooks/useDbSnapshot';
 import FormulaInput from './FormulaInput';
 import BasicFields from './BasicFields';
@@ -361,8 +361,11 @@ function TransactionForm({ db, dataVersion = 0, editingTx, defaultDate, aiStart 
 
         <form onSubmit={handleSubmit} className="tx-form" ref={formRef}>
           {/* AI 입력 — 영수증 사진 / 말로 입력 */}
+          {/* 열 때 불러온다(I-033) — 보통은 미리 불러 두어 바로 보인다 */}
           {!editingTx && (
-            <AIEntry db={db} start={aiStart} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
+            <Suspense fallback={null}>
+              <AIEntry db={db} start={aiStart} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
+            </Suspense>
           )}
 
           {/* 즐겨찾기 칩 */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import './SettingsView.css';
 import PaymentSection from './sections/PaymentSection';
 import DiscountRulesSection from './sections/DiscountRulesSection';
@@ -7,8 +7,10 @@ import FavoritesSection from './sections/FavoritesSection';
 import RecurringSection from './sections/RecurringSection';
 import BudgetSection from './sections/BudgetSection';
 import CalendarSection from './sections/CalendarSection';
+import FeaturesSection from './sections/FeaturesSection';
 import AISection from './sections/AISection';
 import DataSection from './sections/DataSection';
+import { featureAnchorId } from './optionalFeatures';
 
 /**
  * 설정 화면 — 섹션 전환과 공통 상태(오류 문구, 서브탭)만 가진다.
@@ -29,11 +31,29 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
   const [favoritesKey, setFavoritesKey] = useState(0);
   const [recurringKey, setRecurringKey] = useState(0);
 
+  // 선택 기능 화면에서 '설정하기'로 넘어갈 때 그 기능의 머리로 스크롤할 앵커 id (I-032)
+  const [scrollTarget, setScrollTarget] = useState(null);
+
   const switchSection = (sec) => {
     onSectionChange(sec); // App.js에서 드릴다운 초기화 + history push 처리
     setMasterKey(k => k + 1);
     setError('');
   };
+
+  // 선택 기능 → 그 기능의 세부 설정 자리(지출계획 › 예산 등)로 가서 그 머리가 보이게
+  const openFeaturePlace = (feature) => {
+    const { section } = feature.place;
+    if (section === 'budget' || section === 'recurring') setFinanceSubTab(section);
+    if (section === 'recurring') setRecurringKey(k => k + 1);
+    setScrollTarget(featureAnchorId(feature.key));
+    switchSection(section);
+  };
+
+  useEffect(() => {
+    if (!scrollTarget) return;
+    document.getElementById(scrollTarget)?.scrollIntoView?.({ block: 'start' });
+    setScrollTarget(null);
+  }, [scrollTarget, activeSection]);
 
   const drilldownBackLabel = drilldownCategory?.name || drilldownPayment?.name;
   const showDrilldownBack = (activeSection === 'category' && drilldownCategory) || (activeSection === 'payment' && drilldownPayment);
@@ -47,6 +67,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
         <button className={activeSection === 'category' ? 'tab active' : 'tab'} onClick={() => switchSection('category')}>카테고리</button>
         <button className={(activeSection === 'budget' || activeSection === 'recurring') ? 'tab active' : 'tab'} onClick={() => { switchSection(financeSubTab); setRecurringKey(k => k + 1); }}>지출계획</button>
         <button className={activeSection === 'calendar' ? 'tab active' : 'tab'} onClick={() => switchSection('calendar')}>캘린더</button>
+        <button className={activeSection === 'features' ? 'tab active' : 'tab'} onClick={() => switchSection('features')}>선택 기능</button>
         <button className={activeSection === 'ai' ? 'tab active' : 'tab'} onClick={() => switchSection('ai')}>AI</button>
         <button className={activeSection === 'data' ? 'tab active' : 'tab'} onClick={() => switchSection('data')}>데이터</button>
       </div>
@@ -91,6 +112,7 @@ function SettingsView({ db, dataVersion, onChanged, backup, activeSection, drill
 
         {activeSection === 'budget' && <BudgetSection {...sectionProps} />}
 
+        {activeSection === 'features' && <FeaturesSection {...sectionProps} onOpenPlace={openFeaturePlace} />}
         {activeSection === 'ai' && <AISection />}
         {activeSection === 'data' && <DataSection key={masterKey} {...sectionProps} backup={backup} />}
 

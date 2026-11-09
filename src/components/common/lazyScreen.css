@@ -1,0 +1,13 @@
+/* 열 때 불러오는 화면을 불러오지 못했을 때 (I-033) */
+.screen-load-failed { padding: 24px 16px; font-size: 14px; line-height: 1.5; }
+.screen-load-failed p { margin: 0 0 8px; }
+.screen-load-failed-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* 다른 화면 안에 들어가는 부분(입력 창의 AI 입력) — 짧게 */
+.screen-load-failed--inline {
+  margin-bottom: 12px; padding: 10px 12px; font-size: 13px; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: 10px;
+}
+.screen-load-failed--inline p { margin: 0 0 4px; }
+.screen-load-failed--inline .screen-load-failed-actions { margin-top: 6px; }
+/* 창 화면을 불러오는 동안 — 실제 창이 다시 아래에서 올라오므로 기다림 창은 올라오지 않게 */
+.screen-modal-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; animation: none; }

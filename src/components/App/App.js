@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, Suspense } from 'react';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import './App.css';
 
@@ -6,14 +6,12 @@ import LoginPage from '../LoginPage/LoginPage';
 import Header from '../Header/Header';
 import TransactionList from '../TransactionList/TransactionList';
 import TransactionForm from '../TransactionForm/TransactionForm';
-import SummaryView, { showSummaryMonth, showSummaryReportMonth } from '../SummaryView/SummaryView';
-import SettingsView from '../SettingsView/SettingsView';
-import ImportModal from '../ImportModal/ImportModal';
-import CardStatementModal from '../CardStatement/CardStatementModal';
-import CalendarView from '../CalendarView/CalendarView';
-
-import AccountManagement from '../AccountManagement/AccountManagement';
-import Onboarding from '../Onboarding/Onboarding';
+import { showSummaryMonth, showSummaryReportMonth } from '../SummaryView/summaryState';
+// 첫 화면에 필요 없는 화면은 열 때 불러온다 (I-033) — 로그인 뒤 쉬는 틈에 미리 불러 둔다
+import {
+  SummaryView, SettingsView, CalendarView, AccountManagement, ImportModal, CardStatementModal, Onboarding, preloadScreens,
+} from './screens';
+import { ModalLoading } from '../common/lazyScreen';
 import { addTransaction, updateTransaction, deleteTransaction, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
@@ -159,6 +157,18 @@ function App() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [applyNavState]);
+
+  // 열 때 불러오는 화면(요약·캘린더·계좌·설정·창들)을 로그인 뒤 쉬는 틈에 미리 불러 둔다 (I-033) —
+  // 가계부를 드라이브에서 받는 동안 읽어 두어, 탭을 처음 눌러도 기다리지 않게. 실패하면 열 때 다시 시도한다
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(() => { preloadScreens(); }, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(() => { preloadScreens(); }, 1000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated]);
 
   // 로그인 후 DB 자동 로드 (실패하면 버튼으로 다시 시도)
   useEffect(() => {
@@ -489,6 +499,10 @@ function App() {
     window.history.back();
   };
 
+  // 창 닫기 — 창을 불러오는 동안의 '닫기'(ModalLoading)도 같은 것을 쓴다
+  const closeCardCheck = () => { setShowCardCheck(false); window.history.back(); };
+  const closeImport = () => { setShowImport(false); window.history.back(); };
+
   const handleImport = useCallback(async () => {
     setShowImport(false);
     window.history.back();
@@ -564,6 +578,7 @@ function App() {
       )}
 
 <main className="app-main">
+        <Suspense fallback={<div className="screen-loading"><div className="spinner" /></div>}>
         {activeTab === 'list' && (
           <TransactionList
             db={db}
@@ -669,6 +684,7 @@ function App() {
             onDrilldownPaymentChange={(v) => navigate({ settingsDrilldownPayment: v })}
           />
         )}
+        </Suspense>
       </main>
 
       {/* 하단 네비게이션 */}
@@ -746,36 +762,42 @@ function App() {
 
       {/* 카드 내역 대조 */}
       {showCardCheck && (
-        <CardStatementModal
-          db={db}
-          dataVersion={dataVersion}
-          onChanged={() => saveNow()}
-          onClose={() => { setShowCardCheck(false); window.history.back(); }}
-        />
+        <Suspense fallback={<ModalLoading onClose={closeCardCheck} />}>
+          <CardStatementModal
+            db={db}
+            dataVersion={dataVersion}
+            onChanged={() => saveNow()}
+            onClose={closeCardCheck}
+          />
+        </Suspense>
       )}
 
       {/* 첫 실행 안내 — 가계부가 비어 있을 때만 (기본값을 넣으면 바로 닫힌다) */}
       {showOnboarding && blankLedger && (
-        <Onboarding
-          db={db}
-          accountLabel={provider === 'google'
-            ? (googleSession?.email ? `${googleSession.email}의 Google Drive` : 'Google Drive')
-            : (accounts[0]?.username ? `${accounts[0].username}의 OneDrive` : '')}
-          onDone={handleOnboardingDone}
-          onClose={handleOnboardingClose}
-          onLater={handleOnboardingLater}
-          onOpenImport={() => navigate({ showOnboarding: false, showImport: true })}
-        />
+        <Suspense fallback={<ModalLoading onClose={handleOnboardingClose} />}>
+          <Onboarding
+            db={db}
+            accountLabel={provider === 'google'
+              ? (googleSession?.email ? `${googleSession.email}의 Google Drive` : 'Google Drive')
+              : (accounts[0]?.username ? `${accounts[0].username}의 OneDrive` : '')}
+            onDone={handleOnboardingDone}
+            onClose={handleOnboardingClose}
+            onLater={handleOnboardingLater}
+            onOpenImport={() => navigate({ showOnboarding: false, showImport: true })}
+          />
+        </Suspense>
       )}
 
       {/* CSV 가져오기 모달 */}
       {showImport && (
-        <ImportModal
-          db={db}
-          dataVersion={dataVersion}
-          onImport={handleImport}
-          onClose={() => { setShowImport(false); window.history.back(); }}
-        />
+        <Suspense fallback={<ModalLoading onClose={closeImport} />}>
+          <ImportModal
+            db={db}
+            dataVersion={dataVersion}
+            onImport={handleImport}
+            onClose={closeImport}
+          />
+        </Suspense>
       )}
     </div>
   );

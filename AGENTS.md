@@ -33,6 +33,7 @@
 | `src/data/holidays.js` | 한국 공휴일(연도별) |
 | `src/data/starterTemplates.js` + `components/Onboarding` | 첫 실행 기본값(가구 유형별 카테고리·결제수단)과 안내. 빈 가계부(`isBlankLedger`)에만, 확정할 때 `applyStarterSetup`으로 한 번에 넣음 |
 | `src/components/*` | 화면 |
+| `src/components/App/screens.js` + `common/lazyScreen.js` | 열 때 불러오는 화면(요약·캘린더·계좌·설정·창들, 입력 창의 AI 입력은 `AIEntry/lazyAIEntry.js`)과 미리 불러오기(`preloadScreens`), 못 불러왔을 때의 다시 시도 (I-033) |
 | `docs/BUGS.md` | 버그·개선 목록과 수정 기록 |
 
 ## 2. 데이터와 저장 — 가장 중요
@@ -127,12 +128,16 @@
 
 - 모바일 우선입니다. UI 문구는 한국어로 쓰고 존댓말 안내체를 씁니다.
 - **모든 가족이 쓰지 않을 기능은 선택 기능으로 만듭니다.** 설정에서 켜고 끄고(기본은 꺼짐), 꺼 두면 그 기능의 화면이 보이지 않습니다. 끄면 화면만 감추고 정해 둔 값은 남깁니다. 가족 공통이면 가계부 DB의 `settings`, 기기별 취향이면 localStorage에 둡니다. (사용자 요청, I-025)
+  - 새 선택 기능은 `SettingsView/optionalFeatures.js`의 `OPTIONAL_FEATURES`에 한 줄 더해 설정 › 선택 기능에 나오게 하고, 원래 자리의 스위치는 `OptionalFeatureHead`를 씁니다(이름·설명이 두 곳에서 같게). (I-032)
 - 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
 - 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)
 - `dangerouslySetInnerHTML`은 쓰지 않습니다. AI 응답과 사용자 입력은 텍스트로만 렌더링합니다.
 - 비동기 요청(AI·네트워크)은 `AbortController`로 취소할 수 있게 하고, 취소는 오류로 표시하지 않습니다.
 - 늦게 도착한 응답이 현재 화면 상태와 맞는지 확인합니다. (B-049, B-052)
 - 같은 로직을 복사하지 않습니다. 카테고리 색은 `common/categoryColor`, CSV는 공통 파서를 씁니다. (B-054, I-005)
+- **첫 화면(거래내역)에 필요 없는 새 탭·창은 `App/screens.js`에 `lazyScreen`으로 추가합니다** — 열 때 불러오고 로그인 뒤 미리 불러 둡니다. App에서 그 화면 모듈을 직접 import하면 다시 첫 화면 코드에 섞입니다. (I-033)
+  - 창은 `<Suspense fallback={<ModalLoading />}>`로 감쌉니다. 빌드는 나눈 파일을 index.html에 prefetch로 적어 서비스 워커가 함께 받아 둡니다(vite.config.mjs).
+  - CSS는 한 파일입니다(`cssCodeSplit: false`). 순서는 첫 화면과 함께 불러오는 화면 → 나눈 화면이므로, 화면 CSS는 자기 접두어 클래스로 쓰고 다른 화면의 같은 선택자를 덮어쓰지 않습니다.
 
 ## 7. AI 연동
 
@@ -163,6 +168,7 @@
   - 테스트는 Vitest입니다. `describe/test/expect/vi`는 전역으로 씁니다.
   - sql.js는 Node에서 바로 돌아갑니다(기본 환경 node).
   - 화면 테스트는 파일 맨 위에 `@vitest-environment jsdom`을 두고 `react`의 `act`를 씁니다. 예: `src/components/TransactionForm/__tests__/`
+  - App을 그리는 테스트는 `beforeAll`에서 `await preloadScreens()`를, 입력 창의 AI 입력을 쓰는 테스트는 `await AIEntry.preload()`(`AIEntry/lazyAIEntry`)를 합니다 — 나눈 화면이 기다림 없이 그려지게. (I-033)
   - 카드 대조(cardStatement.js)를 고치면 무작위 테스트를 큰 표본으로도 돌려 봅니다. 예: `CARD_PROPERTY_N=1000`, `CARD_REFUND_N=1000`
     - 확인할 것: 조용한 오류(합계가 틀린데 화면에 확인거리 없음) 0, 해로운 권장 0, 평범한 달 "모두 맞습니다" 비율 유지
     - 본질적으로 모호한 경우는 테스트 머리말의 제외 목록에 이유를 적습니다. (B-079~B-087)

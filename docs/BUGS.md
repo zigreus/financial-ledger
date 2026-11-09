@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-093, I-032
+다음 번호: B-093, I-034
 
 ## 요약표
 
@@ -139,6 +139,8 @@
 | I-029 | ✅ | - | 요약 | 연말정산 때 한 해 신용카드·체크카드·현금영수증 사용액과 의료비·교육비 등을 따로 더해 봐야 함 (ROADMAP C-10) |
 | I-030 | ✅ | - | 일정·여행 | 일행과 함께 간 여행에서 누가 냈고 누구 몫인지 정산하려면 따로 계산해야 함 (ROADMAP C-11) |
 | I-031 | ✅ | - | 로그인·저장 | Microsoft 계정·OneDrive가 없으면 쓸 수 없음 — Google 계정·Google Drive로도 쓰게 (ROADMAP M-1) |
+| I-032 | ✅ | - | 설정 | 선택 기능을 켜는 자리가 예산·정기지출·캘린더로 흩어져 어떤 기능이 있는지 찾기 어려움 (ROADMAP Q-2) |
+| I-033 | ✅ | - | 성능 | 앱 코드가 한 파일로 커져 휴대폰에서 첫 화면 전에 읽고 실행할 양이 많음 (ROADMAP Q-3) |
 
 
 ## 상세
@@ -1218,3 +1220,19 @@
 - 원인: 로그인은 MSAL, 저장소는 OneDrive 구현 하나뿐이다(저장소 계약은 F-2에서 나눠 두었다).
 - 해결: Google 로그인(서버 없는 토큰 방식, drive.file 범위, 약 1시간마다 만료 → 앱을 열 때 연결되면 화면 없이 다시 받고 쓰는 중이면 '다시 연결', 로그아웃은 이 기기만)과 Google Drive 저장소(버전 headRevisionId, 원자적 조건부 저장이 없어 저장 직전 확인 + 저장 뒤 시간순 리비전 확인·끼어든 저장 되돌리기, 확인 못 한 저장은 기억했다가 마저 확인)를 같은 저장소 계약으로 붙이고, 로그인 화면에서 Microsoft·Google을 고르게 한다 — VITE_GOOGLE_CLIENT_ID가 있을 때만 보이며, 실제 Google Drive로의 확인은 사용자가 설정한 뒤 한다(ROADMAP M-1, 사용자 요청).
 - 파일: src/auth/googleAuth.js(새), src/services/storage/googleDrive.js·driveName.js(새)·provider.js, src/hooks/useGoogleSession.js(새), src/index.js, src/components/App/App.js·GoogleReconnectBanner.js·GoogleReconnectBanner.css(새), src/components/LoginPage/LoginPage.js·LoginPage.css, src/components/Header/Header.js, src/components/SettingsView/sections/DataSection.js, src/components/AIEntry/AISettingsForm.js, src/services/__tests__/googleAuth.test.js·googleDriveStorage.test.js·fakeDrive.js(새)·storage.test.js, src/hooks/__tests__/useLedgerSync.merge.test.js, src/components/App/__tests__/App.google.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-032 선택 기능을 켜는 자리가 예산·정기지출·캘린더로 흩어져 어떤 기능이 있는지 찾기 어려움 (ROADMAP Q-2)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 설정
+- 문제: 선택 기능 6개를 켜는 스위치가 지출계획 › 예산(4개)·정기지출·캘린더 › 일정 유형에 흩어져, 어떤 기능이 있는지 모르거나 찾지 못한다.
+- 원인: 기능마다 관련된 설정 화면에 스위치를 따로 두었고, 기능 목록을 모은 곳이 없다.
+- 해결: 선택 기능 목록을 한 곳(optionalFeatures.js — 이름·설명·켜고 끄기·세부 설정 자리)에 두고 설정에 '선택 기능' 탭을 만들어 모두를 한 화면에서 켜고 끄며(가족 공통임을 알림), 세부 설정이 있는 기능은 켜면 그 자리로 가서 그 기능 머리로 스크롤하고, 원래 자리의 스위치 6곳도 같은 머리(OptionalFeatureHead)를 써 이름·설명이 같게 했다(ROADMAP Q-2, 사용자 요청).
+- 파일: src/components/SettingsView/optionalFeatures.js(새)·sections/FeaturesSection.js(새)·SettingsView.js·SettingsView.css, src/components/SettingsView/sections/CategoryBudgetSettings.js·MonthlyBalanceSettings.js·MonthlyReportSettings.js·TaxSummarySettings.js·SubscriptionPanel.js·CalendarSection.js, src/components/__tests__/OptionalFeatures.ui.test.js(새)·TripSplit.ui.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-033 앱 코드가 한 파일로 커져 휴대폰에서 첫 화면 전에 읽고 실행할 양이 많음 (ROADMAP Q-3)
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 성능
+- 문제: 앱 코드(라이브러리 제외)가 한 파일 631kB로, 첫 화면(거래내역) 전에 요약·캘린더·계좌·설정·카드 대조 등 모든 화면의 코드를 읽고 실행한다.
+- 원인: 연결 없이 열기(I-024)를 위해 서비스 워커가 index.html이 가리키는 파일만 받아 두므로, 늦게 불러오는 나누기를 쓰지 않았다.
+- 해결: 요약·캘린더·계좌·설정·가져오기·카드 대조·첫 실행 안내와 입력 창의 AI 입력을 열 때 불러오는 파일로 나누고(lazyScreen — 불러온 화면은 기다림 없이, 창은 기다림 창, 못 불러오면 다시 시도·새로 고침, 다시 열면 저절로 다시 받기) 로그인 뒤 쉬는 틈에 미리 불러 두며, 빌드가 나눈 파일을 index.html에 prefetch로 적어 서비스 워커가 함께 받아 두게 하고(CSS는 한 파일·탭 선택자 범위를 좁혀 순서에 기대지 않음, 받아 둔 빌드 파일은 Vary를 보지 않고 찾고 바로 전 배포 것도 한 번 남김) 메인 파일을 631kB에서 273kB(gzip 188→84kB)로 줄였다(ROADMAP Q-3, 사용자 요청).
+- 파일: src/components/common/lazyScreen.js·lazyScreen.css(새), src/components/App/screens.js(새)·App.js·App.css, src/components/AIEntry/lazyAIEntry.js(새), src/components/TransactionForm/TransactionForm.js, src/components/SummaryView/summaryState.js(새)·SummaryView.js·SummaryView.css, src/components/SettingsView/SettingsView.css, vite.config.mjs, public/sw.js, src/components/common/__tests__/lazyScreen.test.js(새), src/components/App/__tests__/App.google·launch·onboarding·quickAdd.test.js, src/components/TransactionForm/__tests__/member·refactor.test.js, AGENTS.md, docs/ROADMAP.md

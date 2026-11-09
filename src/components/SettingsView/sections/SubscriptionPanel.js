@@ -5,6 +5,7 @@ import {
   updateRecurringTransaction, keepSubscriptionAmount, recurringDiscount,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
+import { OptionalFeatureHead } from '../optionalFeatures';
 
 const won = n => `${Math.round(n).toLocaleString()}원`;
 const nameOf = r => r.detail || r.sub_category || r.budget_category;
@@ -71,23 +72,7 @@ export default function SubscriptionPanel({ db, dataVersion, onChanged }) {
 
   return (
     <div className="sub-panel">
-      <div className="cb-settings-head">
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: '600' }}>구독 모아보기</div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            필요할 때만 켜세요. 정기지출 중 구독을 모아 월·연 합계와 바뀐 금액을 보여 줘요.
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`goal-display-toggle${enabled ? ' goal-display-toggle--on' : ''}`}
-          onClick={toggle}
-          title={enabled ? '구독 모아보기 끄기' : '구독 모아보기 켜기'}
-          aria-pressed={enabled}
-        >
-          <span className="goal-display-toggle-knob" />
-        </button>
-      </div>
+      <OptionalFeatureHead featureKey="subscriptions" enabled={enabled} onToggle={toggle} />
 
       {enabled && (
         <>
