@@ -7,7 +7,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import * as M from '../../services/dbManager';
-import { todayStr, addDays } from '../../services/dateUtils';
+import { todayStr, addDays, addMonths, currentYearMonth } from '../../services/dateUtils';
 import RecurringSection from '../SettingsView/sections/RecurringSection';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -138,4 +138,83 @@ test('끄면 화면만 감추고 고른 구독은 남는다', async () => {
   expect(container.querySelector('.sub-list')).toBeNull();
   expect(container.querySelector('.sub-badge')).toBeNull();
   expect(M.getSubscriptions(db).map(s => s.detail)).toEqual(['넷플릭스']);
+});
+
+describe('결제일을 바꾸면 앞으로의 거래도 옮길지 묻는다 (I-037)', () => {
+  const NEXT = addMonths(currentYearMonth(), 1);
+  const AFTER = addMonths(currentYearMonth(), 2);
+  const register = (id, date) => db.run(
+    `INSERT INTO transactions (payment_method, date, budget_category, detail, amount, is_recurring, recurring_source_id, recurring_frequency)
+     VALUES ('신한카드', ?, '문화', '넷플릭스', 13500, 1, ?, 'monthly')`, [date, id],
+  );
+  const datesOf = id => db.exec('SELECT date FROM transactions WHERE recurring_source_id = ? ORDER BY date', [id])[0].values.map(v => v[0]);
+  // 목록은 결제일 순이라 결제일을 바꾸면 자리가 바뀐다 — 넷플릭스 줄의 수정을 누른다
+  const editNetflix = () => click([...container.querySelectorAll('.settings-item')]
+    .find(el => el.textContent.includes('넷플릭스')).querySelector('button[title="수정"]'));
+  const editDay = async (day) => {
+    await show();
+    await editNetflix();
+    await typeInto(container.querySelector('input[placeholder="1~31, 0=말일"]'), day);
+    await click(button('수정 저장'));
+  };
+
+  test("앞으로의 거래를 보여 주고 — '돌아가기'는 저장하지 않고, '함께 옮기기'는 거래도 새 결제일로", async () => {
+    const id = idOf('넷플릭스');
+    register(id, `${NEXT}-05`);
+    register(id, `${AFTER}-05`);
+    await editDay('25');
+    const dialog = container.querySelector('.rmove');
+    expect(dialog.textContent).toContain('결제일을 5일에서 25일로 바꿉니다. 미리 등록된 앞으로의 거래 2건도 새 결제일로 옮길까요?');
+    expect([...dialog.querySelectorAll('.rmove-list li')].map(li => li.textContent)).toEqual([
+      expect.stringMatching(/5일 → .*25일$/), expect.stringMatching(/5일 → .*25일$/),
+    ]);
+    await click(button('돌아가기'));
+    expect(container.querySelector('.rmove')).toBeNull();
+    expect(button('수정 저장')).toBeDefined();                            // 폼은 그대로
+    expect(M.getRecurringTransactions(db).find(r => r.id === id).day_of_month).toBe(5);
+    await click(button('수정 저장'));
+    await click(button('함께 옮기기'));
+    expect(container.querySelector('.rmove')).toBeNull();
+    expect(M.getRecurringTransactions(db).find(r => r.id === id).day_of_month).toBe(25);
+    expect(datesOf(id)).toEqual([`${NEXT}-25`, `${AFTER}-25`]);
+  });
+
+  test("'정기지출만 바꾸기'는 거래를 그대로 두고, 옮길 거래가 없으면 묻지 않는다", async () => {
+    const id = idOf('넷플릭스');
+    register(id, `${NEXT}-05`);
+    await editDay('25');
+    await click(button('정기지출만 바꾸기'));
+    expect(M.getRecurringTransactions(db).find(r => r.id === id).day_of_month).toBe(25);
+    expect(datesOf(id)).toEqual([`${NEXT}-05`]);
+    db.run('DELETE FROM transactions');
+    await editDay('10');
+    expect(container.querySelector('.rmove')).toBeNull();
+    expect(M.getRecurringTransactions(db).find(r => r.id === id).day_of_month).toBe(10);
+  });
+
+  test('지금 결제일과 날짜가 다른 거래는 그대로 둔다고 알리고 옮기지 않는다', async () => {
+    const id = idOf('넷플릭스');
+    register(id, `${NEXT}-05`);
+    register(id, `${AFTER}-03`);                                         // 5일이 아닌 날
+    await editDay('25');
+    const dialog = container.querySelector('.rmove');
+    expect(dialog.textContent).toContain('앞으로의 거래 1건도 새 결제일로 옮길까요?');
+    expect(dialog.textContent).toMatch(/3일 거래는 지금 결제일\(5일\)과 날짜가 달라\(직접 고쳤거나 예전 결제일\) 그대로 둡니다\./);
+    await click(button('함께 옮기기'));
+    expect(datesOf(id)).toEqual([`${NEXT}-25`, `${AFTER}-03`]);
+  });
+
+  test('금액도 바꾸면 옮길 때 금액도 따라간다고 알린다', async () => {
+    const id = idOf('넷플릭스');
+    register(id, `${NEXT}-05`);
+    await show();
+    await editNetflix();
+    await typeInto(container.querySelector('input[placeholder="1~31, 0=말일"]'), '25');
+    const amount = [...container.querySelectorAll('input')].find(i => i.value === '13500');
+    await typeInto(amount, '17000');
+    await click(button('수정 저장'));
+    expect(container.querySelector('.rmove').textContent).toContain('옮기는 거래 중 손대지 않은 것(금액·할인·결제수단 등을 고치지 않은 것)은 금액·할인도 새 값으로 바뀝니다.');
+    await click(button('함께 옮기기'));
+    expect(db.exec('SELECT date, amount FROM transactions WHERE recurring_source_id = ?', [id])[0].values).toEqual([[`${NEXT}-25`, 17000]]);
+  });
 });

@@ -6,7 +6,7 @@ import {
   deleteRecurringTransaction, runAutoRegister, addDiscountRule, getTransactions,
   isSubscriptionsEnabled, setSubscriptionsEnabled, getSubscriptions, getSubscriptionTotals,
   setRecurringSubscription, setSubscriptionNote, looksLikeSubscription, keepSubscriptionAmount,
-  getUpcomingSubscriptionPayments, SUBSCRIPTION_DUE_DAYS,
+  getUpcomingSubscriptionPayments, SUBSCRIPTION_DUE_DAYS, getRecurringDateMoves,
 } from '../dbManager';
 import { attachChangeLog, getChangeLog, replayChanges } from '../changeLog';
 
@@ -330,6 +330,159 @@ describe('정기지출을 고치면 미리 등록한 앞으로의 거래도 (B-0
       paid(remote, id, '2027-02-05', 13500);                             // 다른 기기가 먼저 다음 예정을 등록했다
       replayChanges(remote, getChangeLog(mine).entries);
       expect(template(remote, id)).toMatchObject({ amount: 17000, payment_method: '국민카드', amount_checked_on: '2027-02-05' });
+    });
+  });
+});
+
+describe('결제일을 바꾸면 앞으로의 거래도 옮기기 (I-037)', () => {
+  const datesOf = (db, recurringId) => rowsOf(db, recurringId).map(r => r[0]);
+  const logOf = (db, recurringId) => (db.exec(
+    'SELECT registered_for_month FROM recurring_registration_log WHERE recurring_id = ? ORDER BY 1', [recurringId],
+  )[0]?.values || []).map(v => v[0]);
+  const pairs = list => list.map(m => [m.from, m.to]);
+  /** 넷플릭스 결제일을 day로 바꿔 두고(앞으로의 거래가 없을 때) 그 일정대로 등록된 것처럼 거래를 넣는다 */
+  const netflixOn = (day, dates) => {
+    const { db, ids } = makeDb();
+    const id = ids['넷플릭스'];
+    updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: day });
+    dates.forEach(d => paid(db, id, d, 13500));
+    return { db, ids, id };
+  };
+
+  test('미리보기 — 옮길 것, 새 결제일이 지나 그대로 둘 것, 날짜를 직접 고쳐 그대로 둘 것', () => {
+    const { db, id } = netflixOn(20, ['2026-11-05', '2026-11-20', '2026-12-20', '2027-01-20', '2027-02-03']);
+    const t = template(db, id);
+    const preview = getRecurringDateMoves(db, id, { ...t, day_of_month: 10 }, TODAY);
+    expect(pairs(preview.moves)).toEqual([['2026-12-20', '2026-12-10'], ['2027-01-20', '2027-01-10']]);
+    expect(pairs(preview.stays)).toEqual([['2026-11-20', '2026-11-10']]);        // 오늘(11-15) 뒤지만 새 날짜는 지났다
+    expect(pairs(preview.kept)).toEqual([['2027-02-03', '2027-02-10']]);         // 20일이 아닌 날 — 지금 결제일과 다르다(직접 고친 날짜)
+    expect(preview.amountFollows).toBe(false);
+    expect(getRecurringDateMoves(db, id, { ...t, day_of_month: 10, amount: 15000 }, TODAY).amountFollows).toBe(true);
+    expect(getRecurringDateMoves(db, id, { ...t, day_of_month: 10, amount: 15000, payment_method: '국민카드' }, TODAY).amountFollows).toBe(false);
+    // 결제일이 그대로거나 주기를 바꾸면 묻지 않는다
+    expect(getRecurringDateMoves(db, id, { ...t, amount: 15000 }, TODAY).moves).toEqual([]);
+    expect(getRecurringDateMoves(db, id, { ...t, frequency: 'annual', month_of_year: 1 }, TODAY).moves).toEqual([]);
+  });
+
+  test('옮기기 — 말일(0)·그 달에 없는 날(31일→2월 말일), 지난 결제·새 결제일이 지난 것·직접 고친 날짜는 그대로', () => {
+    atToday(() => {
+      const { db, id } = netflixOn(20, ['2026-11-05', '2026-11-20', '2026-12-20', '2027-01-20', '2027-02-20', '2027-03-02']);
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 31 }, { moveDates: true });
+      expect(datesOf(db, id)).toEqual(['2026-11-05', '2026-11-30', '2026-12-31', '2027-01-31', '2027-02-28', '2027-03-02']);
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 0 }, { moveDates: true });  // 이미 말일 — 그대로
+      expect(datesOf(db, id)).toEqual(['2026-11-05', '2026-11-30', '2026-12-31', '2027-01-31', '2027-02-28', '2027-03-02']);
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 14 }, { moveDates: true });
+      expect(datesOf(db, id)).toEqual(['2026-11-05', '2026-11-30', '2026-12-14', '2027-01-14', '2027-02-14', '2027-03-02']);
+      // 묻는 창에서 '정기지출만 바꾸기'를 고르면 거래는 그대로
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 20 });
+      expect(datesOf(db, id)).toEqual(['2026-11-05', '2026-11-30', '2026-12-14', '2027-01-14', '2027-02-14', '2027-03-02']);
+      expect(template(db, id).day_of_month).toBe(20);
+    });
+  });
+
+  test('분할 결제는 같은 묶음의 몫을 함께 옮기고, 다른 정기지출·손으로 넣은 거래는 건드리지 않는다', () => {
+    atToday(() => {
+      const { db, ids } = makeDb();
+      const id = ids['넷플릭스'];
+      paid(db, id, '2026-12-05', 6750, { split_group_id: 'g1' });
+      db.run(`INSERT INTO transactions (payment_method, date, budget_category, detail, amount, split_group_id)
+              VALUES ('국민카드', '2026-12-05', '문화', '넷플릭스', 6750, 'g1')`);
+      paid(db, ids['쿠팡 와우'], '2026-12-05', 7890);
+      db.run(`INSERT INTO transactions (payment_method, date, budget_category, detail, amount)
+              VALUES ('신한카드', '2026-12-05', '문화', '넷플릭스', 13500)`);           // 손으로 넣은 거래
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 25 }, { moveDates: true });
+      const rows = db.exec('SELECT payment_method, date, COALESCE(recurring_source_id, 0) FROM transactions ORDER BY id')[0].values;
+      expect(rows).toEqual([
+        ['신한카드', '2026-12-25', id], ['국민카드', '2026-12-25', 0], ['신한카드', '2026-12-05', ids['쿠팡 와우']], ['신한카드', '2026-12-05', 0],
+      ]);
+    });
+  });
+
+  test('금액도 함께 바꾸고 옮기면 옮기는 거래 중 손대지 않은 것만 금액도 따라간다 — 그대로 두는 거래는 금액도 그대로', () => {
+    atToday(() => {
+      const { db, id } = netflixOn(20, ['2026-11-20', '2026-12-20', '2027-01-20', '2027-02-03']);
+      db.run("UPDATE transactions SET amount = 14000 WHERE date = '2027-01-20'");   // 사용자가 고친 금액
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 10, amount: 17000 }, { moveDates: true });
+      expect(rowsOf(db, id)).toEqual([
+        ['2026-11-20', 13500, 0, '신한카드'],                              // 새 결제일(11-10)이 지나 그대로 — 금액도
+        ['2026-12-10', 17000, 0, '신한카드'],
+        ['2027-01-10', 14000, 0, '신한카드'],                              // 옮기지만 고친 금액은 그대로
+        ['2027-02-03', 13500, 0, '신한카드'],                              // 직접 고친 날짜 — 그대로
+      ]);
+      // 옛 금액으로 남은 앞으로의 거래가 있으니 그 날까지는 '금액이 바뀜'으로 알리지 않는다
+      expect(template(db, id).amount_checked_on).toBe('2027-02-03');
+      // 옮기지 않으면 일정이 바뀐 수정이라 금액도 따라가지 않는다(B-092 그대로)
+      updateRecurringTransaction(db, id, { ...template(db, id), day_of_month: 5, amount: 20000 });
+      expect(rowsOf(db, id).map(r => r[1])).toEqual([13500, 17000, 14000, 13500]);
+    });
+  });
+
+  describe('연간 구독의 달을 옮기면 가장 가까운 해의 새 달로 — 등록 기록도 옮겨 자동등록이 한 번 더 넣지 않는다', () => {
+    test('달 안에서', () => {
+      atToday(() => {
+        const { db, ids } = makeDb();
+        const id = ids['도메인'];
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 1 });
+        runAutoRegister(db, new Date(2026, 10, 15));                     // 처음 — 2027-01 등록
+        expect(datesOf(db, id)).toEqual(['2027-01-05']);
+        const preview = getRecurringDateMoves(db, id, { ...template(db, id), month_of_year: 2, day_of_month: 29 }, TODAY);
+        expect(pairs(preview.moves)).toEqual([['2027-01-05', '2027-02-28']]);   // 2027년 2월에는 29일이 없다
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 2, day_of_month: 29 }, { moveDates: true });
+        expect(datesOf(db, id)).toEqual(['2027-02-28']);
+        expect(logOf(db, id)).toEqual(['2027-02']);
+        runAutoRegister(db, new Date(2026, 11, 15));                     // 2027-02까지
+        expect(datesOf(db, id)).toEqual(['2027-02-28']);
+      });
+    });
+
+    test('12월 → 1월은 다음 해 1월로', () => {
+      atToday(() => {
+        const { db, ids } = makeDb();
+        const id = ids['도메인'];
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 12, day_of_month: 20 });
+        runAutoRegister(db, new Date(2026, 9, 15));                      // 처음 — 2026-12 등록
+        expect(datesOf(db, id)).toEqual(['2026-12-20']);
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 1 }, { moveDates: true });
+        expect(datesOf(db, id)).toEqual(['2027-01-20']);
+        expect(logOf(db, id)).toEqual(['2027-01']);
+        runAutoRegister(db, new Date(2026, 10, 15));                     // 2027-01까지 — 한 번 더 넣지 않는다
+        expect(datesOf(db, id)).toEqual(['2027-01-20']);
+        expect(getUpcomingSubscriptionPayments(db, '2027-01-18').filter(p => p.recurringId === id).map(p => [p.date, typeof p.id])).toEqual([['2027-01-20', 'number']]);
+      });
+    });
+
+    test('1월 → 12월은 앞 해 12월로', () => {
+      atToday(() => {
+        const { db, ids } = makeDb();
+        const id = ids['도메인'];
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 1 });
+        runAutoRegister(db, new Date(2026, 10, 15));                     // 처음 — 2027-01 등록
+        updateRecurringTransaction(db, id, { ...template(db, id), month_of_year: 12 }, { moveDates: true });
+        expect(datesOf(db, id)).toEqual(['2026-12-05']);
+        expect(logOf(db, id)).toEqual(['2026-12']);
+        runAutoRegister(db, new Date(2026, 11, 15));                     // 2027-02까지 — 12월 일정이라 더 넣지 않는다
+        expect(datesOf(db, id)).toEqual(['2026-12-05']);
+        expect(getUpcomingSubscriptionPayments(db, '2026-12-03').filter(p => p.recurringId === id).map(p => [p.date, typeof p.id])).toEqual([['2026-12-05', 'number']]);
+      });
+    });
+  });
+
+  test('병합 — 다른 기기 파일에 다시 실행해도 그 기기가 등록해 둔 앞으로의 거래까지 같은 규칙으로 옮긴다(직접 고친 날짜는 그대로)', () => {
+    atToday(() => {
+      const { db, ids } = makeDb();
+      const id = ids['넷플릭스'];
+      const bytes = db.export();
+      const mine = createDatabase(SQL, bytes).db;
+      runAutoRegister(mine, new Date(2026, 10, 15));                    // 불러온 직후 자동등록(변경 기록 전) — 2027-01
+      attachChangeLog(mine);
+      updateRecurringTransaction(mine, id, { ...template(mine, id), day_of_month: 0 }, { moveDates: true });
+      expect(datesOf(mine, id)).toEqual(['2027-01-31']);
+      const remote = createDatabase(SQL, bytes).db;
+      paid(remote, id, '2026-11-20', 500);                               // 다른 기기가 먼저 넣은 거래(5일이 아님) — id도 다르다
+      runAutoRegister(remote, new Date(2026, 11, 1));                    // 그 기기는 2027-02까지 등록했다
+      replayChanges(remote, getChangeLog(mine).entries);
+      expect(template(remote, id).day_of_month).toBe(0);
+      expect(datesOf(remote, id)).toEqual(['2026-11-20', '2027-02-28']);
     });
   });
 });

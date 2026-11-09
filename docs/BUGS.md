@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-037
+다음 번호: B-094, I-038
 
 ## 요약표
 
@@ -145,6 +145,7 @@
 | I-034 | ✅ | - | 가져오기 | 쓰던 엑셀 가계부·은행·카드·다른 앱 내역은 양식이 제각각이라 이 앱 양식으로 고쳐야만 가져올 수 있음 (ROADMAP M-7) |
 | I-035 | ✅ | - | 데이터·저장 | 다른 계정(OneDrive ↔ Google Drive)으로 옮길 때 거래 CSV뿐이라 카테고리·계좌·정기지출·일정·설정이 빠짐 (ROADMAP F-5) |
 | I-036 | ✅ | - | 알림 | 예산·잔액·리포트 알림이 띠 여러 개로 흩어지고, 구독이 결제되기 전에 알 길이 없음 — 푸시(서버) 대신 앱을 열 때 한 카드로 (ROADMAP C-12) |
+| I-037 | ✅ | - | 정기지출 | 정기지출의 결제일을 바꾸면 미리 등록된 앞으로의 거래는 옛 날짜로 남아 하나씩 고쳐야 함 |
 
 
 ## 상세
@@ -1273,3 +1274,11 @@
 - 원인: 알림을 기능마다 따로 만들었고, 앱이 꺼져 있을 때 알리려면 서버가 깨워야 해 2단계(서버)로 미뤄 두었다.
 - 해결: 푸시 대신 앱을 열면 거래내역 맨 위 '확인할 것' 카드 하나에 잔액 위험·예산·구독 결제 예정(3일 전부터, 구독 모아보기를 켰을 때)·지난달 리포트를 모으고(닫기는 하나, 닫은 기록은 알림마다 전과 같은 규칙), 결제 예정은 미리 등록된 거래(지웠으면 알리지 않음)나 아직 등록 전인 달은 정기지출의 결제일로 센다(B-093 함께, 사용자 요청).
 - 파일: src/components/TransactionList/OpenNotices.js(새, Balance·Budget·MonthlyReportBanner를 합침), src/components/TransactionList/TransactionList.js·TransactionList.css, src/services/db/subscriptions.js, src/services/db/recurringDates.js·recurring.js(결제일 계산을 함께 씀), src/components/SettingsView/optionalFeatures.js, src/components/TransactionList/__tests__/OpenNotices.test.js(BalanceAlertBanner.test.js를 옮김), src/components/__tests__/CategoryBudget.ui.test.js·MonthlyReport.ui.test.js, src/services/__tests__/subscriptions.test.js, SETUP.md, AGENTS.md, docs/ROADMAP.md
+
+### I-037 정기지출의 결제일을 바꾸면 미리 등록된 앞으로의 거래는 옛 날짜로 남아 하나씩 고쳐야 함
+- 상태: ✅ 해결 (2026-11-09)
+- 영역: 정기지출
+- 문제: 결제일이 바뀐 구독·고정비의 정기지출을 고쳐도 자동등록이 두 달 앞까지 넣어 둔 거래는 옛 날짜라, 목록·결제 예정 알림이 틀리고 거래마다 날짜를 고쳐야 한다.
+- 원인: 일정을 바꾼 수정은 옛 일정으로 등록된 거래와 맞지 않을 수 있어 앞으로의 거래를 건드리지 않았다(B-092), 옮길지 사용자에게 묻는 길이 없었다.
+- 해결: 주기는 그대로 두고 결제일(날, 연간은 달·날)만 바꾸면 옮길 앞으로의 거래를 보여 주며 '함께 옮기기·정기지출만 바꾸기·돌아가기'를 묻고, 옮기면 아직 옛 결제일 그대로인 오늘 뒤 거래를 그 달(연간은 가장 가까운 해의 새 달)의 새 결제일로(말일 보정, 분할 몫 함께, 지금 결제일과 날짜가 다른 것·새 날짜가 오늘 이전인 것은 날짜·금액 모두 그대로, 옮기는 거래는 금액도 B-092처럼 따라감, 연간 달을 옮기면 등록 기록도) SQL 식으로 옮겨 병합 때도 같은 규칙으로 다시 실행된다(사용자 요청).
+- 파일: src/services/db/recurring.js, src/components/SettingsView/sections/RecurringSection.js·SettingsView.css, src/services/db/subscriptions.js(주석), src/services/__tests__/subscriptions.test.js, src/components/__tests__/Subscriptions.ui.test.js, SETUP.md

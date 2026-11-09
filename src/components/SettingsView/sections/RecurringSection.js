@@ -3,11 +3,13 @@ import {
   getAllPaymentMethods, getBudgetCategories, getSubCategories,
   getDiscountRules, evaluateDiscountRule,
   getRecurringTransactions, addRecurringTransaction, updateRecurringTransaction,
-  deleteRecurringTransaction, getRegistrationLog, isSubscriptionsEnabled,
+  deleteRecurringTransaction, getRegistrationLog, isSubscriptionsEnabled, getRecurringDateMoves,
 } from '../../../services/dbManager';
 import { useDbSnapshot } from '../../../hooks/useDbSnapshot';
 import { evaluateFormula, parseOptionalAmount } from '../../../services/formulaEvaluator';
 import AmountInput from '../../common/AmountInput';
+import ModalOverlay from '../../common/ModalOverlay';
+import { todayStr } from '../../../services/dateUtils';
 import { IconEdit, IconTrash } from '../icons';
 import SubscriptionPanel from './SubscriptionPanel';
 
@@ -19,12 +21,70 @@ const emptyRecurringForm = {
   is_subscription: false, cancel_note: '',
 };
 
+/** 결제일 글 — 월별 '25일'·'말일', 연간 '3월 25일' */
+function scheduleText(r) {
+  const day = Number(r.day_of_month) === 0 ? '말일' : `${r.day_of_month}일`;
+  return r.frequency === 'annual' ? `${r.month_of_year}월 ${day}` : day;
+}
+
+/** 'YYYY-MM-DD' → '12월 5일' (올해가 아니면 연도도) */
+function dateText(d, thisYear) {
+  const [y, m, day] = d.split('-').map(Number);
+  return `${y === thisYear ? '' : `${y}년 `}${m}월 ${day}일`;
+}
+
+const MOVE_LIST_MAX = 6;
+
+/**
+ * 결제일을 바꿀 때 — 미리 등록된 앞으로의 거래도 새 결제일로 옮길지 묻는다 (I-037).
+ * pending: { old, data, moves, stays, kept, amountFollows } (getRecurringDateMoves)
+ */
+function DateMoveDialog({ pending, onMove, onKeep, onBack }) {
+  const thisYear = Number(todayStr().slice(0, 4));
+  const { moves, stays, kept } = pending;
+  return (
+    <ModalOverlay className="modal-overlay" panelClassName="modal-content modal-small rmove">
+      <h3 className="rmove-title">앞으로의 거래도 옮길까요?</h3>
+      <p className="rmove-lead">
+        결제일을 {scheduleText(pending.old)}에서 {scheduleText({ ...pending.old, ...pending.data })}로 바꿉니다.
+        미리 등록된 앞으로의 거래 {moves.length}건도 새 결제일로 옮길까요?
+      </p>
+      <ul className="rmove-list">
+        {moves.slice(0, MOVE_LIST_MAX).map(m => (
+          <li key={m.id}>{dateText(m.from, thisYear)} → <b>{dateText(m.to, thisYear)}</b></li>
+        ))}
+        {moves.length > MOVE_LIST_MAX && <li className="rmove-more">외 {moves.length - MOVE_LIST_MAX}건</li>}
+      </ul>
+      {stays.map(st => (
+        <p key={st.id} className="rmove-note">
+          {dateText(st.from, thisYear)} 거래는 새 결제일({dateText(st.to, thisYear)})이 오늘이거나 이미 지나 그대로 둡니다.
+        </p>
+      ))}
+      {kept.map(k => (
+        <p key={k.id} className="rmove-note">
+          {dateText(k.from, thisYear)} 거래는 지금 결제일({scheduleText(pending.old)})과 날짜가 달라(직접 고쳤거나 예전 결제일) 그대로 둡니다.
+        </p>
+      ))}
+      {pending.amountFollows && (
+        <p className="rmove-note">옮기는 거래 중 손대지 않은 것(금액·할인·결제수단 등을 고치지 않은 것)은 금액·할인도 새 값으로 바뀝니다.</p>
+      )}
+      <div className="rmove-actions">
+        <button type="button" className="btn-primary" onClick={onMove}>함께 옮기기</button>
+        <button type="button" className="btn-secondary" onClick={onKeep}>정기지출만 바꾸기</button>
+        <button type="button" className="btn-secondary" onClick={onBack}>돌아가기</button>
+      </div>
+    </ModalOverlay>
+  );
+}
+
 /** 지출계획 › 정기지출 — 목록과 추가/수정 폼 (결제수단 할인규칙으로 할인 자동 계산) */
 export default function RecurringSection({ db, dataVersion, onChanged, setError }) {
   const live = useDbSnapshot(db, dataVersion);
   const [showRecurringForm, setShowRecurringForm] = useState(false);
   const [editingRecurringId, setEditingRecurringId] = useState(null);
   const [recurringForm, setRecurringForm] = useState(emptyRecurringForm);
+  // 결제일을 바꿀 때 앞으로의 거래도 옮길지 묻는 중 (I-037)
+  const [pendingMove, setPendingMove] = useState(null);
   const skipAutoDiscountRef = React.useRef(false);
 
   const paymentMethods = useMemo(() => getAllPaymentMethods(live.db), [live]);
@@ -106,9 +166,23 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
       // 구독 표시·해지 메모는 구독 모아보기를 켰을 때만 보이므로 그때만 바꾼다(끈 동안 고쳐도 남게)
       ...(subscriptionsOn ? { is_subscription: isSubscription, cancel_note: cancelNote } : {}),
     };
+    if (editingRecurringId !== null) {
+      // 결제일만 바꿨고 옮길 수 있는 앞으로의 거래가 있으면 먼저 묻는다 (I-037)
+      const old = recurringList.find(r => r.id === editingRecurringId);
+      const preview = getRecurringDateMoves(db, editingRecurringId, data);
+      if (old && preview.moves.length) {
+        setPendingMove({ old, data, ...preview });
+        return;
+      }
+    }
+    saveRecurring(data, false);
+  };
+
+  const saveRecurring = (data, moveDates) => {
+    setPendingMove(null);
     try {
       if (editingRecurringId !== null) {
-        updateRecurringTransaction(db, editingRecurringId, data);
+        updateRecurringTransaction(db, editingRecurringId, data, { moveDates });
       } else {
         addRecurringTransaction(db, data);
       }
@@ -155,10 +229,7 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
                     {items.map(r => {
                       const logMonths = registrationLog[r.id];
                       const lastRegistered = logMonths ? [...logMonths].sort().reverse()[0] : null;
-                      const dayLabel = r.day_of_month === 0 ? '말일' : `${r.day_of_month}일`;
-                      const scheduleLabel = freq === 'annual'
-                        ? `${r.month_of_year}월 ${dayLabel}`
-                        : dayLabel;
+                      const scheduleLabel = scheduleText(r);
                       return (
                         <div key={r.id} className="settings-item">
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -395,6 +466,14 @@ export default function RecurringSection({ db, dataVersion, onChanged, setError 
             </button>
           </div>
         </div>
+      )}
+      {pendingMove && (
+        <DateMoveDialog
+          pending={pendingMove}
+          onMove={() => saveRecurring(pendingMove.data, true)}
+          onKeep={() => saveRecurring(pendingMove.data, false)}
+          onBack={() => setPendingMove(null)}
+        />
       )}
     </div>
   );

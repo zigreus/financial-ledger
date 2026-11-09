@@ -565,3 +565,13 @@
 .data-backup-main b { font-size: 14px; }
 .data-backup-main small { font-size: 11px; color: var(--text-muted); }
 .data-backup-btn { flex: none; padding: 6px 12px; font-size: 13px; }
+
+/* 결제일을 바꿀 때 앞으로의 거래도 옮길지 묻는 창 (I-037) */
+.rmove { display: flex; flex-direction: column; gap: 10px; }
+.rmove-title { margin: 0; font-size: 17px; }
+.rmove-lead { margin: 0; font-size: 14px; line-height: 1.6; }
+.rmove-list { margin: 0; padding: 10px 12px; list-style: none; display: flex; flex-direction: column; gap: 4px; border-radius: 10px; background: var(--bg); font-size: 14px; }
+.rmove-more { color: var(--text-muted); font-size: 13px; }
+.rmove-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.rmove-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.rmove-actions button { width: 100%; }
