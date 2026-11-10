@@ -92,11 +92,23 @@ async function openAt(url, db = ledger()) {
 }
 const fakeAI = () => container.querySelector('.fake-ai');
 
-test("바로가기 'AI 입력'으로 열면 입력 창과 AI 입력 상자를 바로 열고, 주소의 표시는 지운다", async () => {
+test("바로가기 'AI 입력'으로 열면 AI 창과 AI 입력 상자를 바로 열고, 주소의 표시는 지운다 (I-051)", async () => {
   await openAt('/?action=ai');
-  expect(container.querySelector('.tx-form')).not.toBeNull();
+  expect(container.querySelector('.ai-assistant')).not.toBeNull();
+  expect(container.querySelector('.tx-form')).toBeNull();
   expect(JSON.parse(fakeAI().textContent)).toEqual({ quick: true, text: '', files: 0 });
   expect(window.location.search).toBe('');
+});
+
+test('✨ AI 버튼은 어느 탭에서나 AI 창을 열고, 뒤로가기로 닫는다 (I-051)', async () => {
+  await openAt('/');
+  const fab = container.querySelector('.ai-fab');
+  expect(fab).not.toBeNull();
+  await act(async () => { fab.click(); });
+  expect(container.querySelector('.ai-assistant')).not.toBeNull();
+  expect(container.querySelector('.ai-fab')).toBeNull();
+  await act(async () => { window.history.back(); await new Promise(r => setTimeout(r, 30)); });
+  expect(container.querySelector('.ai-assistant')).toBeNull();
 });
 
 test("바로가기 '거래 입력'으로 열면 입력 창만 연다", async () => {

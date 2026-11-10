@@ -15,10 +15,12 @@ export const AccountManagement = lazyScreen(() => import('../AccountManagement/A
 export const ImportModal = lazyScreen(() => import('../ImportModal/ImportModal'));
 export const CardStatementModal = lazyScreen(() => import('../CardStatement/CardStatementModal'));
 export const Onboarding = lazyScreen(() => import('../Onboarding/Onboarding'));
+// AI 창(I-051) — 어느 화면에서나 ✨ AI 버튼으로 연다
+export const AIAssistant = lazyScreen(() => import('../AIEntry/AIAssistant'));
 
 // 입력 창의 AI 입력(TransactionForm이 AIEntry/lazyAIEntry로 쓴다)을 먼저 — 가장 자주 여는 곳
 // 문제 알리기(I-038)는 가계부를 불러오지 못했거나 화면이 멈췄을 때 쓴다 — 그때 연결이 없어도 열리게 함께 불러 둔다
-const SCREENS = [AIEntry, SummaryView, CalendarView, AccountManagement, SettingsView, ImportModal, CardStatementModal, Onboarding, ProblemReport];
+const SCREENS = [AIEntry, AIAssistant, SummaryView, CalendarView, AccountManagement, SettingsView, ImportModal, CardStatementModal, Onboarding, ProblemReport];
 
 /** 모든 화면을 미리 불러 둔다 — 반환: 모두 불러왔는지 */
 export function preloadScreens() {

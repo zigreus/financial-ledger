@@ -392,3 +392,20 @@
 .ai-entry-draft-text { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
 .ai-entry-draft .rs-btn-link { font-weight: 700; }
 .quick-reason { display: block; font-size: calc(12px * var(--fs)); color: var(--c-amber-700); line-height: 1.5; }
+
+/* AI 명령 (I-051) — 이렇게 할게요 */
+.cmd-said { font-size: calc(13px * var(--fs)); color: var(--text-muted); margin: 2px 0 8px; word-break: break-all; }
+.cmd-steps { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cmd-step { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
+.cmd-step--blocked { opacity: 0.85; border-style: dashed; }
+.cmd-step-head { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.cmd-step-head input { margin-top: 3px; flex-shrink: 0; }
+.cmd-step-title { font-size: calc(14px * var(--fs)); font-weight: 600; color: var(--text); line-height: 1.4; }
+.cmd-step-lines { margin: 4px 0 0; padding-left: 18px; font-size: calc(12px * var(--fs)); color: var(--text-muted); line-height: 1.5; }
+
+/* AI 창 (I-051) */
+.ai-assistant-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.ai-assistant-tips { font-size: calc(12px * var(--fs)); color: var(--text-muted); line-height: 1.6; }
+.ai-assistant-tips-title { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.ai-assistant-tips ul { margin: 0 0 6px; padding-left: 18px; }
+.ai-assistant-tips-note { font-size: calc(11px * var(--fs)); }

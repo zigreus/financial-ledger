@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-051
+다음 번호: B-094, I-052
 
 ## 요약표
 
@@ -159,6 +159,7 @@
 | I-048 | ✅ | - | 화면 | PC에서 창을 닫으려면 닫기 버튼을 찾아 눌러야 함 (ROADMAP U-10) |
 | I-049 | ✅ | - | 거래 | 몇 년 치 거래내역에서 달 묶음을 하나씩 접고 펼쳐야 함 (ROADMAP U-11) |
 | I-050 | ✅ | - | 저장·공유 | 가족이 각자 자기 계정으로는 같은 가계부를 쓸 수 없고 한 계정을 함께 써야 함 (ROADMAP M-2 1단계 Microsoft) |
+| I-051 | ✅ | - | AI | AI는 거래 추가에만 쓸 수 있고, 고치기·지우기·정기지출·설정은 화면을 찾아가 직접 해야 함 |
 
 
 ## 상세
@@ -1399,3 +1400,12 @@
 - 원인: 저장소가 늘 로그인한 계정의 앱 폴더 ledger.db만 읽고 썼고, 다른 계정의 파일을 열거나 내 파일을 특정 사람에게 공유하는 길이 없었다.
 - 해결: 주인이 설정 › 데이터에서 이메일로 초대하면 가계부 파일 하나에 쓰기 권한을 주고(Graph invite, 앱 폴더는 공유 안 함) 참여 링크를 만들며, 받는 사람은 링크로 열어 '열기' → 그 파일(/drives/{d}/items/{i})을 같은 eTag 규칙으로 읽고 쓰는 저장소(ledgerKey로 미저장 변경·사본을 따로, 백업 없음)로 열고, 머리글에서 내 가계부와 바꾸며(바꾸기 전에 지금 가계부를 바로 닫고 진행 중인 불러오기·저장 결과를 버림, 화면·뒤로가기 기록은 처음으로), 목록은 기기와 내 앱 폴더 ledgers.json으로 맞춘다. 넣지 못한 변경의 사본은 내 앱 폴더 shared-backups에, 로그아웃·목록에서 빼기는 그 가계부들의 미저장 변경을 묻고 지운다. 회사·학교 계정·Google은 아직(안내).
 - 파일: src/services/storage/oneDrive.js·provider.js, src/services/ledgers.js, src/hooks/useLedgerSync.js, src/index.js, src/components/App/App.js·LedgerDialogs.js·LedgerDialogs.css, src/components/Header/Header.js·Header.css, src/components/SettingsView/SettingsView.js·SettingsView.css·sections/DataSection.js·sections/LedgerShareBlock.js, src/components/common/copyText.js·ProblemReport.js, public/privacy.html, src/services/changeLog.js, src/components/SettingsView/sections/DisplaySettings.js(갤럭시 루틴 안내), 테스트(ledgers·oneDriveShare·useLedgerSync.merge·useLedgerSync.ledgers·App.ledgers·LedgerShare.ui), AGENTS.md, SETUP.md, docs/ROADMAP.md
+
+### I-051 AI는 거래 추가에만 쓸 수 있고, 고치기·지우기·정기지출·설정은 화면을 찾아가 직접 해야 함
+- 상태: ✅ 해결 (2026-11-10) — 실제 AI 키로 말해 보는 확인은 남음
+- 심각도: -
+- 영역: AI
+- 문제: AI 입력은 입력 창 안에서 새 거래만 넣어, "방금 넣은 거 지워 줘"·"넷플릭스 17000원으로"·"식비 예산 50만원"처럼 말해도 처리하지 못한다(사용자 요청 — AI를 기본 기능으로, 말하면 상황에 맞게 최대한 자동으로).
+- 원인: 말로 입력의 AI 응답 형식이 거래(entries)만 담았고, 고치기·지우기·설정을 실행할 길과 입력 창 밖에서 AI를 여는 곳이 없었다.
+- 해결: 어느 화면에서나 ✨ AI 버튼(바로가기 'AI 입력'도)으로 AI 창을 열고, 명령처럼 보이는 글은 AI가 정해진 할 일(거래 고치기·지우기·조회, 정기지출 만들기·고치기·지우기, 월 목표·카테고리 예산·선택 기능·화면 설정, 카테고리·결제수단·구성원 추가, 화면 열기)로 돌려주면 앱이 목록과 대조해 검증한 뒤(거래는 AI에 보내지 않고 조건으로 이 기기에서 찾음) 되돌리기 쉬운 것은 바로, 거래·정기지출을 바꾸는 것은 맞는 거래를 보여 주고 한 번 눌러 한 트랜잭션으로 실행하며 알림의 '되돌리기'로 되돌린다(계획한 뒤·실행한 뒤 바뀐 것은 건드리지 않음, 가계부를 다시 불러왔으면 실행을 막음). 새 거래만 말했으면 기존 말로 입력으로 넘긴다.
+- 파일: src/services/aiCommand.js·optionalFeatures.js, src/services/db/common.js(reinsert)·transactions.js·recurring.js(deleteRecurringForUndo·restoreDeletedRecurring·setRecurringAmountCheckedOn)·settings.js(snapshot/restoreMonthlyGoals)·categoryBudgets.js(snapshot/restoreCategoryBudgets), src/components/AIEntry/AIEntry.js·CommandPanel.js·AIAssistant.js·AIEntry.css, src/components/App/App.js·App.css·screens.js, src/components/TransactionForm/TransactionForm.js, src/components/SettingsView/optionalFeatures.js, public/privacy.html, 테스트(aiCommand·AIEntry.command·App.launch), AGENTS.md

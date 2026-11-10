@@ -1,6 +1,6 @@
 // 가계부 거래(transactions) 조회·추가·수정·삭제와 분할 결제 묶음 조회.
 
-import { columnsOf, dbRowsToObjects, withTransaction } from './common';
+import { dbRowsToObjects, reinsert, withTransaction } from './common';
 
 /** 거래 목록 필터에서 '누가'를 지정하지 않은 거래만 고를 때 쓰는 값 */
 export const MEMBER_NONE = '__none__';
@@ -134,18 +134,6 @@ export function deleteTransaction(db, id) {
 }
 
 // ── 삭제 되돌리기 (ROADMAP U-3) ─────────────────────────────────
-
-/** 행 하나를 새로 넣는다(id 없이 — 새 번호). 칸 이름은 테이블의 칸 목록(columnsOf)으로만 고른다(AGENTS §2.9). 넣은 행의 id */
-function reinsert(db, table, row, overrides = {}) {
-  const allowed = columnsOf(db, table);
-  const data = { ...row, ...overrides };
-  const cols = Object.keys(data).filter(c => c !== 'id' && allowed.has(c));
-  db.run(
-    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
-    cols.map(c => data[c] ?? null),
-  );
-  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
-}
 
 /**
  * 거래를 지우고 되돌리기에 쓸 기록을 돌려준다 — 하나의 트랜잭션 (U-3).

@@ -1,6 +1,6 @@
 // 정기지출 템플릿과 자동등록(빠진 달 보충 포함), 등록 기록.
 
-import { todayLocal, withTransaction } from './common';
+import { dbRowsToObjects, reinsert, todayLocal, withTransaction } from './common';
 import { recurringTxDateFor, ymOf } from './recurringDates';
 import { evaluateDiscountRule, getDiscountRules } from './discounts';
 
@@ -49,6 +49,7 @@ export function addRecurringTransaction(db, data) {
       data.is_subscription ? 1 : 0, String(data.cancel_note || '').trim(),
     ]
   );
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
 }
 
 function getRecurringTransaction(db, id) {
@@ -242,6 +243,43 @@ export function updateRecurringTransaction(db, id, data, { moveDates = false } =
 export function deleteRecurringTransaction(db, id) {
   db.run('DELETE FROM recurring_transactions WHERE id = ?', [id]);
   db.run('DELETE FROM recurring_registration_log WHERE recurring_id = ?', [id]);
+}
+
+/** 금액을 확인한 날(구독 모아보기의 '금액이 바뀜' 기준, I-027)을 그대로 적는다 — AI 명령의 되돌리기가 그때 값으로 돌린다 (I-051) */
+export function setRecurringAmountCheckedOn(db, id, value) {
+  db.run('UPDATE recurring_transactions SET amount_checked_on = ? WHERE id = ?', [value || '', id]);
+}
+
+/**
+ * 정기지출을 지우고 되돌리기에 쓸 기록을 돌려준다 (I-051 AI 명령) — 행 그대로와 등록 기록.
+ * 등록 기록을 함께 되살려야 되돌린 뒤 이번 달을 또 자동등록하지 않는다(멱등, AGENTS §2.7). 없으면 null
+ */
+export function deleteRecurringForUndo(db, id) {
+  const row = dbRowsToObjects(db.exec('SELECT * FROM recurring_transactions WHERE id = ?', [id]))[0];
+  if (!row) return null;
+  const logs = dbRowsToObjects(db.exec('SELECT * FROM recurring_registration_log WHERE recurring_id = ?', [id]));
+  withTransaction(db, () => deleteRecurringTransaction(db, id));
+  return { row, logs };
+}
+
+/**
+ * 지운 정기지출을 되살린다 — 새 번호로 넣고(병합 때 번호가 겹치지 않게), 등록 기록과
+ * 그 정기지출이 등록했던 거래의 연결(recurring_source_id — 지워도 옛 번호로 남는다)을 새 번호로 잇는다. 새 번호
+ */
+export function restoreDeletedRecurring(db, undo) {
+  if (!undo?.row) return null;
+  return withTransaction(db, () => {
+    const oldId = undo.row.id;
+    const newId = reinsert(db, 'recurring_transactions', undo.row);
+    undo.logs.forEach(log => {
+      db.run(
+        'INSERT OR IGNORE INTO recurring_registration_log (recurring_id, registered_for_month, transaction_id, registered_at) VALUES (?, ?, ?, ?)',
+        [newId, log.registered_for_month, log.transaction_id ?? null, log.registered_at ?? null],
+      );
+    });
+    db.run('UPDATE transactions SET recurring_source_id = ? WHERE recurring_source_id = ?', [newId, oldId]);
+    return newId;
+  });
 }
 
 export function getRegistrationLog(db) {

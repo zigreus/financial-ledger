@@ -10,8 +10,9 @@ import TransactionForm from '../TransactionForm/TransactionForm';
 import { showSummaryMonth, showSummaryReportMonth } from '../SummaryView/summaryState';
 // 첫 화면에 필요 없는 화면은 열 때 불러온다 (I-033) — 로그인 뒤 쉬는 틈에 미리 불러 둔다
 import {
-  SummaryView, SettingsView, CalendarView, AccountManagement, ImportModal, CardStatementModal, Onboarding, preloadScreens,
+  SummaryView, SettingsView, CalendarView, AccountManagement, ImportModal, CardStatementModal, Onboarding, AIAssistant, preloadScreens,
 } from './screens';
+import { runPlan, undoPlan, describeRun } from '../../services/aiCommand';
 import { ModalLoading } from '../common/lazyScreen';
 import { addTransaction, updateTransaction, deleteTransaction, deleteTransactionsForUndo, restoreDeletedTransactions, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
@@ -53,6 +54,7 @@ const INITIAL_NAV = {
   settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null,
   accountDrilldown: null, accountDetailTab: 'transactions', showAccountForm: false,
   showLedgerSwitcher: false,
+  showAssistant: false,
   epoch: 0,
 };
 
@@ -129,6 +131,7 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showCardCheck, setShowCardCheck] = useState(false);
   const [showLoadReport, setShowLoadReport] = useState(false); // 가계부를 불러오지 못한 화면의 '문제 알리기' (I-038)
+  const [showAssistant, setShowAssistant] = useState(false); // AI 창 (I-051) — 뒤로가기 흐름(navigate)
   const [showLedgerSwitcher, setShowLedgerSwitcher] = useState(false); // 가계부 바꾸기 창 (M-2) — 뒤로가기 흐름(navigate)
   // 가계부를 열 때 가리기 (U-7) — 이 기기 설정을 켰으면 앱을 열 때 덮어 두고, 누르면 걷는다
   const [curtain, setCurtain] = useState(() => getHideOnOpen());
@@ -198,12 +201,21 @@ function App() {
     if ('accountDetailTab' in s) setAccountDetailTab(s.accountDetailTab);
     if ('showAccountForm' in s) setShowAccountForm(s.showAccountForm);
     if ('showLedgerSwitcher' in s) setShowLedgerSwitcher(s.showLedgerSwitcher);
+    if ('showAssistant' in s) setShowAssistant(s.showAssistant);
   }, []);
 
   const navigate = useCallback((updates) => {
     const newState = { ...navRef.current, ...updates };
     navRef.current = newState;
     window.history.pushState(newState, '');
+    applyNavState(updates);
+  }, [applyNavState]);
+
+  // 지금 기록을 바꾼다(새로 쌓지 않음) — 창에서 다른 화면으로 넘어갈 때, 뒤로가기가 닫은 창으로 돌아가지 않게 (I-051)
+  const replaceNav = useCallback((updates) => {
+    const newState = { ...navRef.current, ...updates };
+    navRef.current = newState;
+    window.history.replaceState(newState, '');
     applyNavState(updates);
   }, [applyNavState]);
 
@@ -526,8 +538,10 @@ function App() {
       if (shared) {
         setAiStart({ text: shared.text, files: shared.files });
         navigate({ showForm: true, editingTx: null, copyFromTx: null });
-      } else if (action === 'add' || action === 'ai') {
-        setAiStart(action === 'ai' ? { quick: true } : null);
+      } else if (action === 'ai') {
+        navigate({ showAssistant: true });
+      } else if (action === 'add') {
+        setAiStart(null);
         navigate({ showForm: true, editingTx: null, copyFromTx: null });
       }
     })();
@@ -577,6 +591,73 @@ function App() {
     row.member === undefined ? { ...row, member: resolveDeviceMember(db) } : row
   ), [db]);
 
+  // 입력 창이나 AI 창(I-051)을 닫는다 — 거래를 넣어 끝났을 때. 둘 중 하나만 열려 있다
+  const closeEntry = useCallback(() => {
+    setShowForm(false);
+    setEditingTx(null);
+    setShowAssistant(false);
+    window.history.back();
+  }, []);
+
+  // AI 명령 실행 (I-051) — 그 순간의 DB에 한 트랜잭션으로 하고, 알림의 '되돌리기'로 되돌린다.
+  // 되돌리기는 실행한 때와 같은 가계부에만(그사이 다시 불러왔으면 기록의 번호가 다른 행을 가리킬 수 있다 — handleDelete와 같다).
+  // close: 실행한 뒤 창을 닫는다. 화면 열기가 있으면 창 대신 그 화면으로 바꾼다(뒤로가기가 닫은 창으로 돌아가지 않게).
+  // 반환: { error } | { done }
+  const handleCommand = useCallback((inputSteps, { close = true, planDb = null } = {}) => {
+    const target = dbRef.current;
+    if (!target) return { error: '가계부를 아직 불러오지 못했어요' };
+    // 계획을 보는 사이 가계부를 다시 불러왔으면(다른 기기와 합침 등) 거래 번호가 다른 거래를 가리킬 수 있다 — 다시 읽게 한다
+    if (planDb && planDb !== target) return { error: '그사이 가계부를 다시 불러왔어요 — 한 번 더 말해 주세요' };
+    // 새로 넣는 거래의 '누가'는 이 기기 사용자 (I-013)
+    const steps = inputSteps.map(st => (st.kind === 'tx_add' && st.data && st.data.row.member === undefined
+      ? { ...st, data: { ...st.data, row: { ...st.data.row, member: resolveDeviceMember(target) } } } : st));
+    let result;
+    try {
+      result = runPlan(target, steps);
+    } catch (e) {
+      return { error: e.message || '처리하지 못했어요' };
+    }
+    if (result.open) {
+      const screen = result.open;
+      const tab = ['list', 'summary', 'calendar', 'account'].includes(screen) ? screen : 'settings';
+      const section = { recurring: 'recurring', budget: 'budget', features: 'features' }[screen];
+      replaceNav({
+        showForm: false, showAssistant: false, editingTx: null, copyFromTx: null, activeTab: tab,
+        ...(section ? { settingsSection: section, settingsDrilldownCategory: null, settingsDrilldownTrip: null, settingsDrilldownPayment: null } : {}),
+      });
+    } else if (close) {
+      closeEntry();
+    }
+    const text = [describeRun(steps), result.skipped ? `(그사이 바뀐 ${result.skipped}건은 그대로 두었어요)` : ''].filter(Boolean).join(' ');
+    if (result.records.length) {
+      let undone = false;
+      const undo = () => {
+        if (undone) return;
+        undone = true;
+        if (dbRef.current !== target) {
+          showTopToast('그사이 가계부를 다시 불러와 되돌리지 못했습니다 — 필요하면 직접 고쳐 주세요');
+          return;
+        }
+        try {
+          const { undone: n, kept } = undoPlan(target, result.records);
+          showTopToast(kept ? `${n}가지만 되돌렸습니다 — 나머지는 그사이 바뀌어 그대로 두었습니다` : '✓ 방금 한 일을 되돌렸습니다');
+        } catch (e) {
+          showTopToast(`되돌리지 못했습니다 — ${e.message}`);
+        }
+      };
+      showTopToast(text || '✓ 했어요', { label: '되돌리기', onClick: undo });
+    } else if (text) {
+      showToast(text);
+    }
+    return { done: result.done };
+  }, [closeEntry, replaceNav, showTopToast, showToast]);
+
+  // AI 창에서 한 건을 '이대로 채우기' — 입력 창을 열어 채운다(AI 창 기록을 입력 창으로 바꾼다)
+  const applyFromAssistant = useCallback((s) => {
+    setAiStart({ apply: s });
+    replaceNav({ showAssistant: false, showForm: true, editingTx: null, copyFromTx: null });
+  }, [replaceNav]);
+
   // AI 입력이 자주 넣던 거래를 바로 넣는다 (I-022) — 확인할 것이 남아 있으면 입력 창은 열어 둔다(done이 아님).
   // 분석을 기다리는 사이 저장소에서 다시 받아 DB가 바뀌었을 수 있어, 넣을 때와 되돌릴 때 모두 그 순간의 DB(dbRef)를 쓴다.
   // 되돌리기는 넣을 때의 모습과 같은 행만 지운다(병합으로 id가 바뀌었으면 같은 모습의 행을 찾고, 고친 것은 그대로).
@@ -589,11 +670,7 @@ function App() {
     if (!rows.length || !target) return null;
     const snapshots = [];
     withTransaction(target, () => rows.forEach(row => snapshots.push(addedSnapshot(addTransaction(target, row), row))));
-    if (done) {
-      setShowForm(false);
-      setEditingTx(null);
-      window.history.back();
-    }
+    if (done) closeEntry();
     let removed = null;
     const listeners = new Set();
     const undo = () => {
@@ -616,7 +693,7 @@ function App() {
     const what = rows.length > 1 ? `${rows.length}건 ${total.toLocaleString()}원` : `${rows[0].detail || rows[0].budget_category} ${total.toLocaleString()}원`;
     showTopToast(`✓ 자주 넣던 ${what} 바로 추가됨`, { label: '되돌리기', onClick: undo });
     return { undo, onUndone };
-  }, [showTopToast]);
+  }, [showTopToast, closeEntry]);
 
   const handleAdd = useCallback((txData, { keepOpen = false } = {}) => {
     // 분할 결제는 거래 2건으로 들어온다
@@ -644,15 +721,13 @@ function App() {
       rows.forEach(row => addTransaction(db, row));
       deleteIds.forEach(id => deleteTransaction(db, id));
     });
-    setShowForm(false);
-    setEditingTx(null);
-    window.history.back();
+    closeEntry();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
     const parts = [];
     if (rows.length) parts.push(`${rows.length}건 ${total.toLocaleString()}원 추가`);
     if (deleteIds.length) parts.push(`취소된 거래 ${deleteIds.length}건 삭제`);
     showToast(`✓ ${parts.join(', ')}됨`);
-  }, [db, showToast, withMember]);
+  }, [db, showToast, withMember, closeEntry]);
 
   const handleUpdate = useCallback((txData) => {
     // 분할 결제는 묶음 전체를 한 번에 반영한다.
@@ -1012,6 +1087,13 @@ function App() {
         </Suspense>
       </main>
 
+      {/* AI 버튼 (I-051) — 무엇이든 말하면 알아서: 거래 넣기·고치기·지우기·정기지출·설정·조회 */}
+      {db && !showForm && !showAssistant && (
+        <button type="button" className="ai-fab" onClick={() => navigate({ showAssistant: true })} aria-label="AI에게 말하기">
+          <span aria-hidden="true">✨</span> AI
+        </button>
+      )}
+
       {/* 하단 네비게이션 */}
       <nav className="bottom-nav">
         <button
@@ -1082,8 +1164,23 @@ function App() {
           onSave={editingTx ? handleUpdate : handleAdd}
           onBulkAdd={handleBulkAdd}
           onQuickAdd={handleQuickAdd}
+          onCommand={handleCommand}
           onCancel={closeForm}
         />
+      )}
+
+      {/* AI 창 (I-051) — 어느 화면에서나 ✨ AI 버튼으로 */}
+      {showAssistant && db && (
+        <Suspense fallback={<ModalLoading onClose={() => window.history.back()} />}>
+          <AIAssistant
+            db={db}
+            onApply={applyFromAssistant}
+            onBulkAdd={handleBulkAdd}
+            onQuickAdd={handleQuickAdd}
+            onCommand={handleCommand}
+            onClose={() => window.history.back()}
+          />
+        </Suspense>
       )}
 
       {/* 카드 내역 대조 */}

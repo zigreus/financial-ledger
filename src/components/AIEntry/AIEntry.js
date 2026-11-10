@@ -9,6 +9,8 @@ import AISettingsForm from './AISettingsForm';
 import ReceiptPanel from './ReceiptPanel';
 import TextPanel from './TextPanel';
 import SmsPanel from './SmsPanel';
+import CommandPanel from './CommandPanel';
+import { looksLikeCommand } from '../../services/aiCommand';
 import { usePasteImages } from '../../hooks/usePasteImages';
 import { canReadClipboardImages, readClipboardImages, pasteShortcut } from '../../services/clipboardImage';
 import './AIEntry.css';
@@ -18,7 +20,7 @@ const hasFinePointer = () => {
   try { return !!window.matchMedia && window.matchMedia('(pointer: fine)').matches; } catch (e) { return false; }
 };
 
-const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 4500 — 카드 승인 문자를 그대로 붙여넣어도 돼요';
+const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금 / 방금 넣은 거 지워 줘 / 넷플릭스 정기지출 17000원으로 / 이번 달 외식 얼마 썼어?';
 
 /**
  * 거래 폼 위의 AI 입력 (I-022) — 사진·카드 문자·말을 한 곳에 넣으면 알아서 읽는다.
@@ -29,12 +31,14 @@ const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅
  * 사진 선택창은 여기서 연다. 모바일 브라우저는 사용자가 누른 그 순간에만 선택창을 열어 주고,
  * 입력 요소가 다시 만들어지면 고른 사진이 사라지므로 항상 같은 자리에 둔다.
  * 폼을 채우기만 하거나(onApply), 확인한 여러 건을 한 번에 반영한다(onBulkAdd(rows, { deleteIds })).
+ * 거래 추가가 아닌 말(지워·고쳐·정기지출·예산·설정·얼마 썼어 등)은 AI 명령으로 읽는다(I-051, CommandPanel → onCommand).
+ * onExit가 있으면(AI 창) 사용자가 닫을 때 창도 닫는다.
  * resetKey가 바뀌면(연속 입력으로 다음 거래로 넘어가면) 처음 상태로 돌아간다.
  * 말로 입력 중에 AI 설정을 열면 그 화면을 숨겨 둔 채 살려 두어, 설정을 마치거나 취소하면 하던 대화로 돌아간다.
  * 캡처한 영수증은 단축키(Ctrl+V·⌘V)나 막대 아래 '캡처한 영수증 붙여넣기' 버튼으로도 넣는다(I-020).
  */
-export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickAdd, resetKey }) {
-  const [mode, setMode] = useState('idle'); // idle | quick | setup | receipt | text | sms
+export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickAdd, onCommand, onExit, resetKey }) {
+  const [mode, setMode] = useState('idle'); // idle | quick | setup | receipt | text | sms | command
   const [pending, setPending] = useState(null); // 설정을 마치면 이어서 할 일
   const [file, setFile] = useState(null);
   const [notice, setNotice] = useState('');
@@ -56,6 +60,8 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
   const [startNote, setStartNote] = useState('');   // 공유로 받은 사진을 읽을 때의 안내(여러 장·함께 온 글)
   const startedRef = useRef(false);
   const [smsInit, setSmsInit] = useState(null);     // 카드 문자로 읽고 남은 확인거리
+  const [cmdText, setCmdText] = useState('');       // AI 명령으로 읽는 글 (I-051)
+  const [cmdKey, setCmdKey] = useState(0);          // 새 글마다 명령 화면을 새로 연다
   // 카드 문자에서 바로 넣은 묶음 — '다시 붙여넣기'로 오가도 되돌릴 수 있게 입력 창을 닫을 때까지 지킨다
   const { batches: smsBatches, add: addSmsBatch, undoAll: undoSmsBatches, reset: resetSmsBatches } = useQuickBatches();
   const fileRef = useRef(null);
@@ -133,6 +139,16 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     resetSmsBatches();
     setStartNote('');
     finishDraft();
+  };
+  /** 사용자가 닫았다 — 처음 상태로, AI 창이면 창도 닫는다 (거래를 넣어 App이 닫는 경우에는 부르지 않는다) */
+  const exit = () => {
+    closeAll();
+    if (onExit) onExit();
+  };
+  /** 읽은 결과 화면을 닫는다 — AI 창에서는 창을 닫지 않고 빈 AI 입력 상자로 돌아간다(창은 머리글의 ✕·상자의 닫기로) */
+  const closePanel = () => {
+    closeAll();
+    if (onExit) setMode('quick');
   };
   const openQuick = () => { setNotice(''); setQuickError(''); setMode('quick'); };
   const resumeDraft = () => {
@@ -258,9 +274,22 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
       }
       // 카드 문자처럼 보였지만 읽을 결제가 없다 — 말로 입력으로 넘겨 AI가 읽게 한다(바로 넣지 않고 확인받는다)
     }
+    // 거래 추가가 아닌 일을 시키는 말이면 AI 명령으로 (I-051) — 새 거래만 있었으면 명령 화면이 말로 입력으로 넘긴다
+    if (onCommand && !cardLike && !resuming && looksLikeCommand(text)) {
+      setCmdText(text);
+      setCmdKey(k => k + 1);
+      if (!activeAI()) { needSetup('command'); return; }
+      setMode('command');
+      return;
+    }
+    startText(text, { auto: !cardLike && !resuming, fromSaved: resuming });
+  };
+
+  /** 말로 입력으로 정리한다 — auto: 늘 넣던 건은 바로 넣어도 되는지 */
+  const startText = (text, { auto, fromSaved }) => {
     setTextInit(text);
-    setTextAuto(!cardLike && !resuming);
-    setFromDraft(resuming);
+    setTextAuto(auto);
+    setFromDraft(fromSaved);
     setTextKey(k => k + 1);
     if (!activeAI()) { needSetup('quick-text'); return; }
     openText();
@@ -276,6 +305,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
       setMode('receipt');
     } else if (next === 'receipt') { setMode('idle'); openPicker(); }
     else if (next === 'text' || next === 'quick-text') openText();
+    else if (next === 'command') setMode('command');
     else setMode('idle');
   };
 
@@ -284,7 +314,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     setPending(null);
     waitingFileRef.current = null;
     // 말로 입력 중에 연 설정이면 하던 대화로, AI 입력 상자에서 왔으면 쓰던 글로 돌아간다
-    if (next === 'quick-text') setMode('quick');
+    if (next === 'quick-text' || next === 'command') setMode('quick');
     else setMode(next === 'text' && textAlive ? 'text' : 'idle');
   };
 
@@ -321,6 +351,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
         />
         <div className="tp-hint">
           말하듯 적거나 카드 문자를 붙여넣거나 영수증 사진을 올리세요. 늘 넣던 가게는 바로 추가하고, 처음 보는 건 확인을 받아요.
+          {onCommand && ' 거래 고치기·지우기, 정기지출·예산·설정 바꾸기, "얼마 썼어?" 같은 질문도 말하면 알아서 해요.'}
           카드 문자는 AI 키 없이도 읽어요.
         </div>
         {restored && quickText.trim() === restored.trim() && (
@@ -331,7 +362,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
         )}
         {quickError && <div className="rs-error-text">{quickError}</div>}
         <div className="rs-actions">
-          <button type="button" className="rs-btn-secondary" onClick={closeAll}>닫기</button>
+          <button type="button" className="rs-btn-secondary" onClick={exit}>닫기</button>
           <button type="button" className="rs-btn-secondary" onClick={startReceipt}>📷 사진</button>
           <button type="button" className="rs-btn-primary" disabled={!quickText.trim()} onClick={submitQuick}>정리하기</button>
         </div>
@@ -347,7 +378,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
           onApply={s => apply(s, '영수증 내용을 채웠습니다')}
           onAutoAdd={autoAdd}
           onRepick={openPicker}
-          onClose={closeAll}
+          onClose={closePanel}
           onSetup={() => needSetup(null)}
         />
       </>
@@ -366,7 +397,20 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
           onBulkAdd(rows, opts);
         }}
         onBack={() => setMode('quick')}
-        onClose={closeAll}
+        onClose={closePanel}
+      />
+    );
+  } else if (mode === 'command') {
+    body = (
+      <CommandPanel
+        key={cmdKey}
+        db={db}
+        text={cmdText}
+        onRun={onCommand}
+        onAddOnly={() => startText(cmdText, { auto: true, fromSaved: false })}
+        onBack={() => setMode('quick')}
+        onClose={closePanel}
+        onSetup={() => needSetup('command')}
       />
     );
   } else if (mode === 'text') {
@@ -425,7 +469,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
           if (ownsDraftRef.current) { clearAIDraft(); ownsDraftRef.current = false; }
           onBulkAdd(rows);
         }}
-        onClose={closeAll}
+        onClose={closePanel}
         onSetup={() => needSetup('text')}
       />
     </div>

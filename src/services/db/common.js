@@ -13,6 +13,18 @@ export function columnsOf(db, table) {
   return new Set((res[0]?.values || []).map(r => r[1]));
 }
 
+/** 행 하나를 새로 넣는다(id 없이 — 새 번호). 칸 이름은 테이블의 칸 목록(columnsOf)으로만 고른다(AGENTS §2.9). 넣은 행의 id */
+export function reinsert(db, table, row, overrides = {}) {
+  const allowed = columnsOf(db, table);
+  const data = { ...row, ...overrides };
+  const cols = Object.keys(data).filter(c => c !== 'id' && allowed.has(c));
+  db.run(
+    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+    cols.map(c => data[c] ?? null),
+  );
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+}
+
 /** 쓰기 문장을 실행하고 바뀐 행 수를 돌려준다. */
 export function runCount(db, sql, params) {
   db.run(sql, params);

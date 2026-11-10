@@ -120,6 +120,25 @@ export function setMonthCategoryBudget(db, category, yearMonth, amount) {
   }
 }
 
+/** 한 카테고리의 예산 줄 전부 — AI 명령의 되돌리기가 바꾸기 전 모습으로 쓴다 (I-051) */
+export function snapshotCategoryBudgets(db, category) {
+  return rowsOf(db.exec(
+    'SELECT year_month, amount, since, kept FROM category_budgets WHERE budget_category = ? ORDER BY year_month',
+    [category],
+  )).map(([yearMonth, amount, since, kept]) => ({ yearMonth, amount, since, kept }));
+}
+
+/** snapshotCategoryBudgets로 남긴 모습으로 되돌린다 */
+export function restoreCategoryBudgets(db, category, rows) {
+  withTransaction(db, () => {
+    db.run('DELETE FROM category_budgets WHERE budget_category = ?', [category]);
+    rows.forEach(r => db.run(
+      'INSERT INTO category_budgets (budget_category, year_month, amount, since, kept) VALUES (?, ?, ?, ?, ?)',
+      [category, r.yearMonth, r.amount, r.since, r.kept],
+    ));
+  });
+}
+
 /** 카테고리 목록에 없는 이름의 예산 — 설정에서 지울 수 있게 보인다 */
 export function getOrphanCategoryBudgetNames(db) {
   return rowsOf(db.exec(

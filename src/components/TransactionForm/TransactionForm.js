@@ -36,7 +36,7 @@ const EMPTY_FORM = {
   member: '',
 };
 
-function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, defaultDate, aiStart = null, onSave, onBulkAdd, onQuickAdd, onCancel }) {
+function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, defaultDate, aiStart = null, onSave, onBulkAdd, onQuickAdd, onCommand, onCancel }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [budgetCategories, setBudgetCategories] = useState([]);
@@ -147,6 +147,13 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
     }
     setAddedCount(0);
   }, [editingTx, copyFromTx, defaultDate, discount, loadSplit, resetSplit]);
+
+  // AI 창에서 '이대로 채우기'로 연 입력 창 (I-051) — 위에서 빈 폼을 채울 때마다(같은 값으로 다시 열 때도) 그 위에 AI 결과로 채운다
+  useEffect(() => {
+    if (!editingTx && !copyFromTx && aiStart && aiStart.apply) applyReceipt(aiStart.apply);
+  // 위 효과와 같은 때에만 — applyReceipt는 렌더마다 새로 만들어진다
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingTx, copyFromTx, defaultDate, aiStart]);
 
   // 세부카테고리 목록 — 앱 어디서든 DB가 바뀌면(dataVersion) 다시 읽는다
   useEffect(() => {
@@ -387,7 +394,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
           {/* 열 때 불러온다(I-033) — 보통은 미리 불러 두어 바로 보인다 */}
           {!editingTx && (
             <Suspense fallback={null}>
-              <AIEntry db={db} start={aiStart} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} resetKey={addedCount} />
+              <AIEntry db={db} start={aiStart && aiStart.apply ? null : aiStart} onApply={applyReceipt} onBulkAdd={bulkAdd} onQuickAdd={quickAdd} onCommand={onCommand} resetKey={addedCount} />
             </Suspense>
           )}
 

@@ -76,6 +76,21 @@ export function changeDefaultMonthlyGoal(db, newAmount) {
   });
 }
 
+/** 월 목표금액 전부(상시 값 + 달마다 값) — AI 명령의 되돌리기가 바꾸기 전 모습으로 쓴다 (I-051) */
+export function snapshotMonthlyGoals(db) {
+  return { def: getSetting(db, 'default_monthly_goal', ''), months: getAllMonthlyGoals(db) };
+}
+
+/** snapshotMonthlyGoals로 남긴 모습으로 되돌린다 — 그 뒤 생긴 달 값은 지우고, 있던 달 값·상시 값은 그때대로 */
+export function restoreMonthlyGoals(db, snap) {
+  withTransaction(db, () => {
+    const now = getAllMonthlyGoals(db);
+    Object.keys(now).forEach(ym => { if (!(ym in snap.months)) deleteMonthlyGoal(db, ym); });
+    Object.entries(snap.months).forEach(([ym, amt]) => { if (now[ym] !== amt) setMonthlyGoal(db, ym, amt); });
+    if (getSetting(db, 'default_monthly_goal', '') !== snap.def) setSetting(db, 'default_monthly_goal', snap.def);
+  });
+}
+
 export function deleteMonthlyGoal(db, yearMonth) {
   db.run('DELETE FROM monthly_goals WHERE year_month = ?', [yearMonth]);
 }

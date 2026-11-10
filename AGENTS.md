@@ -34,6 +34,7 @@
 | `src/services/sheetFile.js` + sheetImport·importAI + `components/ImportModal/SheetMapper.js` | 아무 양식의 표 가져오기(I-034): 파일 읽기(CSV 인코딩·구분 문자, xlsx는 내장 압축 풀기, HTML 표 .xls) / 열·분류 맞추기(규칙 짐작·입력 습관·기기에 기억한 양식) → ImportModal의 기존 검사·가져오기 / AI는 맞추기 추천만(앞줄·이름 목록만 보냄) |
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
 | `src/services/quickEntry.js` + `components/AIEntry` | 'AI 입력' 하나로 사진·카드 문자·말을 갈래 지어 읽고, 늘 넣던 거래만 바로 넣기(`familiarity`). 바로 넣은 것은 App 알림·확인 화면의 되돌리기(`removeAddedTransactions`, 그 순간의 DB에서 넣은 그대로인 행만) |
+| `src/services/aiCommand.js` + `AIEntry/CommandPanel.js`·`AIAssistant.js` | AI 명령(I-051): 어느 화면에서나 ✨ AI 버튼으로 연 AI 창(또는 입력 창의 AI 입력)에 말한 글 중 명령처럼 보이는 것(`looksLikeCommand`)을 AI가 정해진 할 일(`ACTION_TYPES`)로 돌려주면, `buildPlan`이 목록과 대조해 검증하고(거래는 AI에 보내지 않고 조건으로 이 기기에서 찾음, DB에 쓰지 않음) App의 `handleCommand`가 `runPlan`(한 트랜잭션)·`undoPlan`(알림의 되돌리기)으로 실행한다. 되돌리기 쉬운 것(`AUTO_KINDS`)만이면 바로, 거래·정기지출을 바꾸면 한 번 확인. 새 거래만 말했으면 말로 입력으로 넘긴다. 새 할 일은 `ACTION_TYPES`·지시문·`PLANNERS`·`runPlan`·`undoPlan`에 함께 더한다 |
 | `src/services/txFilters.js` + txSummary | 거래내역 필터(기간·여러 개 선택·순지출 금액 범위·저장한 필터)와 걸러진 결과의 집계·AI 요약(집계만 보냄) |
 | `src/services/exportData.js` + `components/common/download.js` | 거래 CSV 내보내기(가져오기와 같은 칸), 파일 내려받기 |
 | `src/services/errorLog.js` + problemReport + `components/common/ProblemReport.js` | 문제 알리기: 처리 못 한 오류·화면 오류(`common/ErrorBoundary`)·화면에 알린 오류를 이 기기에만 남김(최근 20건, 가림, 늘 있는 상태 안내는 뺌) / 보낼 글 / 미리 보기와 복사·메일. 설정 › 앱(`SettingsView/sections/AboutSection.js`), 가계부를 불러오지 못한 화면, 화면 오류 화면에서 쓴다(뒤의 둘은 `common/lazyProblemReport`). 앱 버전은 빌드가 적는다(`__APP_VERSION__`, vite.config.mjs) (I-038) |
@@ -142,7 +143,7 @@
 
 - 모바일 우선입니다. UI 문구는 한국어로 쓰고 존댓말 안내체를 씁니다.
 - **모든 가족이 쓰지 않을 기능은 선택 기능으로 만듭니다.** 설정에서 켜고 끄고(기본은 꺼짐), 꺼 두면 그 기능의 화면이 보이지 않습니다. 끄면 화면만 감추고 정해 둔 값은 남깁니다. 가족 공통이면 가계부 DB의 `settings`, 기기별 취향이면 localStorage에 둡니다. (사용자 요청, I-025)
-  - 새 선택 기능은 `SettingsView/optionalFeatures.js`의 `OPTIONAL_FEATURES`에 한 줄 더해 설정 › 선택 기능에 나오게 하고, 원래 자리의 스위치는 `OptionalFeatureHead`를 씁니다(이름·설명이 두 곳에서 같게). (I-032)
+  - 새 선택 기능은 `services/optionalFeatures.js`의 `OPTIONAL_FEATURES`에 한 줄 더해(AI 명령도 이 목록으로 켜고 끈다) 설정 › 선택 기능에 나오게 하고, 원래 자리의 스위치는 `OptionalFeatureHead`를 씁니다(이름·설명이 두 곳에서 같게). (I-032)
 - **알림은 앱을 열 때 거래내역의 '확인할 것' 카드 한 곳에만 보입니다.** 새 알림은 `TransactionList/OpenNotices.js`에 항목으로 더하고 띠를 따로 만들지 않습니다. 앱이 꺼져 있을 때의 푸시 알림은 쓰지 않습니다. (사용자 결정, I-036, B-093)
 - 모달은 `common/ModalOverlay`를 쓰고, 뒤로가기는 App의 `navigate`/history 흐름을 따릅니다.
 - 모달 안의 터치·스와이프가 뒤 화면으로 새지 않게 합니다. (B-048)

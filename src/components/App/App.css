@@ -160,3 +160,26 @@
 /* 가계부를 불러오지 못한 화면의 문제 알리기 (I-038) */
 .load-report { width: 100%; max-width: 480px; padding: 0 16px; box-sizing: border-box; }
 .load-report-wait { font-size: calc(13px * var(--fs)); color: var(--text-muted); text-align: center; }
+
+/* AI 버튼 (I-051) — 어느 화면에서나 AI 창을 연다. 아래 막대 바로 위 오른쪽 */
+.ai-fab {
+  position: fixed;
+  /* 넓은 화면에서도 가운데 놓인 앱(최대 640px)의 오른쪽 안에 */
+  right: max(16px, calc((100vw - 640px) / 2 + 16px));
+  bottom: calc(var(--nav-h) + 16px + env(safe-area-inset-bottom, 0px));
+  z-index: 90;
+  height: 48px;
+  padding: 0 16px;
+  border-radius: 24px;
+  border: none;
+  background: linear-gradient(135deg, #7C3AED, #2563EB);
+  color: white;
+  font-size: calc(15px * min(var(--fs), 1.15));
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-fab:active { transform: scale(.96); }
