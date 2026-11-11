@@ -374,6 +374,15 @@
 .tp-edit-row > input { flex: 1; }
 .tp-edit-amount { flex: 1; min-width: 0; }
 .tp-item-warn { font-size: calc(11px * var(--fs)); color: var(--c-amber-800); }
+/* 사진 목록 — AI가 그 결제에서 확실하지 않다고 남긴 메모 */
+.tp-item-ai-note {
+  font-size: calc(11px * var(--fs));
+  color: var(--text-muted);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 4px 7px;
+  line-height: 1.45;
+}
 
 /* 분석 중 진행 상황 ("서버가 붐벼서 다시 시도하는 중…") */
 .rs-analyzing-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

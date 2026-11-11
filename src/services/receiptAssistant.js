@@ -270,7 +270,7 @@ export function buildSuggestion(db, raw, { today = todayStr() } = {}) {
 
   const warnings = [...money.warnings];
   const confidence = ['high', 'medium', 'low'].includes(raw.confidence) ? raw.confidence : 'medium';
-  if (confidence === 'low') warnings.push('영수증이 잘 안 읽혔습니다 — 금액과 날짜를 꼭 확인하세요');
+  if (confidence === 'low') warnings.push('사진이 잘 안 읽혔습니다 — 금액과 날짜를 꼭 확인하세요');
   if (raw.note) warnings.push(String(raw.note));
 
   return {

@@ -19,8 +19,12 @@ const DEVICE_MEMBER = '\u0000device'; // '누가' 고르기의 기본값 — 정
 /** 넣을 수 있는 줄 — 빈 칸 없이, 올바른 날짜와 0보다 큰 금액 */
 const addable = s => isSuggestionComplete(s) && isValidDateStr(s.date) && Number(s.amount) > 0;
 
-/** 여러 건 목록에서 미리 체크할 것 — 넣을 수 있고, 이미 있거나 겹치거나 취소된 결제가 아니며, 날짜를 실제로 읽었고 앞날짜가 아닌 것 */
-const preChecked = s => addable(s) && !flagReason(s) && s.sources.date !== 'today' && s.date <= todayStr();
+/**
+ * 여러 건 목록에서 미리 체크할 것 — 넣을 수 있고, 이미 있거나 겹치거나 취소된 결제가 아니며,
+ * 날짜를 실제로 읽었고 앞날짜가 아니며, AI가 잘 안 읽혔다고 하지 않은 것
+ */
+const preChecked = s => addable(s) && !flagReason(s) && s.sources.date !== 'today' && s.date <= todayStr()
+  && s.confidence !== 'low';
 
 /** 겹친 결제의 이유 — 목록을 고칠 때마다 다시 따진다(markDuplicates) */
 function flagReason(s) {
@@ -36,8 +40,13 @@ function flagReason(s) {
 /** 어떤 겹침인지 — 같은 겹침에 대해 사용자가 정한 체크는 지킨다 */
 const flagKey = s => (s.pairedCancel ? 'cancel' : s.duplicateOf ? `tx${s.duplicateOf.id}` : s.batchDuplicate ? 'batch' : '');
 
-/** 목록 한 줄 — checked는 사용자의 뜻(넣을 수 없는 동안에는 빠진다), decided는 그 체크를 정할 때의 겹침, ever는 넣을 수 있던 적이 있는지 */
-const listItem = (s, checked, reason = '') => ({ s, checked, reason, decided: flagKey(s), ever: addable(s) });
+/**
+ * 목록 한 줄 — checked는 사용자의 뜻(넣을 수 없는 동안에는 빠진다), decided는 그 체크를 정할 때의 겹침,
+ * ever는 넣을 수 있던 적이 있는지, original·originalReason은 되돌리기용 처음 읽은 값, rev는 되돌린 횟수
+ */
+const listItem = (s, checked, reason = '') => ({
+  s, checked, reason, decided: flagKey(s), ever: addable(s), original: s, originalReason: reason, rev: 0,
+});
 
 /** 실제로 넣을 줄 */
 const isSelected = it => it.checked && addable(it.s);
@@ -63,7 +72,7 @@ function refresh(db, list, { edited = -1, confirming = false, claimed = [] } = {
     }
     if (key === it.decided) return { ...it, s };
     if (key) return { ...it, s, decided: key, checked: false };
-    const recheck = !confirming && i === edited && preChecked(s);
+    const recheck = !confirming && i === edited && preChecked(s) && it.reason !== QUICK_REASONS.undone;
     return { ...it, s, decided: '', checked: recheck || it.checked };
   });
 }
@@ -181,7 +190,8 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
       }
 
       // 여러 건 — 자주 넣던 것은 바로, 나머지는 목록에서 고른다
-      const flagged = suggestions.filter(s => flagReason(s));
+      // 겹친 결제와 AI가 확실하지 않다고 메모를 남긴 결제는 바로 넣지 않는다
+      const flagged = suggestions.filter(s => flagReason(s) || s.aiNote);
       const candidates = suggestions.filter(s => !flagged.includes(s));
       const reasons = new Map();
       let familiar = [];
@@ -313,12 +323,26 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
     const claimed = claimedNow();
     setItems(list => refresh(dbRef.current,
       list.map((x, i) => {
-        if (idx === null) return patchListItem(x, p);
-        return i === idx ? { ...patchListItem(x, p), reason: '' } : x;
+        // 체크는 refresh가 정한다 — patchListItem의 체크(빈 칸이면 끔)는 쓰지 않아 입력 중에도 사용자의 체크가 남는다
+        if (idx === null) return { ...patchListItem(x, p), checked: x.checked };
+        return i === idx ? { ...patchListItem(x, p), checked: x.checked, reason: '' } : x;
       }),
       { edited: idx === null ? -1 : idx, claimed }));
   };
   const setAllPayment = (method) => { if (method) edit(null, { payment_method: method }); };
+  /**
+   * 한 줄을 처음 읽은 값으로 되돌린다 — 근거·이유·경고도 함께. 겹침은 다시 따지고,
+   * 체크는 처음 읽었을 때처럼 다시 정한다(고친 값에 준 체크가 잘못 읽은 값에 남지 않게, 되돌린 거래는 체크 없이)
+   */
+  const revert = (idx) => {
+    setListNote('');
+    const claimed = claimedNow();
+    setItems(list => refresh(dbRef.current,
+      list.map((x, i) => (i === idx ? { ...x, s: x.original, reason: x.originalReason, rev: x.rev + 1 } : x)),
+      { claimed }).map((x, i) => (i === idx
+      ? { ...x, decided: flagKey(x.s), checked: preChecked(x.s) && x.reason !== QUICK_REASONS.undone }
+      : x)));
+  };
   const checkable = items.filter(it => addable(it.s));
   // '모두'는 이미 있거나 겹친 결제를 뺀 줄 기준 — 그런 줄을 안 골랐어도 나머지를 다 골랐으면 '모두 빼기'
   const pickable = checkable.filter(it => !flagReason(it.s));
@@ -396,6 +420,7 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
             subtitle={[it.s.date, it.s.paymentHint, it.s.eventTitle, flagReason(it.s) || it.reason].filter(Boolean).join(' · ')}
             onToggle={checked => toggle(idx, checked)}
             onPatch={p => edit(idx, p)}
+            onRevert={() => revert(idx)}
             onFillForm={onApply}
             editable
             canCheck={addable(it.s)}

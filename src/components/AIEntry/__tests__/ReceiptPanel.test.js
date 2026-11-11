@@ -501,3 +501,108 @@ test('그사이 같은 거래가 들어와 뺀 줄이 있으면 이유를 알리
   expect(container.querySelector('[role=alert]').textContent).toContain('같은 거래가 들어와 1건을 뺐어요');
   expect(boxes().map(b => b.checked)).toEqual([true, false]);
 });
+
+// 읽은 값으로(되돌리기) — 고친 줄을 사진에서 읽은 값으로
+const revertButton = i => [...items()[i].querySelectorAll('button')].find(b => b.textContent.trim() === '읽은 값으로');
+
+test('되돌리기로 고친 날짜·내용·금액·결제수단을 읽은 값으로 돌리고, 금액 칸도 그 값으로 맞춘다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000), row('마트', 7000)], cancels: [], note: '' });
+  const onBulkAdd = vi.fn();
+  await renderList({ onBulkAdd });
+  await flush();
+  expect(revertButton(0)).toBeUndefined();           // 고치기 전에는 없다
+  await openEdit(0);
+  await typeInto(field(0, 'input[type=date]'), '2025-01-05');
+  await typeInto(field(0, '.tp-edit-row input[type=text]'), '셀프주유');
+  await typeInto(amountField(0), '5만');               // 잘못 써서 빠졌다
+  await act(async () => {
+    const sel = items()[0].querySelector('.tp-item-fields select');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, '신한카드');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(boxes()[0].checked).toBe(false);
+  await act(async () => { revertButton(0).click(); });
+  expect(items()[0].querySelector('b').textContent).toBe('주유소');
+  expect(field(0, 'input[type=date]').value).toBe('2025-01-01');
+  expect(amountField(0).value).toBe('50000');
+  expect(items()[0].querySelector('.tp-item-fields select').value).toBe('현대EV');
+  expect(boxes()[0].checked).toBe(true);
+  expect(revertButton(0)).toBeUndefined();           // 읽은 값 그대로면 버튼이 사라진다
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd.mock.calls[0][0][0]).toEqual({ detail: '주유소', amount: 50000, payment_method: '현대EV' });
+});
+
+test('되돌리면 처음의 겹침도 돌아온다 — 이미 넣은 거래와 같던 줄은 다시 체크 없이', async () => {
+  useRealRules();
+  ledger = [{ id: 1, date: '2025-01-01', detail: '편의점', amount: 3000, payment_method: '현대EV' }];
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({ suggestions: [row('편의점', 3000), row('마트', 7000)], cancels: [], note: '' });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  await openEdit(0);
+  await typeInto(amountField(0), '3500');             // 고쳐서 다른 결제가 됐다
+  expect(boxes()[0].checked).toBe(true);
+  await act(async () => { revertButton(0).click(); });
+  expect(boxes()[0].checked).toBe(false);
+  expect(items()[0].textContent).toContain('이미 넣은 거래가 있어요');
+});
+
+// 결제마다 AI 메모 — 확실하지 않은 점
+test('AI가 결제마다 남긴 메모를 그 줄에 보이고, 메모가 있는 결제는 바로 넣지 않는다', async () => {
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const a = row('와플사이', 4500, { aiNote: '날짜 머리글이 잘려 달력에서 고른 11일로 짐작했어요' });
+  const b = row('주유소', 50000);
+  analyzePhotos.mockResolvedValue({ suggestions: [a, b], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [b], review: [] });
+  const onAutoAdd = vi.fn(() => null);
+  await renderList({ onAutoAdd });
+  await flush();
+  expect(splitFamiliar).toHaveBeenCalledWith({}, [b], 'receipt');   // 메모가 있는 줄은 바로 넣을 후보가 아니다
+  expect(items()[0].querySelector('.tp-item-ai-note').textContent).toBe('AI 메모: 날짜 머리글이 잘려 달력에서 고른 11일로 짐작했어요');
+});
+
+test('AI가 잘 안 읽혔다고 한 결제는 미리 체크하지 않는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000, { confidence: 'low' }), row('마트', 7000)], cancels: [], note: '' });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+});
+
+test('읽은 값으로 되돌리면 체크도 처음처럼 — 고친 값에 준 체크가 잘못 읽은 값에 남지 않는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000, { confidence: 'low' }), row('마트', 7000)], cancels: [], note: '' });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  await openEdit(0);
+  await typeInto(amountField(0), '52000');            // 바로잡고
+  await act(async () => { boxes()[0].click(); });     // 직접 고른 뒤
+  expect(boxes()[0].checked).toBe(true);
+  await act(async () => { revertButton(0).click(); });
+  expect(boxes()[0].checked).toBe(false);             // 잘 안 읽힌 값으로 돌아가면 체크도 처음처럼 없다
+});
+
+test('되돌린(바로 넣었다 취소한) 거래는 고쳤다 읽은 값으로 돌려도 다시 체크되지 않는다', async () => {
+  useRealRules();
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const f = row('가게A', 4500);
+  const r = row('가게B', 7000);
+  analyzePhotos.mockResolvedValue({ suggestions: [f, r], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [f], review: [{ s: r, reason: '' }] });
+  let undone;
+  const onAutoAdd = vi.fn(() => ({ undo: () => 1, onUndone: (fn) => { undone = fn; return () => {}; } }));
+  await renderList({ onAutoAdd });
+  await flush();
+  await act(async () => { undone(1); });             // 바로 넣은 가게A를 되돌렸다 — 목록에 체크 없이 돌아온다
+  expect(items()[1].textContent).toContain('되돌린 거래예요');
+  expect(boxes()[1].checked).toBe(false);
+  ledger = [{ id: 9, date: '2025-01-01', detail: '다른곳', amount: 3000, payment_method: '현대EV' }];
+  await openEdit(1);
+  await typeInto(amountField(1), '3000');             // 고쳐서 이미 있는 거래와 같아졌다가
+  await act(async () => { revertButton(1).click(); }); // 읽은 값으로
+  expect(boxes()[1].checked).toBe(false);
+});
+

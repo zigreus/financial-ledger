@@ -173,6 +173,29 @@ test('이 화면에서 바로 넣은 결제(claimed)가 제 거래를 먼저 가
   expect(markDuplicates(db, [{ ...base, merchant: '가게B', detail: '가게B' }])[0].duplicateOf).not.toBeNull();
 });
 
+test('결제마다의 메모 — 여러 건이면 그 줄의 aiNote로, 한 건이면 경고로', () => {
+  const db = makeDb();
+  const many = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '',
+    entries: [entry({ merchant: '네이버페이', note: '간편결제라 실제 가게를 알 수 없어요' }), entry({ merchant: '김밥천국', total: 8000, note: '' })],
+  }).suggestions;
+  expect(many.map(s => s.aiNote)).toEqual(['간편결제라 실제 가게를 알 수 없어요', '']);
+  expect(many[0].warnings).toEqual([]);
+
+  const one = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'receipt', note: '아래쪽이 흐립니다',
+    entries: [entry({ note: '합계가 반쯤 가려졌어요' })],
+  }).suggestions[0];
+  expect(one.aiNote).toBeUndefined();
+  expect(one.warnings).toEqual(['아래쪽이 흐립니다 · 합계가 반쯤 가려졌어요']);
+
+  // 사진 전체 메모와 결제 메모가 같으면 한 번만
+  const same = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'receipt', note: '합계가 흐립니다', entries: [entry({ note: '합계가 흐립니다' })],
+  }).suggestions[0];
+  expect(same.warnings).toEqual(['합계가 흐립니다']);
+});
+
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {
   expect(() => buildPhotoSuggestions(makeDb(), { is_payment: true, note: '' })).toThrow('사진 내용을 읽지 못했습니다');
 });
@@ -182,4 +205,5 @@ test('지시문에 사진 수와 목록·겹침 규칙이 들어간다', () => {
   expect(prompt).toContain('사진 3장');
   expect(prompt).toContain('결제(이용) 내역 목록이면 보이는 결제마다 한 건씩');
   expect(prompt).toContain('현대EV');
+  expect(prompt).toContain('결제마다 note에 확실하지 않은 점');
 });

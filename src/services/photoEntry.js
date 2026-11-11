@@ -40,9 +40,13 @@ const ENTRY = {
       },
     },
     confidence: { type: 'string', description: 'high | medium | low — 금액·날짜를 확실히 읽었는지' },
+    note: {
+      type: 'string',
+      description: '이 결제에서 확실하지 않은 점을 짧게 (예: 날짜 머리글이 잘려 달력에서 고른 날로 짐작, 간편결제라 실제 가게를 알 수 없음, 금액 일부가 가려짐). 확실하면 빈 문자열',
+    },
   },
   required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'payment_hint', 'payment_method',
-    'category', 'detail', 'items', 'confidence'],
+    'category', 'detail', 'items', 'confidence', 'note'],
 };
 
 const SCHEMA = {
@@ -84,6 +88,8 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
     '- 목록 위에 카드 이름이 한 번만 보이면 그 카드를 모든 결제의 payment_hint로.',
     '- payment_method·category는 위 목록의 표기 그대로, 애매하면 "모름". 카드 이름이 결제수단 목록의 하나와 같은 카드로 보이면 그 결제수단.',
     '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명.',
+    '- 결제마다 note에 확실하지 않은 점을 한 줄로 — 짐작한 값이 있으면 무엇을 왜 짐작했는지. 확실하면 빈 문자열. 사진 전체에 해당하는 점은 맨 위 note에만.',
+    '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
     '- 영수증·결제 내역이 아니면 is_payment=false.',
   ].join('\n');
 }
@@ -141,10 +147,15 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr() } = {}) {
   });
 
   const suggestions = approvals.map(e => {
-    // 한 건만 읽었을 때만 알릴 점을 그 건의 경고로 — 여러 건이면 화면 위에 한 번만 보인다
-    const s = buildSuggestion(db, { ...e, note: single ? note : '' }, { today });
-    // 결제 내역 목록에는 품목이 없다 — AI가 넣었어도 여러 건이면 보이지 않는다
-    if (!single) s.items = [];
+    const entryNote = String(e.note || '').trim();
+    // 한 건이면 알릴 점(사진 전체·이 결제)을 그 건의 경고로. 여러 건이면 사진 전체의 것은 화면 위에 한 번,
+    // 결제마다의 것은 그 줄의 AI 메모(aiNote)로 — 확실하지 않은 결제라 바로 넣지 않는다
+    const notes = single ? [...new Set([note, entryNote].filter(Boolean))].join(' · ') : ''; // 같은 말을 두 번 쓰지 않게
+    const s = buildSuggestion(db, { ...e, note: notes }, { today });
+    if (!single) {
+      s.items = []; // 결제 내역 목록에는 품목이 없다 — AI가 넣었어도 여러 건이면 보이지 않는다
+      s.aiNote = entryNote;
+    }
     return s;
   });
 

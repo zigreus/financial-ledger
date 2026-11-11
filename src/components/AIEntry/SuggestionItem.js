@@ -21,6 +21,12 @@ export function patchListItem(it, patch) {
   return { ...it, s, checked: isSuggestionComplete(s) ? (it.checked || !isSuggestionComplete(it.s)) : false };
 }
 
+/** 처음 읽은 값과 달라졌는지 — 되돌리기 버튼을 보일지 (날짜·세부내역·금액·결제수단·카테고리) */
+const REVERT_FIELDS = ['date', 'detail', 'amount', 'payment_method', 'budget_category', 'sub_category'];
+export function changedFrom(s, original) {
+  return !!original && REVERT_FIELDS.some(k => (s[k] ?? '') !== (original[k] ?? ''));
+}
+
 /** 금액 칸의 글 → 원화 금액(0보다 커야 함). 비었거나 입력 중이거나 잘못됐으면 null */
 function amountOf(text) {
   if (isIncompleteFormula(text)) return null;
@@ -79,8 +85,13 @@ function EditFields({ s, onPatch }) {
  * 여러 건 추천 목록의 한 줄 — 체크, 내용·금액, 결제수단·카테고리 고르기, 빈 항목 안내, 경고.
  * subtitle을 주지 않으면 날짜(와 여행 일정)를 보여 준다.
  * editable이면 '고치기'로 날짜·세부내역·금액도 고친다. canCheck: 체크할 수 있는지(기본은 다 채워졌는지)
+ * onRevert가 있으면 처음 읽은 값(item.original)과 달라졌을 때 '읽은 값으로'(되돌리기)를 보인다.
+ * item.rev가 바뀌면(되돌림) 고치기 칸을 새로 그려 금액 칸의 글도 되돌린 값으로 맞춘다.
+ * s.aiNote가 있으면(사진 목록) AI가 그 결제에서 확실하지 않다고 남긴 메모를 보인다.
  */
-export default function SuggestionItem({ db, item, methods, subtitle, onToggle, onPatch, onFillForm, editable = false, canCheck }) {
+export default function SuggestionItem({
+  db, item, methods, subtitle, onToggle, onPatch, onFillForm, onRevert, editable = false, canCheck,
+}) {
   const [editing, setEditing] = useState(false);
   const s = item.s;
   const complete = isSuggestionComplete(s);
@@ -122,9 +133,14 @@ export default function SuggestionItem({ db, item, methods, subtitle, onToggle, 
             {editing ? '고치기 닫기' : '고치기'}
           </button>
         )}
+        {onRevert && changedFrom(s, item.original) && (
+          <button type="button" className="rs-btn-link tp-edit-toggle" title="고친 것을 사진에서 읽은 값으로 되돌립니다" onClick={onRevert}>
+            읽은 값으로
+          </button>
+        )}
       </div>
 
-      {editing && <EditFields s={s} onPatch={onPatch} />}
+      {editing && <EditFields key={item.rev || 0} s={s} onPatch={onPatch} />}
 
       {!checkable && !editing && (
         <div className="tp-item-missing">
@@ -138,6 +154,7 @@ export default function SuggestionItem({ db, item, methods, subtitle, onToggle, 
           <button type="button" className="rs-btn-link" onClick={() => onFillForm(s)}>폼에 채워서 입력</button>
         </div>
       )}
+      {s.aiNote && <div className="tp-item-ai-note">AI 메모: {s.aiNote}</div>}
       {s.warnings.length > 0 && <div className="tp-item-warn">{s.warnings.join(' · ')}</div>}
     </div>
   );
