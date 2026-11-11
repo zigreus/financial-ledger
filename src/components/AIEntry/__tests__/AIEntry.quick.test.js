@@ -12,8 +12,11 @@ import { todayStr, addDays, parseDateStr } from '../../../services/dateUtils';
 import AIEntry from '../AIEntry';
 import { parseTextEntry } from '../../../services/textEntry';
 import { loadAIDraft, saveAIDraft } from '../../../services/aiDraft';
+import { preparePhotos } from '../../../services/imageUtils';
 
 vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+// 사진 준비는 끝나지 않는다 — 몇 장을 읽는지만 본다 (읽은 결과 화면은 ReceiptPanel.test.js)
+vi.mock('../../../services/imageUtils', async (importOriginal) => ({ ...(await importOriginal()), preparePhotos: vi.fn(() => new Promise(() => {})) }));
 vi.mock('../AISettingsForm', () => ({
   default: ({ onSaved, onCancel }) => (
     <div className="fake-settings">
@@ -359,14 +362,24 @@ describe('바로가기·공유 받기로 연 입력 창 (I-024)', () => {
     expect(quickBox().value).toBe('점심 9천원');
   });
 
-  test('사진을 여러 장 공유하면 첫 장만 읽는다고, 함께 온 글은 무엇인지 알린다', async () => {
+  test('사진을 여러 장 공유하면 모두 함께 읽고, 함께 온 글은 무엇인지 알린다', async () => {
     window.localStorage.removeItem('ai_receipt_config');
     const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
     await renderWith({ text: '어제 마트 영수증', files: [png(1), png(2), png(3)] });
-    await click(button('설정 저장'));                                    // 설정을 마치면 그 사진을 읽는다
+    await click(button('설정 저장'));                                    // 설정을 마치면 그 사진들을 읽는다
     const note = container.querySelector('.ai-start-note');
-    expect(note.textContent).toContain('공유한 사진 3장 중 첫 장만 읽어요');
+    expect(note.textContent).not.toContain('첫 장만');
     expect(note.textContent).toContain('함께 온 글: “어제 마트 영수증”');
+    expect(container.textContent).toContain('사진 3장 읽는 중');
+    expect(preparePhotos.mock.calls.at(-1)[0].map(f => f.name)).toEqual(['r1.jpg', 'r2.jpg', 'r3.jpg']);
+  });
+
+  test('사진이 너무 많으면 앞의 10장만 읽는다고 알린다', async () => {
+    const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
+    await renderWith({ text: '', files: Array.from({ length: 12 }, (_, i) => png(i)) });
+    expect(container.querySelector('.ai-start-note').textContent).toContain('사진 12장 중 앞의 10장만 읽어요');
+    expect(container.textContent).toContain('사진 10장 읽는 중');
+    expect(preparePhotos.mock.calls.at(-1)[0]).toHaveLength(10);
   });
 
   test('다음 거래로 넘어가도(resetKey) 다시 시작하지 않는다 — 처음 한 번만', async () => {

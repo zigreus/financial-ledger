@@ -88,6 +88,29 @@
   background: var(--bg);
 }
 
+/* 사진 여러 장 — 앞의 몇 장만 겹쳐 보이고 나머지는 +n */
+.rs-thumbs { display: flex; align-items: center; flex-shrink: 0; }
+.rs-thumbs .rs-thumb + .rs-thumb { margin-left: -30px; box-shadow: -2px 0 4px rgba(0, 0, 0, .15); }
+.rs-thumb-more {
+  margin-left: 4px;
+  font-size: calc(12px * var(--fs));
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.rs-bulk { padding-bottom: 2px; }
+.rs-cancels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: calc(12px * var(--fs));
+  color: var(--text-muted);
+}
+.rs-cancels b { color: var(--text); font-size: calc(12px * var(--fs)); }
+.rs-cancels small { font-size: calc(11px * var(--fs)); }
+
 /* 분석 중 */
 .rs-analyzing { flex-direction: row; align-items: center; }
 .rs-analyzing-text {

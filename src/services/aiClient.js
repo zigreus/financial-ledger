@@ -895,8 +895,3 @@ async function callModel({
   if (!out) throw unreadable();
   return out;
 }
-
-/** 이미지 1장 분석 (영수증) */
-export function analyzeImage({ image, ...rest }) {
-  return analyzeWithAI({ ...rest, files: [image], description: '영수증에서 읽은 내용을 기록한다' });
-}

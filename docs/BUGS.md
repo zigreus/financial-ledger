@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-094, I-052
+다음 번호: B-094, I-053
 
 ## 요약표
 
@@ -160,6 +160,7 @@
 | I-049 | ✅ | - | 거래 | 몇 년 치 거래내역에서 달 묶음을 하나씩 접고 펼쳐야 함 (ROADMAP U-11) |
 | I-050 | ✅ | - | 저장·공유 | 가족이 각자 자기 계정으로는 같은 가계부를 쓸 수 없고 한 계정을 함께 써야 함 (ROADMAP M-2 1단계 Microsoft) |
 | I-051 | ✅ | - | AI | AI는 거래 추가에만 쓸 수 있고, 고치기·지우기·정기지출·설정은 화면을 찾아가 직접 해야 함 |
+| I-052 | ✅ | - | AI | AI 사진 입력은 한 장·한 건만 읽어, 영수증 여러 장이나 카드 이용내역 캡처(가족 카드 내역)를 한 번에 넣을 수 없음 |
 
 
 ## 상세
@@ -1409,3 +1410,12 @@
 - 원인: 말로 입력의 AI 응답 형식이 거래(entries)만 담았고, 고치기·지우기·설정을 실행할 길과 입력 창 밖에서 AI를 여는 곳이 없었다.
 - 해결: 어느 화면에서나 ✨ AI 버튼(바로가기 'AI 입력'도)으로 AI 창을 열고, 명령처럼 보이는 글은 AI가 정해진 할 일(거래 고치기·지우기·조회, 정기지출 만들기·고치기·지우기, 월 목표·카테고리 예산·선택 기능·화면 설정, 카테고리·결제수단·구성원 추가, 화면 열기)로 돌려주면 앱이 목록과 대조해 검증한 뒤(거래는 AI에 보내지 않고 조건으로 이 기기에서 찾음) 되돌리기 쉬운 것은 바로, 거래·정기지출을 바꾸는 것은 맞는 거래를 보여 주고 한 번 눌러 한 트랜잭션으로 실행하며 알림의 '되돌리기'로 되돌린다(계획한 뒤·실행한 뒤 바뀐 것은 건드리지 않음, 가계부를 다시 불러왔으면 실행을 막음). 새 거래만 말했으면 기존 말로 입력으로 넘긴다.
 - 파일: src/services/aiCommand.js·optionalFeatures.js, src/services/db/common.js(reinsert)·transactions.js·recurring.js(deleteRecurringForUndo·restoreDeletedRecurring·setRecurringAmountCheckedOn)·settings.js(snapshot/restoreMonthlyGoals)·categoryBudgets.js(snapshot/restoreCategoryBudgets), src/components/AIEntry/AIEntry.js·CommandPanel.js·AIAssistant.js·AIEntry.css, src/components/App/App.js·App.css·screens.js, src/components/TransactionForm/TransactionForm.js, src/components/SettingsView/optionalFeatures.js, public/privacy.html, 테스트(aiCommand·AIEntry.command·App.launch), AGENTS.md
+
+### I-052 AI 사진 입력은 한 장·한 건만 읽어, 영수증 여러 장이나 카드 이용내역 캡처(가족 카드 내역)를 한 번에 넣을 수 없음
+- 상태: ✅ 해결 (2026-11-11) — 실제 AI 키로 카드 앱 캡처를 읽어 보는 확인은 남음
+- 심각도: -
+- 영역: AI
+- 문제: 사진은 한 장만 고를 수 있고(공유도 첫 장만) 영수증 한 건으로만 읽어, 아내 카드(현대EV)의 이용내역 캡처를 받아 넣으려면 한 건씩 입력해야 했다(사용자 요청).
+- 원인: 영수증 AI 응답 형식이 결제 한 건(date·merchant·total)뿐이었고, 사진 고르기·붙여넣기·공유 받기가 첫 파일만 넘겼다.
+- 해결: 사진을 여러 장(최대 10장, 긴 스크롤 캡처는 겹쳐 잘라) 한 번의 AI 요청으로 보내 결제마다 한 건(entries)으로 받고, 한 건이면 예전 영수증 확인 화면, 여러 건이면 자주 넣던 것은 바로 넣고(단 '누가'를 적는 가계부이거나 AI가 흐림·잘림을 알렸으면 모두 확인) 나머지는 목록에서 골라 한 번에 추가한다 — 가계부에 이미 있는 결제·겹쳐 찍은 결제·같은 사진에 취소가 있는 결제는 체크 없이, 취소·환불 줄은 넣지 않고 알리며, 결제수단·'누가'를 한 번에 정할 수 있다.
+- 파일: src/services/photoEntry.js(새)·imageUtils.js(preparePhotos)·receiptAssistant.js(영수증 AI 호출을 photoEntry로)·aiClient.js(analyzeImage 삭제), src/components/AIEntry/ReceiptPanel.js·AIEntry.js·AIEntry.css, public/privacy.html, 테스트(photoEntry·ReceiptPanel·AIEntry.quick·AIEntry.paste), AGENTS.md

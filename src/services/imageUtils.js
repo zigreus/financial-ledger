@@ -60,7 +60,7 @@ function readAsBase64(file) {
  * 한 장으로 줄이면 글자가 뭉개지고, AI 쪽에서도 큰 이미지는 다시 줄이기 때문이다.
  * 조각 하나는 약 1.15MP 이하 (Claude가 축소하지 않는 크기).
  */
-async function imageToTiles(file, { maxAspect = 1.8, overlap = 0.08, maxPixels = 1_150_000, quality = 0.85 } = {}) {
+async function imageToTiles(file, { maxAspect = 1.8, overlap = 0.08, maxPixels = 1_150_000, quality = 0.85, prepareOne } = {}) {
   const url = URL.createObjectURL(file);
   try {
     const img = await loadImage(url);
@@ -68,8 +68,9 @@ async function imageToTiles(file, { maxAspect = 1.8, overlap = 0.08, maxPixels =
     if (!w || !h) throw new Error('이미지를 읽을 수 없습니다');
 
     // 세로로 길지 않으면 영수증과 같은 방식으로 한 장
+    // (prepareOne이 있으면 그 방식으로 — AI 입력 사진은 예전 영수증과 같은 크기로)
     if (h / w <= maxAspect * 1.15) {
-      const one = await prepareImage(file, { maxEdge: 1568, maxPixels });
+      const one = prepareOne ? await prepareOne() : await prepareImage(file, { maxEdge: 1568, maxPixels });
       return [one];
     }
 
@@ -97,6 +98,31 @@ async function imageToTiles(file, { maxAspect = 1.8, overlap = 0.08, maxPixels =
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+export const MAX_PHOTOS = 10;
+
+/**
+ * AI 입력의 사진들(영수증·결제 내역 캡처)을 AI 전송용으로 준비한다.
+ * 보통 사진은 영수증처럼 한 장으로, 세로로 긴 캡처(스크롤 캡처)는 겹치게 잘라 여러 조각으로.
+ * 반환: { parts: [{ base64, mediaType }], previews: [dataUrl] } — previews는 사진마다 하나
+ */
+export async function preparePhotos(fileList, { maxParts = 24 } = {}) {
+  const files = Array.from(fileList || []);
+  if (!files.length) throw new Error('사진을 선택하세요');
+  if (files.length > MAX_PHOTOS) throw new Error(`사진은 한 번에 ${MAX_PHOTOS}장까지 읽을 수 있어요 — 나눠서 올려 주세요`);
+  const parts = [];
+  const previews = [];
+  for (const file of files) {
+    if (!/^image\//.test(file.type || 'image/')) throw new Error('이미지 파일을 선택하세요');
+    const tiles = await imageToTiles(file, { prepareOne: () => prepareImage(file) });
+    parts.push(...tiles.map(t => ({ base64: t.base64, mediaType: t.mediaType })));
+    previews.push(tiles[0].dataUrl);
+  }
+  if (parts.length > maxParts) {
+    throw new Error('사진이 너무 길거나 많아요 — 몇 장씩 나눠서 올려 주세요');
+  }
+  return { parts, previews };
 }
 
 /**

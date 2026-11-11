@@ -11,10 +11,10 @@ import AIEntry from '../AIEntry';
 
 // 영수증 화면은 받은 파일의 이름·크기만 보여 준다 (실제 화면은 ReceiptPanel.test.js)
 vi.mock('../ReceiptPanel', () => ({
-  default: ({ file, onClose }) => (
+  default: ({ files, onClose }) => (
     <div className="fake-receipt">
-      <span className="fake-file">{file ? file.name : ''}</span>
-      <span className="fake-size">{file ? file.size : ''}</span>
+      <span className="fake-file">{files ? files.map(f => f.name).join(',') : ''}</span>
+      <span className="fake-size">{files ? files.map(f => f.size).join(',') : ''}</span>
       <button type="button" onClick={onClose}>닫기</button>
     </div>
   ),

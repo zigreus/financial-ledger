@@ -29,7 +29,7 @@
 | `src/services/ledgerFile.js` | 가계부 파일로 바꾸기 전 살피기(이 앱의 가계부인지·더 새 버전인지, 거래 수·기간 등). 바꾸기는 useLedgerSync의 `replaceWithFile` (I-035) |
 | `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 가계부별 — `ledgerKey || accountKey`) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
-| `src/services/aiClient.js` + receiptAssistant·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증·말로 입력·카드 대조 |
+| `src/services/aiClient.js` + receiptAssistant·photoEntry·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증 추천 공통·사진 입력(여러 장, 카드 이용내역 캡처의 여러 결제 — I-052)·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
 | `src/services/sheetFile.js` + sheetImport·importAI + `components/ImportModal/SheetMapper.js` | 아무 양식의 표 가져오기(I-034): 파일 읽기(CSV 인코딩·구분 문자, xlsx는 내장 압축 풀기, HTML 표 .xls) / 열·분류 맞추기(규칙 짐작·입력 습관·기기에 기억한 양식) → ImportModal의 기존 검사·가져오기 / AI는 맞추기 추천만(앞줄·이름 목록만 보냄) |
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |

@@ -15,7 +15,6 @@ import {
   getDetailPatterns, getAutoPaymentMethod, getDiscountRules, evaluateDiscountRule,
   getCalendarEvents, getCalendarEventTypes, getTripDefaultCategory,
 } from './dbManager';
-import { analyzeImage, AIError } from './aiClient';
 import { today as todayStr } from './formulaEvaluator';
 import { isValidDateStr as isValidDate, addDays } from './dateUtils';
 
@@ -24,7 +23,7 @@ const PATTERN_LIMIT = 40;
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 export const SOURCE_LABEL = {
-  receipt: '영수증',
+  receipt: '사진',
   text: '입력한 말',
   statement: '카드 내역',
   sms: '카드 문자',
@@ -249,70 +248,7 @@ export function suggestionToTransaction(db, s) {
   };
 }
 
-// ── 영수증 ──────────────────────────────────────────────────────
-
-const RECEIPT_SCHEMA = {
-  type: 'object',
-  properties: {
-    is_receipt: { type: 'boolean', description: '영수증·결제 내역 이미지이면 true' },
-    date: { type: 'string', description: '결제일 YYYY-MM-DD. 보이지 않으면 빈 문자열' },
-    merchant: { type: 'string', description: '가맹점(상호)명. 지점명 포함 가능' },
-    total: { type: 'number', description: '실제 결제한 최종 금액(할인 후, 부가세 포함). 숫자만' },
-    currency: { type: 'string', description: 'ISO 4217 통화 코드. 한국 원화는 KRW' },
-    items: {
-      type: 'array',
-      description: '주요 품목 (최대 15개)',
-      items: {
-        type: 'object',
-        properties: { name: { type: 'string' }, amount: { type: 'number' } },
-        required: ['name', 'amount'],
-      },
-    },
-    payment_hint: { type: 'string', description: '영수증에 찍힌 결제 수단 그대로 (예: 신한카드 1234, 현금, 카카오페이). 없으면 빈 문자열' },
-    payment_method: { type: 'string', description: '결제수단 목록 중 하나, 판단이 어려우면 "모름"' },
-    category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단이 어려우면 "모름"' },
-    detail: { type: 'string', description: '가계부 세부내역에 쓸 짧은 이름. 입력 습관에 같은 가게가 있으면 그 표기 그대로' },
-    confidence: { type: 'string', description: 'high | medium | low — 금액·날짜를 확실히 읽었는지' },
-    note: { type: 'string', description: '사용자에게 알릴 점(흐림, 합계 불확실, 여러 장 등). 없으면 빈 문자열' },
-  },
-  required: ['is_receipt', 'date', 'merchant', 'total', 'currency', 'items', 'payment_hint',
-    'payment_method', 'category', 'detail', 'confidence', 'note'],
-};
-
-const RECEIPT_SYSTEM = [
-  '당신은 한국 가계부 앱의 영수증 입력 도우미입니다.',
-  '영수증에서 실제로 보이는 사실만 추출하고, 보이지 않는 값은 지어내지 않습니다.',
-  '분류(결제수단·카테고리)는 반드시 주어진 목록 안에서 고르고, 사용자의 기존 입력 습관을 우선합니다.',
-].join(' ');
-
-/** 영수증 AI 지시문 (테스트·디버깅용으로 노출) */
-export function buildReceiptContext(db, today = todayStr()) {
-  const ctx = buildDataContext(db, today);
-  const prompt = [
-    ctx.text,
-    '',
-    '[규칙]',
-    '- total은 실제로 낸 최종 금액(할인 후). 쉼표·통화 기호 없이 숫자만.',
-    '- 날짜가 안 보이면 빈 문자열. 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
-    '- payment_method·category는 위 목록의 표기 그대로, 애매하면 "모름".',
-    '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명.',
-    '- 영수증이 아니면 is_receipt=false.',
-  ].join('\n');
-  return { ...ctx, prompt };
-}
-
-/** 영수증 이미지를 분석해 입력 추천을 돌려준다 */
-export async function analyzeReceipt({ db, ai, image, signal, onProgress, today = todayStr() }) {
-  const context = buildReceiptContext(db, today);
-  const raw = await analyzeImage({
-    ai, system: RECEIPT_SYSTEM, prompt: context.prompt, schema: RECEIPT_SCHEMA,
-    toolName: 'record_receipt', image, signal, onProgress,
-  });
-  if (raw && raw.is_receipt === false) {
-    throw new AIError('영수증으로 보이지 않습니다 — 영수증이 잘 보이게 다시 찍어 주세요', 'parse');
-  }
-  return buildSuggestion(db, raw || {}, { today });
-}
+// ── 영수증 (사진 읽기는 services/photoEntry) ─────────────────────
 
 /**
  * 영수증 AI 응답을 이 가계부 데이터에 맞춘 입력 추천으로 바꾼다.
