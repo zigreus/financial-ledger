@@ -9,22 +9,32 @@ import SuggestionDetails, { amountText } from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import QuickAutoNote from './QuickAutoNote';
 import { useQuickBatches } from './useQuickBatches';
-import { todayStr, isValidDateStr } from '../../services/dateUtils';
+import { isValidDateStr } from '../../services/dateUtils';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './AIEntry.css';
 
 const CONFIDENCE_LABEL = { high: '잘 읽힘', medium: '대체로 읽힘', low: '흐림 — 확인 필요' };
 const DEVICE_MEMBER = '\u0000device'; // '누가' 고르기의 기본값 — 정하지 않음(App이 이 기기 사용자로)
 
+/**
+ * 직접 고쳐야 할 줄의 이유 — s.needsFix([{ text, fields }], photoEntry) 중 아직 고치지 않은 것.
+ * 그 점의 칸(fields — 간편결제면 세부내역·카테고리, 날짜를 못 읽었으면 날짜)을 고치면 풀리고, 읽은 값으로 되돌리면 다시 보인다.
+ * 이미 있거나 겹친 결제는 넣을 줄이 아니라 고칠 것도 없다
+ */
+const needsFixOf = (it) => {
+  if (flagReason(it.s)) return '';
+  const changed = k => (it.s[k] ?? '') !== (it.original[k] ?? '');
+  return (it.s.needsFix || []).filter(f => !f.fields.some(changed)).map(f => f.text).join(' · ');
+};
+
 /** 넣을 수 있는 줄 — 빈 칸 없이, 올바른 날짜와 0보다 큰 금액 */
 const addable = s => isSuggestionComplete(s) && isValidDateStr(s.date) && Number(s.amount) > 0;
 
 /**
- * 여러 건 목록에서 미리 체크할 것 — 넣을 수 있고, 이미 있거나 겹치거나 취소된 결제가 아니며,
- * 날짜를 실제로 읽었고 앞날짜가 아니며, AI가 잘 안 읽혔다고 하지 않은 것
+ * 여러 건 목록에서 미리 체크할 것 — 넣을 수 있고, 이미 있거나 겹치거나 취소된 결제가 아닌 것(사용자 요청: 중복이 아니면 기본 선택).
+ * 날짜를 못 읽었거나 잘 안 읽힌 결제도 체크해 두고, 그 사실은 줄의 날짜·경고·AI 메모로 알린다
  */
-const preChecked = s => addable(s) && !flagReason(s) && s.sources.date !== 'today' && s.date <= todayStr()
-  && s.confidence !== 'low';
+const preChecked = s => addable(s) && !flagReason(s);
 
 /** 겹친 결제의 이유 — 목록을 고칠 때마다 다시 따진다(markDuplicates) */
 function flagReason(s) {
@@ -190,8 +200,8 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
       }
 
       // 여러 건 — 자주 넣던 것은 바로, 나머지는 목록에서 고른다
-      // 겹친 결제와 AI가 확실하지 않다고 메모를 남긴 결제는 바로 넣지 않는다
-      const flagged = suggestions.filter(s => flagReason(s) || s.aiNote);
+      // 겹친 결제, AI가 확실하지 않다고 메모를 남긴 결제, 직접 고쳐야 할 결제는 바로 넣지 않는다
+      const flagged = suggestions.filter(s => flagReason(s) || s.aiNote || (s.needsFix && s.needsFix.length));
       const candidates = suggestions.filter(s => !flagged.includes(s));
       const reasons = new Map();
       let familiar = [];
@@ -315,6 +325,8 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
   const methods = getPaymentMethods(db);
   const members = getMemberNames(db);
   const selected = items.filter(isSelected);
+  const fixCount = items.filter(needsFixOf).length;
+  const unfixedSelected = selected.filter(needsFixOf).length;
   const selectedTotal = selected.reduce((sum, it) => sum + (it.s.amount || 0), 0);
   const unpaired = cancels.filter(c => !c.paired);
   /** 고친 값을 반영한다 — idx가 null이면 모든 줄에 (결제수단 모두 바꾸기). 한 줄을 고치면 그 줄의 예전 이유는 지운다 */
@@ -381,6 +393,7 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
               : batches.length ? `확인이 필요한 결제 ${items.length}건` : `사진에서 결제 ${items.length}건을 찾았어요`}
           </b>
           <QuickAutoNote batches={batches} onUndo={undoAll} />
+          {fixCount > 0 && <strong className="rs-fix-count">수정 필요 {fixCount}건 — 노란 줄을 고쳐 주세요</strong>}
           {items.length > 0 && <span>줄마다 '고치기'로 날짜·내용·금액을 고친 뒤 추가하세요</span>}
         </div>
       </div>
@@ -421,6 +434,7 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
             onToggle={checked => toggle(idx, checked)}
             onPatch={p => edit(idx, p)}
             onRevert={() => revert(idx)}
+            needsFix={needsFixOf(it)}
             onFillForm={onApply}
             editable
             canCheck={addable(it.s)}
@@ -441,6 +455,9 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
         </div>
       )}
 
+      {unfixedSelected > 0 && (
+        <div className="rs-fix-pending"><b>수정 필요 {unfixedSelected}건을 고치지 않은 채 골랐어요</b> — 그대로 넣어도 되지만 세부내역·카테고리를 확인해 주세요</div>
+      )}
       <div className="rs-actions">
         <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
         <button type="button" className="rs-btn-secondary" onClick={onRepick}>다른 사진</button>

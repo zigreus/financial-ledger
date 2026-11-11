@@ -7,7 +7,8 @@
  *  - 여러 건이면 확인 목록에서 고른다. 미리 체크하지 않는 것:
  *      · 가계부에 같은 날 같은 금액 거래가 이미 있음(내역을 계속 받아 겹치는 경우) — duplicateOf
  *      · 같은 사진 묶음에 같은 결제가 앞에 또 있음(겹쳐 찍음) — batchDuplicate
- *      · 날짜를 읽지 못했거나 앞날짜인 결제(화면 쪽 preChecked)
+ *    그 밖의 결제는 기본으로 체크하고, 직접 고쳐야 할 점(간편결제 이름뿐·날짜를 못 읽음·앞날짜·AI가 알려 준 것)은
+ *    needsFix([{ text, fields }])로 붙여 화면이 '수정 필요'로 드러낸다 — fields 중 하나를 고치면 풀린다.
  *      · 같은 묶음에 취소 줄이 있는 결제 — pairedCancel
  *    취소·환불 줄은 넣지 않고 cancels로 알린다(이미 넣은 거래면 사용자가 지운다).
  *  - 사용자가 목록에서 날짜·금액·내용을 고치면 markDuplicates로 다시 대조한다.
@@ -42,11 +43,15 @@ const ENTRY = {
     confidence: { type: 'string', description: 'high | medium | low — 금액·날짜를 확실히 읽었는지' },
     note: {
       type: 'string',
-      description: '이 결제에서 확실하지 않은 점을 짧게 (예: 날짜 머리글이 잘려 달력에서 고른 날로 짐작, 간편결제라 실제 가게를 알 수 없음, 금액 일부가 가려짐). 확실하면 빈 문자열',
+      description: '이 결제에서 확실하지 않은 점을 짧게 (예: 날짜 머리글이 잘려 달력에서 고른 날로 짐작, 금액 일부가 가려짐). 확실하면 빈 문자열',
+    },
+    needs_fix: {
+      type: 'string',
+      description: '가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 때만, 무엇을 고칠지 한 줄 (예: 결제대행 이름만 있음 — 세부내역·카테고리). 가게가 분명하면 빈 문자열',
     },
   },
   required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'payment_hint', 'payment_method',
-    'category', 'detail', 'items', 'confidence', 'note'],
+    'category', 'detail', 'items', 'confidence', 'note', 'needs_fix'],
 };
 
 const SCHEMA = {
@@ -90,6 +95,7 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
     '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명.',
     '- 결제마다 note에 확실하지 않은 점을 한 줄로 — 짐작한 값이 있으면 무엇을 왜 짐작했는지. 확실하면 빈 문자열. 사진 전체에 해당하는 점은 맨 위 note에만.',
     '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
+    '- 가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 결제(간편결제·결제대행 이름뿐 등)만 needs_fix에 무엇을 고칠지 한 줄로. 쿠팡·편의점처럼 가게가 분명하면 빈 문자열.',
     '- 영수증·결제 내역이 아니면 is_payment=false.',
   ].join('\n');
 }
@@ -108,6 +114,53 @@ export async function analyzePhotos({ db, ai, parts, photos = 1, signal, onProgr
     throw new AIError('영수증이나 결제 내역으로 보이지 않습니다 — 잘 보이게 다시 찍어 주세요', 'parse');
   }
   return buildPhotoSuggestions(db, raw || {}, { today });
+}
+
+// 간편결제·결제대행 이름 — 이 이름만 있으면 무엇을 샀는지 알 수 없다 (예: 네이버페이)
+const GATEWAY_RE = new RegExp(`^(${[
+  '네이버페이', '네이버파이낸셜', 'naverpay', 'naverfinancial', 'npay', 'n페이',
+  '카카오페이', 'kakaopay', '토스페이', '토스페이먼츠', 'tosspay', 'tosspayments', '토스', 'toss', '비바리퍼블리카',
+  '페이코', 'nhn페이코', 'payco', '스마일페이', 'smilepay', 'ssg페이', 'ssgpay', '쿠팡페이', 'coupangpay',
+  '엘페이', 'lpay', '11페이', '11pay', '삼성페이', 'samsungpay', '애플페이', 'applepay', '구글페이', 'googlepay',
+  '페이팔', 'paypal', 'kg이니시스', '케이지이니시스', '이니시스', 'inicis', 'kcp', 'nhnkcp', '한국사이버결제',
+  '나이스페이', '나이스페이먼츠', 'nicepay', 'nicepayments', '나이스정보통신', '다날', 'danal',
+  'kg모빌리언스', '모빌리언스', '페이레터', '헥토파이낸셜',
+].join('|')})$`);
+
+/** 가게 이름이 간편결제·결제대행 이름뿐인지 — '(주)카카오페이', '네이버페이 결제'처럼 회사 표시·'결제'가 붙어도 */
+export function isPaymentGateway(merchant) {
+  const n = normalizeName(merchant);
+  const core = n.replace(/(간편결제|결제)$/, '').replace(/^(주식회사|주)/, '').replace(/(주식회사|주)$/, '');
+  return GATEWAY_RE.test(n) || GATEWAY_RE.test(core);
+}
+
+// AI가 '없음'처럼 빈 값 대신 쓴 말
+const NO_FIX_RE = /^(없음|해당\s*없음|없습니다|none|n\/a|-|—)?$/i;
+const FIX_ANY = ['date', 'detail', 'amount', 'budget_category', 'sub_category'];
+
+/**
+ * 직접 고쳐야 할 점 — [{ text, fields }]. fields 중 하나를 고치면 그 점은 풀린다.
+ *  - 간편결제·결제대행 이름뿐(규칙) → 세부내역·카테고리
+ *  - AI가 알려 준 것 — 예전에 같은 가게를 넣은 습관으로 분류했으면 따르지 않는다(늘 넣던 대로면 고칠 것이 없다)
+ *  - 날짜를 읽지 못해 오늘로 둠·앞날짜 → 날짜
+ */
+function fixesFor(e, s, today) {
+  const fixes = [];
+  const aiFix = String(e.needs_fix || '').trim();
+  if (isPaymentGateway(e.merchant)) {
+    fixes.push({
+      text: `${String(e.merchant).trim()} 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요`,
+      fields: ['detail', 'budget_category', 'sub_category'],
+    });
+  } else if (!NO_FIX_RE.test(aiFix) && s.sources.category !== 'history') {
+    fixes.push({ text: aiFix, fields: FIX_ANY });
+  }
+  if (s.sources.date === 'today') {
+    fixes.push({ text: '날짜를 읽지 못해 오늘 날짜로 두었어요 — 날짜를 골라 주세요', fields: ['date'] });
+  } else if (s.date > today) {
+    fixes.push({ text: '앞날짜예요 — 날짜를 확인해 주세요', fields: ['date'] });
+  }
+  return fixes;
 }
 
 const sameMerchant = (a, b) => {
@@ -148,13 +201,17 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr() } = {}) {
 
   const suggestions = approvals.map(e => {
     const entryNote = String(e.note || '').trim();
-    // 한 건이면 알릴 점(사진 전체·이 결제)을 그 건의 경고로. 여러 건이면 사진 전체의 것은 화면 위에 한 번,
-    // 결제마다의 것은 그 줄의 AI 메모(aiNote)로 — 확실하지 않은 결제라 바로 넣지 않는다
-    const notes = single ? [...new Set([note, entryNote].filter(Boolean))].join(' · ') : ''; // 같은 말을 두 번 쓰지 않게
-    const s = buildSuggestion(db, { ...e, note: notes }, { today });
-    if (!single) {
+    const s = buildSuggestion(db, { ...e, note: '' }, { today });
+    const fixes = fixesFor(e, s, today);
+    if (single) {
+      // 한 건이면 고칠 점·알릴 점(사진 전체·이 결제)을 그 건의 경고로 — 같은 말은 한 번만
+      const said = [...new Set([...fixes.map(f => f.text), note, entryNote].filter(Boolean))].join(' · ');
+      if (said) s.warnings.push(said);
+    } else {
+      // 여러 건이면 사진 전체의 것은 화면 위에 한 번, 결제마다의 것은 그 줄의 AI 메모·수정 필요로 — 바로 넣지 않는다
       s.items = []; // 결제 내역 목록에는 품목이 없다 — AI가 넣었어도 여러 건이면 보이지 않는다
       s.aiNote = entryNote;
+      s.needsFix = fixes;
     }
     return s;
   });

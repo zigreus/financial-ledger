@@ -1,7 +1,7 @@
 // 사진으로 입력 (I-052) — 영수증 여러 장·카드 이용내역 캡처의 여러 결제를 한 번에 읽는다
 import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../dbManager';
-import { buildPhotoSuggestions, buildPhotoPrompt, markDuplicates } from '../photoEntry';
+import { buildPhotoSuggestions, buildPhotoPrompt, markDuplicates, isPaymentGateway } from '../photoEntry';
 import { todayStr, addDays } from '../dateUtils';
 
 let SQL;
@@ -194,6 +194,50 @@ test('결제마다의 메모 — 여러 건이면 그 줄의 aiNote로, 한 건�
     is_payment: true, kind: 'receipt', note: '합계가 흐립니다', entries: [entry({ note: '합계가 흐립니다' })],
   }).suggestions[0];
   expect(same.warnings).toEqual(['합계가 흐립니다']);
+});
+
+test('간편결제·결제대행 이름뿐인지 — 회사 표시·결제가 붙어도, 실제 가게가 함께 있으면 아님', () => {
+  ['네이버페이', 'NAVER PAY', 'Npay', 'N페이', '네이버페이 결제', '네이버파이낸셜(주)', '(주)카카오페이', '카카오페이(주)',
+    '토스페이먼츠(주)', 'TOSS', '비바리퍼블리카', '(주)케이지이니시스', 'NICE PAYMENTS', '나이스페이먼츠', '한국사이버결제']
+    .forEach(name => expect([name, isPaymentGateway(name)]).toEqual([name, true]));
+  ['카카오페이 - 한살림서울협동조합', '다이소아성산업', '토스트', '쿠팡', '주유소']
+    .forEach(name => expect([name, isPaymentGateway(name)]).toEqual([name, false]));
+});
+
+test('직접 고쳐야 할 점 — 간편결제는 세부내역·카테고리, AI가 알려 준 것, 날짜를 못 읽으면 날짜 (한 건이면 경고로)', () => {
+  const db = makeDb();
+  const fixesOf = s => (s.needsFix || []).map(f => [f.text, f.fields]);
+  const many = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '',
+    entries: [
+      entry({ merchant: '네이버페이', total: 43950, needs_fix: '' }),
+      entry({ merchant: '알 수 없는 상점 12', total: 5000, needs_fix: '가게 이름이 잘려 무엇인지 모름 — 세부내역을 고쳐 주세요' }),
+      entry({ merchant: '김밥천국', total: 8000, needs_fix: '없음' }),           // '없음'은 빈 값
+      entry({ merchant: '와플사이', total: 4500, date: '' }),                    // 날짜 머리글이 잘렸다
+    ],
+  }, { today: TODAY }).suggestions;
+  expect(many.map(fixesOf)).toEqual([
+    [['네이버페이 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요', ['detail', 'budget_category', 'sub_category']]],
+    [['가게 이름이 잘려 무엇인지 모름 — 세부내역을 고쳐 주세요', ['date', 'detail', 'amount', 'budget_category', 'sub_category']]],
+    [],
+    [['날짜를 읽지 못해 오늘 날짜로 두었어요 — 날짜를 골라 주세요', ['date']]],
+  ]);
+
+  const one = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '', entries: [entry({ merchant: '네이버페이', total: 43950 })],
+  }).suggestions[0];
+  expect(one.warnings).toEqual(['네이버페이 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요']);
+});
+
+test('늘 넣던 대로 분류한 결제는 AI가 고치라고 해도 수정 필요로 보지 않는다', () => {
+  const db = makeDb();
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '쿠팡', amount: 12000 });
+  const [s] = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '',
+    entries: [entry({ merchant: '쿠팡', total: 30000, needs_fix: '무엇을 샀는지 모름' }), entry({ merchant: '마트', total: 1000 })],
+  }).suggestions;
+  expect(s.sources.category).toBe('history');
+  expect(s.needsFix).toEqual([]);
 });
 
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {

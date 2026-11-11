@@ -88,16 +88,17 @@ function EditFields({ s, onPatch }) {
  * onRevert가 있으면 처음 읽은 값(item.original)과 달라졌을 때 '읽은 값으로'(되돌리기)를 보인다.
  * item.rev가 바뀌면(되돌림) 고치기 칸을 새로 그려 금액 칸의 글도 되돌린 값으로 맞춘다.
  * s.aiNote가 있으면(사진 목록) AI가 그 결제에서 확실하지 않다고 남긴 메모를 보인다.
+ * needsFix(이유 글)가 있으면 '수정 필요'를 굵게 드러내고, 바로 고치기를 열 수 있게 한다.
  */
 export default function SuggestionItem({
-  db, item, methods, subtitle, onToggle, onPatch, onFillForm, onRevert, editable = false, canCheck,
+  db, item, methods, subtitle, onToggle, onPatch, onFillForm, onRevert, editable = false, canCheck, needsFix = '',
 }) {
   const [editing, setEditing] = useState(false);
   const s = item.s;
   const complete = isSuggestionComplete(s);
   const checkable = canCheck === undefined ? complete : canCheck;
   return (
-    <div className={`tp-item${item.checked ? ' checked' : ''}`}>
+    <div className={`tp-item${item.checked ? ' checked' : ''}${needsFix ? ' needs-fix' : ''}`}>
       <label className="tp-item-head">
         <input
           type="checkbox"
@@ -106,7 +107,10 @@ export default function SuggestionItem({
           onChange={e => onToggle(e.target.checked)}
         />
         <span className="tp-item-main">
-          <b>{s.detail || '(내용 없음)'}</b>
+          <b>
+            {needsFix && <strong className="tp-fix-badge">수정 필요</strong>}
+            {s.detail || '(내용 없음)'}
+          </b>
           <small>{subtitle ?? `${s.date}${s.eventTitle ? ` · ${s.eventTitle}` : ''}`}</small>
         </span>
         <span className={`tp-item-amount${s.amount === null ? ' missing' : ''}`}>{amountText(s)}</span>
@@ -139,6 +143,15 @@ export default function SuggestionItem({
           </button>
         )}
       </div>
+
+      {needsFix && (
+        <div className="tp-fix-note">
+          <b>{needsFix}</b>
+          {editable && !editing && (
+            <button type="button" className="rs-btn-link" onClick={() => setEditing(true)}>지금 고치기</button>
+          )}
+        </div>
+      )}
 
       {editing && <EditFields key={item.rev || 0} s={s} onPatch={onPatch} />}
 

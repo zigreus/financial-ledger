@@ -292,7 +292,7 @@ test("'누가'를 적는 가계부이거나 AI가 알릴 점을 남겼으면 바
   expect(container.textContent).toContain('아래쪽이 잘렸습니다');
 });
 
-test('결제수단을 한 번에 바꿔도 날짜를 읽지 못한 줄은 체크하지 않는다', async () => {
+test('결제수단을 한 번에 바꿔 넣을 수 있게 된 줄은 중복이 아니면 체크된다 (날짜를 못 읽었어도)', async () => {
   preparePhotos.mockResolvedValue(IMAGE);
   analyzePhotos.mockResolvedValue({
     suggestions: [row('주유소', 50000, { payment_method: '', sources: { date: 'today' } }), row('마트', 7000, { payment_method: '' })],
@@ -302,7 +302,7 @@ test('결제수단을 한 번에 바꿔도 날짜를 읽지 못한 줄은 체크
   await renderList({ onBulkAdd: vi.fn() });
   await flush();
   await select('결제수단 모두 바꾸기', '현대EV');
-  expect(boxes().map(x => x.checked)).toEqual([false, true]);
+  expect(boxes().map(x => x.checked)).toEqual([true, true]);
 });
 
 // 줄마다 고치기 — 날짜·세부내역·금액을 고쳐 넣고, 고칠 때마다 이미 넣은 거래와 다시 대조한다
@@ -427,14 +427,15 @@ test('겹쳐 찍은 짝 중 앞 줄을 고쳐 짝이 풀려도, 뒤 줄은 저�
 
 test('직접 고른 체크는 금액을 다시 쓰는 동안(빈 칸·입력 중인 수식) 사라지지 않는다', async () => {
   preparePhotos.mockResolvedValue(IMAGE);
+  const dup = { id: 4, detail: '주유소', amount: 4000, payment_method: '현대EV' };
   analyzePhotos.mockResolvedValue({
-    suggestions: [row('주유소', 4000, { sources: { date: 'today' } }), row('마트', 7000)], cancels: [], note: '',
+    suggestions: [row('주유소', 4000, { duplicateOf: dup }), row('마트', 7000)], cancels: [], note: '',
   });
   const onBulkAdd = vi.fn();
   await renderList({ onBulkAdd });
   await flush();
-  expect(boxes()[0].checked).toBe(false);             // 날짜를 못 읽어 미리 체크하지 않은 줄
-  await act(async () => { boxes()[0].click(); });     // 직접 고른다
+  expect(boxes()[0].checked).toBe(false);             // 이미 넣은 거래라 미리 체크하지 않은 줄
+  await act(async () => { boxes()[0].click(); });     // 또 넣으려고 직접 고른다
   await openEdit(0);
   await typeInto(amountField(0), '');
   await typeInto(amountField(0), '4000+');
@@ -563,25 +564,34 @@ test('AI가 결제마다 남긴 메모를 그 줄에 보이고, 메모가 있는
   expect(items()[0].querySelector('.tp-item-ai-note').textContent).toBe('AI 메모: 날짜 머리글이 잘려 달력에서 고른 11일로 짐작했어요');
 });
 
-test('AI가 잘 안 읽혔다고 한 결제는 미리 체크하지 않는다', async () => {
+test('중복이 아니면 기본으로 체크된다 — 잘 안 읽혔거나 날짜를 못 읽었거나 AI 메모가 있어도', async () => {
   preparePhotos.mockResolvedValue(IMAGE);
-  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000, { confidence: 'low' }), row('마트', 7000)], cancels: [], note: '' });
+  analyzePhotos.mockResolvedValue({
+    suggestions: [
+      row('주유소', 50000, { confidence: 'low' }),
+      row('와플사이', 4500, { sources: { date: 'today' }, aiNote: '날짜를 짐작했어요' }),
+      row('편의점', 3000, { duplicateOf: { id: 9, detail: '편의점', amount: 3000, payment_method: '현대EV' } }),
+      row('마트', 7000),
+    ],
+    cancels: [],
+    note: '',
+  });
   await renderList({ onBulkAdd: vi.fn() });
   await flush();
-  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  expect(boxes().map(b => b.checked)).toEqual([true, true, false, true]);
 });
 
-test('읽은 값으로 되돌리면 체크도 처음처럼 — 고친 값에 준 체크가 잘못 읽은 값에 남지 않는다', async () => {
+test('읽은 값으로 되돌리면 체크도 처음처럼 — 고치며 뺀 체크가 되돌린 뒤에도 남지 않는다', async () => {
   preparePhotos.mockResolvedValue(IMAGE);
-  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000, { confidence: 'low' }), row('마트', 7000)], cancels: [], note: '' });
+  analyzePhotos.mockResolvedValue({ suggestions: [row('주유소', 50000), row('마트', 7000)], cancels: [], note: '' });
   await renderList({ onBulkAdd: vi.fn() });
   await flush();
   await openEdit(0);
-  await typeInto(amountField(0), '52000');            // 바로잡고
-  await act(async () => { boxes()[0].click(); });     // 직접 고른 뒤
-  expect(boxes()[0].checked).toBe(true);
+  await typeInto(amountField(0), '52000');
+  await act(async () => { boxes()[0].click(); });     // 고친 값은 빼 두었다가
+  expect(boxes()[0].checked).toBe(false);
   await act(async () => { revertButton(0).click(); });
-  expect(boxes()[0].checked).toBe(false);             // 잘 안 읽힌 값으로 돌아가면 체크도 처음처럼 없다
+  expect(boxes()[0].checked).toBe(true);              // 읽은 값으로 돌리면 처음처럼(중복이 아니면 체크)
 });
 
 test('되돌린(바로 넣었다 취소한) 거래는 고쳤다 읽은 값으로 돌려도 다시 체크되지 않는다', async () => {
@@ -604,5 +614,98 @@ test('되돌린(바로 넣었다 취소한) 거래는 고쳤다 읽은 값으로
   await typeInto(amountField(1), '3000');             // 고쳐서 이미 있는 거래와 같아졌다가
   await act(async () => { revertButton(1).click(); }); // 읽은 값으로
   expect(boxes()[1].checked).toBe(false);
+});
+
+// 수정 필요 — 직접 고쳐야 할 결제(예: 네이버페이)는 굵게 드러낸다
+const NAVER_FIX = '네이버페이 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요';
+const naverFix = () => [{ text: NAVER_FIX, fields: ['detail', 'budget_category', 'sub_category'] }];
+const DATE_FIX = '날짜를 읽지 못해 오늘 날짜로 두었어요 — 날짜를 골라 주세요';
+
+test("직접 고쳐야 할 결제는 '수정 필요'를 굵게 보이고, 고치면 사라지며, 읽은 값으로 돌리면 다시 보인다", async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({
+    suggestions: [row('네이버페이', 43950, { needsFix: naverFix() }), row('마트', 7000)], cancels: [], note: '',
+  });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(items()[0].classList.contains('needs-fix')).toBe(true);
+  expect(items()[0].querySelector('.tp-fix-badge').textContent).toBe('수정 필요');
+  expect(items()[0].querySelector('.tp-fix-note b').textContent).toBe(NAVER_FIX);
+  expect(items()[1].classList.contains('needs-fix')).toBe(false);
+  expect(container.querySelector('.rs-fix-count').textContent).toContain('수정 필요 1건');
+  expect(boxes()[0].checked).toBe(true);              // 중복이 아니니 체크는 되어 있다
+  expect(container.querySelector('.rs-fix-pending').textContent).toContain('수정 필요 1건을 고치지 않은 채 골랐어요');
+
+  // '지금 고치기'로 바로 고치기를 연다
+  await act(async () => { [...items()[0].querySelectorAll('button')].find(b => b.textContent === '지금 고치기').click(); });
+  await typeInto(field(0, '.tp-edit-row input[type=text]'), '기저귀');
+  expect(items()[0].classList.contains('needs-fix')).toBe(false);
+  expect(container.querySelector('.rs-fix-count')).toBeNull();
+  expect(container.querySelector('.rs-fix-pending')).toBeNull();
+
+  await act(async () => { revertButton(0).click(); });
+  expect(items()[0].classList.contains('needs-fix')).toBe(true);
+});
+
+test('결제수단만 한 번에 바꿔서는 수정 필요가 풀리지 않는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({
+    suggestions: [row('네이버페이', 43950, { needsFix: naverFix() }), row('마트', 7000)], cancels: [], note: '',
+  });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  await select('결제수단 모두 바꾸기', '신한카드');
+  expect(items()[0].classList.contains('needs-fix')).toBe(true);
+});
+
+test('수정 필요한 결제는 늘 넣던 곳이라도 바로 넣지 않는다', async () => {
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const a = row('네이버페이', 43950, { needsFix: naverFix() });
+  const b = row('주유소', 50000);
+  analyzePhotos.mockResolvedValue({ suggestions: [a, b], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [b], review: [] });
+  await renderList({ onAutoAdd: vi.fn(() => null) });
+  await flush();
+  expect(splitFamiliar).toHaveBeenCalledWith({}, [b], 'receipt');
+});
+
+test('수정 필요는 그 점의 칸을 고쳐야 풀린다 — 네이버페이는 날짜만 고쳐서는 남고, 날짜를 못 읽은 줄은 날짜를 고르면 풀린다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({
+    suggestions: [
+      row('네이버페이', 43950, { needsFix: [...naverFix(), { text: DATE_FIX, fields: ['date'] }] }),
+      row('마트', 7000, { needsFix: [{ text: DATE_FIX, fields: ['date'] }] }),
+    ],
+    cancels: [],
+    note: '',
+  });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(items()[0].querySelector('.tp-fix-note b').textContent).toBe(`${NAVER_FIX} · ${DATE_FIX}`);
+  expect(container.querySelector('.rs-fix-count').textContent).toContain('수정 필요 2건');
+  await openEdit(0);
+  await typeInto(field(0, 'input[type=date]'), '2025-01-03');
+  expect(items()[0].querySelector('.tp-fix-note b').textContent).toBe(NAVER_FIX);   // 날짜 점만 풀렸다
+  await openEdit(1);
+  await typeInto(field(1, 'input[type=date]'), '2025-01-02');
+  expect(items()[1].classList.contains('needs-fix')).toBe(false);
+  expect(container.querySelector('.rs-fix-count').textContent).toContain('수정 필요 1건');
+});
+
+test('이미 넣은 결제는 고칠 것이 없다 — 수정 필요를 보이지도 세지도 않는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue({
+    suggestions: [
+      row('네이버페이', 43950, { needsFix: naverFix(), duplicateOf: { id: 2, detail: '네이버페이', amount: 43950, payment_method: '현대EV' } }),
+      row('마트', 7000),
+    ],
+    cancels: [],
+    note: '',
+  });
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(items()[0].classList.contains('needs-fix')).toBe(false);
+  expect(container.querySelector('.rs-fix-count')).toBeNull();
 });
 
