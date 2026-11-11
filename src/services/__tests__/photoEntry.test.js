@@ -1,7 +1,7 @@
 // 사진으로 입력 (I-052) — 영수증 여러 장·카드 이용내역 캡처의 여러 결제를 한 번에 읽는다
 import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../dbManager';
-import { buildPhotoSuggestions, buildPhotoPrompt } from '../photoEntry';
+import { buildPhotoSuggestions, buildPhotoPrompt, markDuplicates } from '../photoEntry';
 import { todayStr, addDays } from '../dateUtils';
 
 let SQL;
@@ -124,6 +124,53 @@ test('현대카드 앱 이용내역 캡처 두 장(사용자 예시) — 날짜�
   expect(suggestions.filter(s => s.date === '2026-11-11').reduce((n, s) => n + s.amount, 0)).toBe(83120);
   expect(suggestions.filter(s => s.batchDuplicate)).toEqual([]);   // 11/7·11/11 다이소 3,000원은 서로 다른 결제
   expect(suggestions.filter(s => s.duplicateOf).map(s => s.merchant)).toEqual(['대득에너지금천셀프주유소']);
+});
+
+test('이미 넣은 거래는 한 줄하고만 짝짓고, 결제수단과 이름이 다 맞는 거래를 먼저 고른다', () => {
+  const db = makeDb();
+  addTransaction(db, { payment_method: '신한카드', date: D1, budget_category: '식비', sub_category: '외식', detail: '다이소', amount: 3000 });
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '다이소', amount: 3000 });
+  const base = { date: D1, amount: 3000, merchant: '다이소아성산업', detail: '다이소', payment_method: '현대EV', sources: {} };
+  const out = markDuplicates(db, [
+    base,
+    { ...base, merchant: '다이소 2층', payment_method: '신한카드' },
+    { ...base, date: D2 },
+  ]);
+  expect(out[0].duplicateOf).toEqual(expect.objectContaining({ payment_method: '현대EV' }));
+  expect(out[1].duplicateOf).toEqual(expect.objectContaining({ payment_method: '신한카드' }));
+  expect(out[2].duplicateOf).toBeNull();                       // 다른 날
+
+  // 같은 날 같은 금액이 둘인데 가계부에는 하나만 있으면 하나만 이미 있는 것
+  const twice = markDuplicates(db, [base, { ...base, merchant: '다이소', payment_method: '현대EV' }]);
+  expect(twice.filter(s => s.duplicateOf && s.duplicateOf.payment_method === '현대EV')).toHaveLength(1);
+});
+
+test('고친 값으로 다시 대조한다 — 금액을 고치면 이미 있는 거래·앞 줄과 더는 겹치지 않는다', () => {
+  const db = makeDb();
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '김밥천국', amount: 8000 });
+  const s = { date: D1, amount: 8000, merchant: '김밥천국', detail: '김밥천국', payment_method: '현대EV', sources: {} };
+  const [a, b] = markDuplicates(db, [s, { ...s }]);
+  expect([!!a.duplicateOf, a.batchDuplicate, !!b.duplicateOf, b.batchDuplicate]).toEqual([true, false, false, true]);
+  const [c, d] = markDuplicates(db, [{ ...a, amount: 9000 }, b]);
+  expect([!!c.duplicateOf, c.batchDuplicate, !!d.duplicateOf, d.batchDuplicate]).toEqual([false, false, true, false]);
+});
+
+test('짝은 목록 전체에서 결제수단·이름이 다 맞는 것부터 — 앞 줄이 결제수단만 맞는 거래를 가져가지 않는다', () => {
+  const db = makeDb();
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '메가커피', amount: 4500 });
+  const base = { date: D1, amount: 4500, payment_method: '현대EV', sources: {} };
+  const [a, b] = markDuplicates(db, [{ ...base, merchant: '처음가게', detail: '처음가게' }, { ...base, merchant: '메가커피', detail: '메가커피' }]);
+  expect(a.duplicateOf).toBeNull();
+  expect(b.duplicateOf).toEqual(expect.objectContaining({ detail: '메가커피' }));
+});
+
+test('이 화면에서 바로 넣은 결제(claimed)가 제 거래를 먼저 가져가 다른 줄과 짝짓지 않는다', () => {
+  const db = makeDb();
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '가게A', amount: 4500 });
+  const base = { date: D1, amount: 4500, payment_method: '현대EV', sources: {} };
+  const [r] = markDuplicates(db, [{ ...base, merchant: '가게B', detail: '가게B' }], { claimed: [{ ...base, merchant: '가게A', detail: '가게A' }] });
+  expect(r.duplicateOf).toBeNull();
+  expect(markDuplicates(db, [{ ...base, merchant: '가게B', detail: '가게B' }])[0].duplicateOf).not.toBeNull();
 });
 
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {

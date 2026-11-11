@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { suggestionToTransaction, isSuggestionComplete } from '../../services/receiptAssistant';
-import { analyzePhotos } from '../../services/photoEntry';
+import { analyzePhotos, markDuplicates } from '../../services/photoEntry';
 import { familiarity, splitFamiliar, QUICK_REASONS } from '../../services/quickEntry';
 import { preparePhotos } from '../../services/imageUtils';
 import { getMemberNames, getPaymentMethods } from '../../services/dbManager';
@@ -9,21 +9,63 @@ import SuggestionDetails, { amountText } from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import QuickAutoNote from './QuickAutoNote';
 import { useQuickBatches } from './useQuickBatches';
-import { todayStr } from '../../services/dateUtils';
+import { todayStr, isValidDateStr } from '../../services/dateUtils';
+import { formatAmount } from '../../services/formulaEvaluator';
 import './AIEntry.css';
 
 const CONFIDENCE_LABEL = { high: '잘 읽힘', medium: '대체로 읽힘', low: '흐림 — 확인 필요' };
 const DEVICE_MEMBER = '\u0000device'; // '누가' 고르기의 기본값 — 정하지 않음(App이 이 기기 사용자로)
 
-/** 여러 건 목록에서 미리 체크할 것 — 다 채워졌고, 이미 있거나 겹치거나 취소된 결제가 아니며, 날짜를 실제로 읽었고 앞날짜가 아닌 것 */
-const preChecked = s => isSuggestionComplete(s) && !s.duplicateOf && !s.batchDuplicate && !s.pairedCancel
-  && s.sources.date !== 'today' && s.date <= todayStr();
+/** 넣을 수 있는 줄 — 빈 칸 없이, 올바른 날짜와 0보다 큰 금액 */
+const addable = s => isSuggestionComplete(s) && isValidDateStr(s.date) && Number(s.amount) > 0;
 
+/** 여러 건 목록에서 미리 체크할 것 — 넣을 수 있고, 이미 있거나 겹치거나 취소된 결제가 아니며, 날짜를 실제로 읽었고 앞날짜가 아닌 것 */
+const preChecked = s => addable(s) && !flagReason(s) && s.sources.date !== 'today' && s.date <= todayStr();
+
+/** 겹친 결제의 이유 — 목록을 고칠 때마다 다시 따진다(markDuplicates) */
 function flagReason(s) {
   if (s.pairedCancel) return '같은 사진에 이 결제의 취소가 있어요 — 넣을 때만 고르세요';
-  if (s.duplicateOf) return QUICK_REASONS.existing;
+  if (s.duplicateOf) {
+    const d = s.duplicateOf;
+    return `이미 넣은 거래가 있어요(${d.detail || '내용 없음'} ${formatAmount(d.amount)}원 · ${d.payment_method}) — 또 넣을 때만 고르세요`;
+  }
   if (s.batchDuplicate) return '앞 줄과 같은 결제예요 — 따로 결제한 것일 때만 고르세요';
   return '';
+}
+
+/** 어떤 겹침인지 — 같은 겹침에 대해 사용자가 정한 체크는 지킨다 */
+const flagKey = s => (s.pairedCancel ? 'cancel' : s.duplicateOf ? `tx${s.duplicateOf.id}` : s.batchDuplicate ? 'batch' : '');
+
+/** 목록 한 줄 — checked는 사용자의 뜻(넣을 수 없는 동안에는 빠진다), decided는 그 체크를 정할 때의 겹침, ever는 넣을 수 있던 적이 있는지 */
+const listItem = (s, checked, reason = '') => ({ s, checked, reason, decided: flagKey(s), ever: addable(s) });
+
+/** 실제로 넣을 줄 */
+const isSelected = it => it.checked && addable(it.s);
+
+/**
+ * 목록을 고친 뒤(또는 넣기 직전에) 겹친 결제를 다시 따지고 체크를 맞춘다. 체크는 겹침이 달라질 때만 건드린다.
+ *  - 입력 중이라 넣을 수 없는 줄(빈 금액·"1000+")은 그대로 둔다 — 넣을 때만 빠지고, 다 고치면 사용자의 체크가 살아 있다
+ *  - 처음으로 넣을 수 있게 된 줄(결제수단을 고름 등)은 미리 체크할 만한지 본다
+ *  - 새로 겹치면(이미 있는 거래·앞 줄과 같아짐) 끈다
+ *  - 겹침이 풀리면 고친 그 줄(edited)만 미리 체크할 만한지 다시 본다. 다른 줄은 저절로 켜지 않는다
+ *    (한 줄을 고쳐 겹친 짝이 풀려도 그 짝이 켜져 같은 결제가 두 번 들어가지 않게)
+ * confirming: 넣기 직전 — 끄기만 한다. claimed: 이 화면에서 바로 넣은 추천 — 그 거래는 목록과 짝짓지 않는다
+ */
+function refresh(db, list, { edited = -1, confirming = false, claimed = [] } = {}) {
+  const marked = markDuplicates(db, list.map(it => it.s), { claimed });
+  return list.map((it, i) => {
+    const s = marked[i];
+    if (!addable(s)) return { ...it, s };
+    const key = flagKey(s);
+    if (!it.ever) {
+      const checked = !confirming && preChecked(s) && it.reason !== QUICK_REASONS.undone;
+      return { ...it, s, ever: true, decided: key, checked };
+    }
+    if (key === it.decided) return { ...it, s };
+    if (key) return { ...it, s, decided: key, checked: false };
+    const recheck = !confirming && i === edited && preChecked(s);
+    return { ...it, s, decided: '', checked: recheck || it.checked };
+  });
 }
 
 function Thumbs({ previews, count }) {
@@ -52,7 +94,8 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
   const [phase, setPhase] = useState('analyzing'); // analyzing | review | list | error
   const [prepared, setPrepared] = useState(null);  // { parts, previews }
   const [suggestion, setSuggestion] = useState(null);
-  const [items, setItems] = useState([]);          // 여러 건: [{ s, checked, reason }]
+  const [items, setItems] = useState([]);          // 여러 건: listItem들
+  const [listNote, setListNote] = useState('');    // 넣으려다 멈춘 이유 (그사이 같은 거래가 들어옴)
   const [cancels, setCancels] = useState([]);
   const [note, setNote] = useState('');
   const [member, setMember] = useState(DEVICE_MEMBER);
@@ -66,14 +109,23 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
   const dbRef = useRef(db);
   dbRef.current = db;
   // 여러 건 중 바로 넣은 것 — 되돌리면 목록에 체크 없이 다시 올려 고쳐 넣게 한다
-  const { batches, add: addBatch, undoAll, reset: resetBatches } = useQuickBatches(({ suggestions, removed }) => {
+  const batchesRef = useRef([]);
+  /** 이 화면에서 바로 넣고 아직 되돌리지 않은 추천 — 그 거래를 목록의 '이미 있는 거래'로 보지 않는다 */
+  const claimedNow = (exceptId) => batchesRef.current
+    .filter(b => b.removed === null && b.id !== exceptId).flatMap(b => b.suggestions);
+  const { batches, add: addBatch, undoAll, reset: resetBatches } = useQuickBatches(({ id, suggestions, removed }) => {
     if (removed !== suggestions.length) return;
-    setItems(list => [...list, ...suggestions.map(s => ({ s, checked: false, reason: QUICK_REASONS.undone }))]);
+    // 되돌려 가계부에서 빠졌다 — 체크 없이 목록에 다시 올리고 겹친 결제를 다시 따진다
+    setItems(list => refresh(dbRef.current,
+      [...list, ...suggestions.map(s => ({ ...listItem(s, false, QUICK_REASONS.undone), ever: true }))],
+      { claimed: claimedNow(id) }));
   });
+  batchesRef.current = batches;
 
   const clearResult = () => {
     setSuggestion(null);
     setItems([]);
+    setListNote('');
     setCancels([]);
     setNote('');
     setReviewReason('');
@@ -139,7 +191,8 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
       if (autoAddRef.current && !holdAll) {
         const split = splitFamiliar(cur, candidates, 'receipt');
         familiar = split.familiar;
-        split.review.forEach(r => reasons.set(r.s, r.reason));
+        // 이미 있는 거래는 목록이 한 거래에 한 줄씩 따로 따진다(markDuplicates) — 여기서는 그 밖의 이유만
+        split.review.forEach(r => { if (!/^같은 날 같은 금액 거래가 이미 있어요/.test(r.reason)) reasons.set(r.s, r.reason); });
       }
       const rest = suggestions.filter(s => !familiar.includes(s));
       const remaining = rest.length + cancelList.filter(c => !c.paired).length;
@@ -148,7 +201,7 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
         if (!remaining) return; // 모두 넣었다 — 입력 창이 닫힌다
         addBatch(familiar, handle);
       }
-      setItems(rest.map(s => ({ s, checked: preChecked(s), reason: flagReason(s) || reasons.get(s) || '' })));
+      setItems(rest.map(s => listItem(s, preChecked(s), reasons.get(s) || '')));
       setCancels(cancelList);
       setNote(aiNote);
       setPhase('list');
@@ -251,28 +304,48 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
   // 여러 건
   const methods = getPaymentMethods(db);
   const members = getMemberNames(db);
-  const selected = items.filter(it => it.checked);
+  const selected = items.filter(isSelected);
   const selectedTotal = selected.reduce((sum, it) => sum + (it.s.amount || 0), 0);
   const unpaired = cancels.filter(c => !c.paired);
-  const setAllPayment = (method) => {
-    if (!method) return;
-    // 이미 있거나 겹치거나 되돌린 결제는 다 채워져도 체크하지 않는다 — 한 줄씩 직접 고른다
-    setItems(list => list.map(it => {
-      const next = patchListItem(it, { payment_method: method });
-      // 이번에 다 채워진 줄도 미리 체크할 만한 것(날짜를 읽음·겹치지 않음 등)만 체크한다
-      const fresh = !isSuggestionComplete(it.s) && preChecked(next.s) && it.reason !== QUICK_REASONS.undone;
-      return { ...next, checked: it.checked || fresh };
-    }));
+  /** 고친 값을 반영한다 — idx가 null이면 모든 줄에 (결제수단 모두 바꾸기). 한 줄을 고치면 그 줄의 예전 이유는 지운다 */
+  const edit = (idx, p) => {
+    setListNote('');
+    const claimed = claimedNow();
+    setItems(list => refresh(dbRef.current,
+      list.map((x, i) => {
+        if (idx === null) return patchListItem(x, p);
+        return i === idx ? { ...patchListItem(x, p), reason: '' } : x;
+      }),
+      { edited: idx === null ? -1 : idx, claimed }));
   };
+  const setAllPayment = (method) => { if (method) edit(null, { payment_method: method }); };
+  const checkable = items.filter(it => addable(it.s));
+  // '모두'는 이미 있거나 겹친 결제를 뺀 줄 기준 — 그런 줄을 안 골랐어도 나머지를 다 골랐으면 '모두 빼기'
+  const pickable = checkable.filter(it => !flagReason(it.s));
+  const allChecked = pickable.length > 0 && pickable.every(it => it.checked);
+  // 모두 고르기는 이미 있거나 겹친 결제는 빼고 고른다 — 그런 줄은 한 줄씩 직접 고른다
+  const toggleAll = () => setItems(list => list.map(it => ({
+    ...it,
+    decided: flagKey(it.s),
+    checked: allChecked ? false : (it.checked || (addable(it.s) && !flagReason(it.s))),
+  })));
   const confirm = () => {
     const cur = dbRef.current;
-    onBulkAdd(selected.map(it => {
+    // 누른 순간 다시 대조한다 — 그사이 다른 기기에서 같은 거래가 들어왔을 수 있다. 이때는 끄기만 한다
+    const now = refresh(cur, items, { confirming: true, claimed: claimedNow() });
+    const dropped = items.filter((it, i) => isSelected(it) && !isSelected(now[i])).length;
+    if (dropped) {
+      setItems(now);
+      setListNote(`그사이 가계부에 같은 거래가 들어와 ${dropped}건을 뺐어요 — 확인하고 다시 눌러 주세요`);
+      return;
+    }
+    onBulkAdd(now.filter(isSelected).map(it => {
       const row = suggestionToTransaction(cur, it.s);
       return member === DEVICE_MEMBER ? row : { ...row, member };
     }));
   };
-  const toggle = (idx, checked) => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked } : x)));
-  const patch = (idx, p) => setItems(list => list.map((x, i) => (i === idx ? patchListItem(x, p) : x)));
+  // 사용자가 직접 고른 체크는 지금의 겹침에 대해 정한 것 — 같은 겹침이면 고쳐도 그대로 둔다
+  const toggle = (idx, checked) => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked, decided: flagKey(x.s) } : x)));
 
   return (
     <div className="rs-box rs-review">
@@ -284,10 +357,12 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
               : batches.length ? `확인이 필요한 결제 ${items.length}건` : `사진에서 결제 ${items.length}건을 찾았어요`}
           </b>
           <QuickAutoNote batches={batches} onUndo={undoAll} />
+          {items.length > 0 && <span>줄마다 '고치기'로 날짜·내용·금액을 고친 뒤 추가하세요</span>}
         </div>
       </div>
       {modelNote && <div className="rs-model-note">{modelNote}</div>}
       {note && <div className="tp-item-warn">{note}</div>}
+      {listNote && <div className="rs-error-text" role="alert">{listNote}</div>}
 
       {items.length > 1 && (
         <div className="tp-item-fields rs-bulk">
@@ -297,6 +372,9 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
               {methods.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </span>
+          {pickable.length > 1 && (
+            <button type="button" className="rs-btn-link" onClick={toggleAll}>{allChecked ? '모두 빼기' : '모두 고르기'}</button>
+          )}
           {members.length > 0 && (
             <span className="tp-field">
               <select value={member} onChange={e => setMember(e.target.value)} aria-label="누가">
@@ -313,12 +391,14 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
           <SuggestionItem
             key={idx}
             db={db}
-            item={it}
+            item={{ ...it, checked: isSelected(it) }}
             methods={methods}
-            subtitle={[it.s.date, it.s.paymentHint, it.s.eventTitle, it.reason].filter(Boolean).join(' · ')}
+            subtitle={[it.s.date, it.s.paymentHint, it.s.eventTitle, flagReason(it.s) || it.reason].filter(Boolean).join(' · ')}
             onToggle={checked => toggle(idx, checked)}
-            onPatch={p => patch(idx, p)}
+            onPatch={p => edit(idx, p)}
             onFillForm={onApply}
+            editable
+            canCheck={addable(it.s)}
           />
         ))}
       </div>

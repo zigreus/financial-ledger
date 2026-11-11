@@ -10,10 +10,12 @@
  *      · 날짜를 읽지 못했거나 앞날짜인 결제(화면 쪽 preChecked)
  *      · 같은 묶음에 취소 줄이 있는 결제 — pairedCancel
  *    취소·환불 줄은 넣지 않고 cancels로 알린다(이미 넣은 거래면 사용자가 지운다).
+ *  - 사용자가 목록에서 날짜·금액·내용을 고치면 markDuplicates로 다시 대조한다.
  */
 import { analyzeWithAI, AIError } from './aiClient';
 import { buildDataContext, buildSuggestion, normalizeName, resolveDate } from './receiptAssistant';
-import { findExistingTransaction } from './cardSms';
+import { getTransactions } from './dbManager';
+import { namesMatch } from './cardSms';
 import { todayStr } from './dateUtils';
 
 const ENTRY = {
@@ -153,17 +155,62 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr() } = {}) {
     if (hit) { hit.pairedCancel = true; c.paired = true; }
   });
 
-  // 겹쳐 찍은 같은 결제 — 앞의 것만 미리 체크한다 (가게 이름이 같거나, 맞춘 세부내역·결제수단이 같으면 같은 결제로 본다)
+  return { suggestions: markDuplicates(db, suggestions), cancels, kind: String(raw.kind || ''), note };
+}
+
+/**
+ * 겹친 결제를 다시 표시한다 — 사진을 읽은 뒤, 그리고 사용자가 목록에서 고칠 때마다. 새 추천 배열을 돌려준다(원래 순서).
+ *  - duplicateOf: 가계부에 이미 있는 거래 { id, date, detail, payment_method, amount } — 같은 날·같은 금액이고
+ *    결제수단이나 가게 이름이 같은 것. 한 거래는 한 줄하고만 짝짓는다(같은 날 같은 금액 결제가 둘인데 하나만 넣었으면 하나는 새 것).
+ *    짝은 목록 전체에서 결제수단·이름이 다 맞는 것부터, 다음은 결제수단만, 마지막에 이름만 맞는 것으로 짓는다
+ *    (앞 줄이 결제수단만 맞는 거래를 먼저 가져가 정작 같은 결제가 '새 것'으로 남지 않게).
+ *  - claimed: 이 화면에서 바로 넣은 추천 — 그 거래는 먼저 제 짝으로 가져가 목록의 다른 줄과 짝짓지 않는다
+ *  - batchDuplicate: 같은 목록 앞에 같은 결제가 있음(겹쳐 찍음) — 가게 이름이 같거나, 맞춘 세부내역·결제수단이 같으면 같은 결제
+ */
+export function markDuplicates(db, suggestions, { claimed = [] } = {}) {
+  const usable = s => s.amount !== null && s.amount !== undefined && Number(s.amount) > 0 && !!s.date;
+  const out = suggestions.map(orig => ({ ...orig, batchDuplicate: false, duplicateOf: null }));
+
   const seen = new Set();
-  suggestions.forEach(s => {
+  out.forEach(s => {
+    if (!usable(s)) return;
     const keys = [
       ['m', s.date, s.amount, normalizeName(s.merchant || s.detail)].join('|'),
       ['d', s.date, s.amount, normalizeName(s.detail), s.payment_method].join('|'),
     ];
-    if (s.amount !== null && keys.some(k => seen.has(k))) s.batchDuplicate = true;
+    if (keys.some(k => seen.has(k))) s.batchDuplicate = true;
     keys.forEach(k => seen.add(k));
-    s.duplicateOf = findExistingTransaction(db, s);
   });
 
-  return { suggestions, cancels, kind: String(raw.kind || ''), note };
+  const byDay = new Map();
+  const dayTxs = (date) => {
+    if (!byDay.has(date)) byDay.set(date, getTransactions(db, { dateFrom: date, dateTo: date }));
+    return byDay.get(date);
+  };
+  const sameMethod = (s, tx) => !!s.payment_method && tx.payment_method === s.payment_method;
+  const sameName = (s, tx) => namesMatch(tx.detail, s.merchant) || namesMatch(tx.detail, s.detail);
+  const rules = [
+    (s, tx) => sameMethod(s, tx) && sameName(s, tx),
+    sameMethod,
+    sameName,
+  ];
+  const used = new Set();
+  const claimants = claimed.filter(usable).map(s => ({ s, done: false, mine: false }));
+  const rows = out.filter(usable).map(s => ({ s, done: false, mine: true }));
+  rules.forEach(rule => {
+    [...claimants, ...rows].forEach(r => {
+      if (r.done) return;
+      const hit = dayTxs(r.s.date).find(tx => !used.has(tx.id) && Number(tx.amount) === r.s.amount && rule(r.s, tx));
+      if (!hit) return;
+      used.add(hit.id);
+      r.done = true;
+      if (r.mine) {
+        r.s.duplicateOf = {
+          id: hit.id, date: hit.date, detail: hit.detail || hit.sub_category || '',
+          payment_method: hit.payment_method, amount: Number(hit.amount) || 0,
+        };
+      }
+    });
+  });
+  return out;
 }

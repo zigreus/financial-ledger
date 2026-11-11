@@ -388,7 +388,8 @@ function guessMethodByIssuer(methods, msg) {
   return preferred.length === 1 ? preferred[0] : '';
 }
 
-function namesMatch(a, b) {
+/** 두 이름이 같은 곳인지 — 한쪽이 다른 쪽을 품는다(두 글자 이상). 사진 입력의 겹친 결제 찾기도 쓴다 */
+export function namesMatch(a, b) {
   const x = normalizeName(a);
   const y = normalizeName(b);
   if (x.length < 2 || y.length < 2) return false;

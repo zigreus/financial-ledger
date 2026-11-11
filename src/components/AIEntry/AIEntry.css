@@ -348,6 +348,31 @@
   color: var(--text);
 }
 .tp-item-missing { font-size: calc(11px * var(--fs)); color: var(--text-muted); }
+
+/* 목록 한 줄 고치기 (사진 목록) — 날짜·세부내역·금액 */
+.tp-edit-toggle { flex: 0 0 auto; align-self: center; }
+.tp-edit { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.tp-edit-row { display: flex; align-items: flex-start; gap: 8px; }
+.tp-edit-row > span {
+  flex: 0 0 4.7em; /* 글씨 크기(--fs)를 따라 넓어진다 */
+  padding-top: 7px;
+  font-size: calc(12px * var(--fs));
+  color: var(--text-muted);
+}
+.tp-edit-row > input,
+.tp-edit-amount input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: calc(13px * var(--fs));
+  background: var(--surface);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.tp-edit-row > input { flex: 1; }
+.tp-edit-amount { flex: 1; min-width: 0; }
 .tp-item-warn { font-size: calc(11px * var(--fs)); color: var(--c-amber-800); }
 
 /* 분석 중 진행 상황 ("서버가 붐벼서 다시 시도하는 중…") */
