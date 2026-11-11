@@ -95,6 +95,37 @@ test('가게 표기가 달라도 같은 세부내역·결제수단·날짜·금�
   expect(suggestions.map(s => !!s.batchDuplicate)).toEqual([false, true]);
 });
 
+test('현대카드 앱 이용내역 캡처 두 장(사용자 예시) — 날짜별로 모두 넣고, 같은 가게·금액이라도 날짜가 다르면 따로', () => {
+  const db = makeDb();
+  // 이미 넣어 둔 11/9 결제 — 내역을 다시 받아도 두 번 넣지 않는다
+  addTransaction(db, { payment_method: '현대EV', date: '2026-11-09', budget_category: '교통', sub_category: '충전', detail: '대득에너지', amount: 1000 });
+  const card = (date, merchant, total) => entry({ date, merchant, total, payment_hint: 'Hyundai EV카드', category: '모름' });
+  const { suggestions, cancels } = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '',
+    entries: [
+      card('2026-11-08', '네이버페이', 43950),
+      card('2026-11-08', '신성통상TOPTEN엔터식스안양', 109700),
+      card('2026-11-08', '다이소아성산업', 1000),
+      card('2026-11-08', '네이버페이', 23900),
+      card('2026-11-07', '다이소아성산업', 3000),
+      card('2026-11-11', '와플사이', 4500),
+      card('2026-11-11', '다이소아성산업', 3000),
+      card('2026-11-11', '한살림서울협동조합', 24120),
+      card('2026-11-11', '네이버페이', 51500),
+      card('2026-11-10', '전기차충전 - 한국자동차환경협회(사)', 4352),
+      card('2026-11-09', '귀뚜라미에너지시흥고객센터', 14000),
+      card('2026-11-09', '대득에너지금천셀프주유소', 1000),
+    ],
+  }, { today: '2026-11-11' });
+  expect(cancels).toEqual([]);
+  expect(suggestions).toHaveLength(12);
+  expect(suggestions.every(s => s.payment_method === '현대EV' && s.sources.date === 'receipt')).toBe(true);
+  // 11/11 합계는 앱 달력의 83,120원과 같다
+  expect(suggestions.filter(s => s.date === '2026-11-11').reduce((n, s) => n + s.amount, 0)).toBe(83120);
+  expect(suggestions.filter(s => s.batchDuplicate)).toEqual([]);   // 11/7·11/11 다이소 3,000원은 서로 다른 결제
+  expect(suggestions.filter(s => s.duplicateOf).map(s => s.merchant)).toEqual(['대득에너지금천셀프주유소']);
+});
+
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {
   expect(() => buildPhotoSuggestions(makeDb(), { is_payment: true, note: '' })).toThrow('사진 내용을 읽지 못했습니다');
 });
