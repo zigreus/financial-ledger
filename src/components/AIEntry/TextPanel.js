@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { parseTextEntry, UNCLEAR } from '../../services/textEntry';
-import { isSuggestionComplete, normalizeName, suggestionToTransaction } from '../../services/receiptAssistant';
+import { isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
 import { QUICK_REASONS, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
 import { findExistingTransaction } from '../../services/cardSms';
@@ -19,8 +19,10 @@ const PENDING_NOTE = "덧붙여 쓴 말이 있어요 — '덧붙여 정리하기
 const MERGE_HINT = '앞에서 말한 것과 합쳐 다시 정리합니다.';
 // 바로 넣은(또는 되돌린) 거래를 알아보는 열쇠 — 다시 정리하면 같은 건·고쳐 말한 건은 바로 넣지 않고,
 // 체크를 끈 채 이유를 붙인다 (I-022). 한 건 화면(이대로 채우기)에도 맞게 '고르세요'라고 쓴다
-const keyOf = s => `${s.date}|${s.amount}|${s.detail}|${s.payment_method}`;
-const placeOf = s => ({ key: keyOf(s), date: s.date, name: normalizeName(s.detail) });
+// 이름은 세부내역, 없으면 가게·세부카테고리 — 세부내역을 비운 다른 건끼리 같은 건으로 보지 않게 (I-056)
+const nameKey = s => normalizeName(suggestionName(s));
+const keyOf = s => `${s.date}|${s.amount}|${nameKey(s)}|${s.payment_method}`;
+const placeOf = s => ({ key: keyOf(s), date: s.date, name: nameKey(s) });
 const mark = (s, kind) => ({ ...s, quickMark: kind, reviewReason: QUICK_REASONS[kind] });
 
 /**
@@ -84,7 +86,7 @@ export default function TextPanel({
       };
       const next = list.map(it => {
         if (it.s.quickMark === 'again' && claim(p => p.key === keyOf(it.s))) return { ...it, s: mark(it.s, 'undone') };
-        if (it.s.quickMark === 'similar' && claim(p => p.date === it.s.date && p.name === normalizeName(it.s.detail))) {
+        if (it.s.quickMark === 'similar' && claim(p => p.date === it.s.date && p.name === nameKey(it.s))) {
           return { ...it, s: mark(it.s, 'fixed') };
         }
         return it;
@@ -150,7 +152,7 @@ export default function TextPanel({
         pool.splice(i, 1);
         return true;
       };
-      const near = (pool, sug) => pool.some(a => a.date === sug.date && a.name === normalizeName(sug.detail));
+      const near = (pool, sug) => pool.some(a => a.date === sug.date && a.name === nameKey(sug));
       list = list.map(sug => {
         if (take(added, sug)) return mark(sug, 'again');
         if (near(autoAddedRef.current, sug)) return mark(sug, 'similar');
@@ -190,7 +192,7 @@ export default function TextPanel({
       // 목록에서 고른 값·체크를 끈 것은 덧붙여 정리할 때만 이어받는다 (다시 쓰기·처음 정리는 새로)
       const { items: next, dropped: droppedByName, matched } = carryChoices(before.items, list);
       // 바로 넣은·되돌린 건이 금액만 같은 다른 줄과 짝지어졌으면 그 예전 줄은 빠진 것으로 알린다(체크도 이어받지 않는다)
-      const sameDetail = (a, b) => normalizeName(a.detail) === normalizeName(b.detail);
+      const sameDetail = (a, b) => nameKey(a) === nameKey(b);
       const oldOf = i => (matched[i] >= 0 ? before.items[matched[i]] : null);
       const pairedByAmount = next
         .map((it, i) => (it.s.quickMark && oldOf(i) && !sameDetail(oldOf(i).s, it.s) ? oldOf(i) : null))

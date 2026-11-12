@@ -50,10 +50,9 @@ export default function SuggestionDetails({ suggestion: s, amountSource = 'recei
         <Row label="날짜" value={s.date} source={sources.date} />
         <Row
           label="세부내역"
-          value={s.detail || '직접 입력'}
-          missing={!s.detail}
+          value={s.detail || '비워 둠'}
           source={sources.detail}
-          hint={s.historyDetail
+          hint={s.historyDetail && s.detail
             ? `예전에 ${s.historyCount}번 이렇게 적었어요${s.merchant && s.merchant !== s.detail ? ` · 원문: ${s.merchant}` : ''}`
             : ''}
         />

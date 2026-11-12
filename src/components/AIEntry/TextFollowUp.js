@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { isSuggestionComplete, normalizeName } from '../../services/receiptAssistant';
+import { isSuggestionComplete, normalizeName, suggestionName } from '../../services/receiptAssistant';
 import './AIEntry.css';
 
 /**
@@ -29,11 +29,12 @@ const GAP_EXAMPLE = {
 
 /**
  * 추천 한 건에서 빠진 정보 — 저장에 꼭 필요한 것(금액·결제수단·카테고리)과, 무엇에 썼는지.
+ * 세부내역은 꼭 채우지 않는다 — 카테고리를 알면(예: 식비 > 저녁) 무엇에 썼는지 묻지 않는다 (I-056).
  * 외화 금액은 읽었는데 환율·여행 일정이 없어 원화를 못 구했으면 '원화 금액'을 묻는다 (외화를 다시 말해도 소용없다).
  */
 export function suggestionGaps(s) {
   const gaps = [];
-  if (!s.detail && !s.merchant) gaps.push('detail');
+  if (!s.detail && !s.merchant && !s.budget_category) gaps.push('detail');
   if (s.amount === null || s.amount === undefined) {
     gaps.push(s.foreignAmount !== null && s.foreignAmount !== undefined ? 'krw_amount' : 'amount');
   }
@@ -43,7 +44,7 @@ export function suggestionGaps(s) {
   return gaps;
 }
 
-const itemName = (s, index) => s.detail || s.merchant || `${index + 1}번째 건`;
+const itemName = (s, index) => suggestionName(s) || `${index + 1}번째 건`;
 
 /** 빠진 정보가 있는 건 목록 — [{ index, name, gaps }] */
 export function describeGaps(items) {
@@ -117,7 +118,7 @@ function applyPicks(s, picks) {
   return out;
 }
 
-const nameOf = s => String(s.detail || s.merchant || '').trim();
+const nameOf = suggestionName;
 
 /**
  * 다시 정리한 결과를 목록으로 → { items, dropped }.

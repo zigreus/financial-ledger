@@ -12,10 +12,11 @@
  */
 import {
   getPaymentMethods, getBudgetCategories, getSubCategories,
-  getDetailPatterns, getAutoPaymentMethod, getDiscountRules, evaluateDiscountRule,
+  getDetailPatterns, getBlankDetailHabits, getAutoPaymentMethod, getDiscountRules, evaluateDiscountRule,
   getCalendarEvents, getCalendarEventTypes, getTripDefaultCategory,
 } from './dbManager';
 import { today as todayStr } from './formulaEvaluator';
+import { normalizeName } from './db/common';
 import { isValidDateStr as isValidDate, addDays } from './dateUtils';
 
 const UNKNOWN = '모름';
@@ -58,6 +59,7 @@ export function buildDataContext(db, today = todayStr()) {
   const methods = getPaymentMethods(db);
   const paths = categoryPaths(db);
   const patterns = getDetailPatterns(db).slice(0, PATTERN_LIMIT);
+  const blankHabits = getBlankDetailHabits(db);
   const trips = tripEventsOf(db).slice(0, 10);
   const dow = WEEKDAYS[new Date(`${today}T00:00:00`).getDay()];
 
@@ -73,6 +75,13 @@ export function buildDataContext(db, today = todayStr()) {
     ...(patterns.length
       ? patterns.map(p => `${p.detail} → ${p.budget_category}${p.sub_category ? ` > ${p.sub_category}` : ''} / ${p.payment_method} (${p.cnt})`)
       : ['(아직 없음)']),
+    '',
+    '[세부내역 — 꼭 채우지 않아도 됩니다]',
+    '세부내역(detail)이 카테고리·세부카테고리 이름을 되풀이할 뿐이면 빈 문자열로 둔다 (예: 세부카테고리가 저녁인데 세부내역 "저녁"). 가게 이름·산 물건처럼 더 알려 주는 말이 있을 때만 적는다.',
+    ...(blankHabits.length
+      ? ['이 사용자가 보통 세부내역을 비워 두는 세부카테고리 (비운 횟수/전체):',
+        ...blankHabits.map(h => `${h.budget_category} > ${h.sub_category} (${h.blank}/${h.total})`)]
+      : []),
   ];
   if (trips.length) {
     lines.push('', '[여행 일정 — 외화 결제면 참고]');
@@ -86,7 +95,13 @@ export function buildDataContext(db, today = todayStr()) {
 
 // ── 기존 데이터로 맞추기 (공통) ──────────────────────────────────
 
-export const normalizeName = s => String(s || '').toLowerCase().replace(/[^0-9a-z가-힣ぁ-んァ-ン一-龥]/g, '');
+export { normalizeName };
+
+/** 추천 한 건을 가리키는 이름 — 세부내역, 없으면 가게, 그것도 없으면 세부카테고리 (세부내역은 비워 둘 수 있다, I-056) */
+export const suggestionName = s => String(s?.detail || s?.merchant || s?.sub_category || '').trim();
+
+// 정확히 같은 이름으로 찾은 습관의 점수 바닥 (matchHistory)
+const EXACT_SCORE = 1e9;
 
 // 가맹점명과 세부내역이 얼마나 구체적으로 맞는지 — 정확히 같으면 가장 높고,
 // 한쪽이 다른 쪽을 포함하면 겹치는 글자 수(= 짧은 쪽 길이)가 길수록 높다. 맞지 않으면 0.
@@ -112,7 +127,7 @@ export function matchHistory(db, ...names) {
     const match = Math.max(...keys.map(k => nameMatchLength(k, d)));
     if (!match) return;
     // 구체성(정확 일치 1순위, 겹친 길이 2순위)을 먼저, 같은 수준이면 많이 쓴 순
-    const score = (match === Infinity ? 1e9 : match * 1e5) + Math.min(p.cnt, 99999);
+    const score = (match === Infinity ? EXACT_SCORE : match * 1e5) + Math.min(p.cnt, 99999);
     if (!best || score > best.score) best = { ...p, score };
   });
   return best;
@@ -139,6 +154,12 @@ export function findTrip(db, currency, date) {
   return candidates.sort((a, b) => (b.ev.date_from || '').localeCompare(a.ev.date_from || ''))[0];
 }
 
+/** 세부내역이 카테고리·세부카테고리 이름을 되풀이할 뿐인지 (공백·기호 무시) */
+export function repeatsCategory(detail, cat, sub) {
+  const d = normalizeName(detail);
+  return !!d && (d === normalizeName(sub) || d === normalizeName(cat));
+}
+
 function splitPath(path, db) {
   const [cat, sub = ''] = String(path || '').split('>').map(s => s.trim());
   if (!cat || cat === UNKNOWN || !getBudgetCategories(db).includes(cat)) return null;
@@ -151,10 +172,19 @@ function splitPath(path, db) {
  * 반환: { detail, budget_category, sub_category, history, sources: { detail, category } }
  */
 export function classify(db, { merchant, detail, aiCategory, eventId, readSource = 'receipt' }) {
-  const history = matchHistory(db, merchant, detail);
+  // AI가 고른 카테고리 이름을 되풀이한 세부내역('저녁' → 식비 > 저녁)은 가게 이름이 아니다 —
+  // 예전에 똑같이 적은 것만 습관으로 보고, 겹치는 글자로는 찾지 않는다('저녁'이 '저녁회식'에 걸리지 않게)
+  const aiPath = splitPath(aiCategory, db);
+  const generic = name => !!aiPath && repeatsCategory(name, aiPath.cat, aiPath.sub);
+  const named = name => (generic(name) ? '' : name);
+  let history = matchHistory(db, named(merchant), named(detail));
+  if (!history) {
+    const exact = matchHistory(db, ...[merchant, detail].filter(generic));
+    if (exact && exact.score >= EXACT_SCORE) history = exact;
+  }
   const sources = {};
 
-  const outDetail = (history?.detail || detail || merchant || '').trim();
+  let outDetail = (history?.detail || named(detail) || named(merchant) || '').trim();
   sources.detail = history ? 'history' : readSource;
 
   let category = null;
@@ -172,6 +202,10 @@ export function classify(db, { merchant, detail, aiCategory, eventId, readSource
     category = { cat: tripCategory, sub: category && subs.includes(category.sub) ? category.sub : '' };
     sources.category = 'trip';
   }
+
+  // 세부내역은 꼭 채우지 않는다 — 고른 카테고리 이름을 되풀이할 뿐이면 비운다 (I-056)
+  if (category && repeatsCategory(outDetail, category.cat, category.sub)) outDetail = '';
+  if (!outDetail) delete sources.detail;
 
   return {
     detail: outDetail,

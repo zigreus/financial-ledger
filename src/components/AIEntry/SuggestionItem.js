@@ -109,7 +109,7 @@ export default function SuggestionItem({
         <span className="tp-item-main">
           <b>
             {needsFix && <strong className="tp-fix-badge">수정 필요</strong>}
-            {s.detail || '(내용 없음)'}
+            {s.detail || s.sub_category || '(내용 없음)'}
           </b>
           <small>{subtitle ?? `${s.date}${s.eventTitle ? ` · ${s.eventTitle}` : ''}`}</small>
         </span>

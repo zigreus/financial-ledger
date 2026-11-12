@@ -339,7 +339,7 @@ export function rowSuggestion(db, row, paymentMethod) {
   return {
     date: row.date,
     merchant: row.merchant,
-    detail: cls.detail + (row.isCancel && !/취소|환불/.test(cls.detail) ? ' (취소)' : ''),
+    detail: [cls.detail, row.isCancel && !/취소|환불/.test(cls.detail) ? '(취소)' : ''].filter(Boolean).join(' '),
     amount: row.amount,
     currency: row.currency,
     foreignAmount: row.amount < 0 ? null : row.foreignAmount,   // 환불 기록에는 외화를 적지 않는다 (예전과 같게)

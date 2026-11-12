@@ -1,7 +1,7 @@
 // 입력 습관 — 세부카테고리별 자동 결제수단, 세부내역 패턴(AI 입력 추천용).
 
 import { toDateStr } from '../dateUtils';
-import { dbRowsToObjects } from './common';
+import { dbRowsToObjects, normalizeName } from './common';
 
 // ── 스마트 패턴: 자동 결제수단 선택 ─────────────────────────────────
 
@@ -57,6 +57,40 @@ export function getDetailPatterns(db, { sinceMonths = 12, limit = 500 } = {}) {
     [since, limit]
   );
   return dbRowsToObjects(res).map(r => ({ ...r, cnt: Number(r.cnt) }));
+}
+
+/**
+ * 세부내역을 비워 두는 습관 — 세부카테고리마다, 세부내역을 비우거나 카테고리 이름만 되풀이해 적은 횟수.
+ * 예) '식비 > 저녁'은 보통 세부내역 없이 적는다. AI 입력이 이런 곳의 세부내역을 억지로 채우지 않게 알려 준다.
+ * 최근 sinceMonths개월, minTotal건 이상이고 비운 비율이 minRatio 이상인 것만, 많이 쓴 순.
+ * 반환: [{ budget_category, sub_category, blank, total }]
+ */
+export function getBlankDetailHabits(db, { sinceMonths = 12, minTotal = 3, minRatio = 0.5, limit = 30 } = {}) {
+  if (!db) return [];
+  const d = new Date();
+  d.setMonth(d.getMonth() - sinceMonths);
+  const res = db.exec(
+    `SELECT budget_category, sub_category, detail, COUNT(*) AS cnt
+     FROM transactions
+     WHERE date >= ? AND COALESCE(sub_category, '') != '' AND COALESCE(is_cash_adjustment, 0) = 0
+     GROUP BY budget_category, sub_category, detail`,
+    [toDateStr(d)]
+  );
+  const bySub = new Map();
+  (res[0]?.values || []).forEach(([cat, sub, detail, cnt]) => {
+    const key = `${cat}\u0000${sub}`;
+    const row = bySub.get(key) || { budget_category: cat, sub_category: sub, blank: 0, total: 0 };
+    // 글자가 하나도 없는 세부내역(이모지·기호뿐)은 비운 것으로 보지 않는다 — 그대로 적은 것이다
+    const raw = String(detail || '').trim();
+    const name = normalizeName(raw);
+    if (!raw || (name && (name === normalizeName(sub) || name === normalizeName(cat)))) row.blank += Number(cnt);
+    row.total += Number(cnt);
+    bySub.set(key, row);
+  });
+  return [...bySub.values()]
+    .filter(r => r.total >= minTotal && r.blank / r.total >= minRatio)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
 }
 
 /**

@@ -124,6 +124,13 @@ describe('바로 넣어도 되는지 (familiarity)', () => {
     expect(review.map(r => r.reason)).toEqual([expect.stringContaining('같은 거래가 두 번'), expect.stringContaining('같은 거래가 두 번')]);
   });
 
+  test('세부내역을 비운 다른 건(점심·저녁)은 같은 거래로 보지 않는다 (I-056)', () => {
+    const db = makeDb();
+    const blank = sub => familiarSuggestion({ merchant: '', detail: '', sub_category: sub, amount: 10000 });
+    const { review } = splitFamiliar(db, [blank('카페'), blank('외식')], 'sms');
+    expect(review.map(r => r.reason)).not.toContainEqual(expect.stringContaining('같은 거래가 두 번'));
+  });
+
   test('취소·환불·거절·예약·할부 같은 말이 있으면 말로 입력을 바로 넣지 않는다', () => {
     expect(mayAutoAddText('스타벅스 4500 신한카드')).toBe(true);
     ['스타벅스 4500 결제 취소됐어', '쿠팡 환불 2만원', '다음 주 미용실 예약 3만원 현금', '노트북 3개월 할부 120만원'].forEach(t => {

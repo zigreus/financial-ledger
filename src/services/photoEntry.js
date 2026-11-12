@@ -92,7 +92,7 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
     '- 날짜가 안 보이면 빈 문자열. 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
     '- 목록 위에 카드 이름이 한 번만 보이면 그 카드를 모든 결제의 payment_hint로.',
     '- payment_method·category는 위 목록의 표기 그대로, 애매하면 "모름". 카드 이름이 결제수단 목록의 하나와 같은 카드로 보이면 그 결제수단.',
-    '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명.',
+    '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명. 카테고리 이름을 되풀이할 뿐이면 빈 문자열.',
     '- 결제마다 note에 확실하지 않은 점을 한 줄로 — 짐작한 값이 있으면 무엇을 왜 짐작했는지. 확실하면 빈 문자열. 사진 전체에 해당하는 점은 맨 위 note에만.',
     '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
     '- 가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 결제(간편결제·결제대행 이름뿐 등)만 needs_fix에 무엇을 고칠지 한 줄로. 쿠팡·편의점처럼 가게가 분명하면 빈 문자열.',
@@ -242,10 +242,13 @@ export function markDuplicates(db, suggestions, { claimed = [] } = {}) {
   const seen = new Set();
   out.forEach(s => {
     if (!usable(s)) return;
+    // 이름이 없는 쪽(세부내역을 비운 건 등)으로는 같은 결제라 보지 않는다 (I-056)
+    const merchant = normalizeName(s.merchant || s.detail);
+    const detail = normalizeName(s.detail);
     const keys = [
-      ['m', s.date, s.amount, normalizeName(s.merchant || s.detail)].join('|'),
-      ['d', s.date, s.amount, normalizeName(s.detail), s.payment_method].join('|'),
-    ];
+      merchant && ['m', s.date, s.amount, merchant].join('|'),
+      detail && ['d', s.date, s.amount, detail, s.payment_method].join('|'),
+    ].filter(Boolean);
     if (keys.some(k => seen.has(k))) s.batchDuplicate = true;
     keys.forEach(k => seen.add(k));
   });

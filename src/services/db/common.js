@@ -67,6 +67,9 @@ export function hasForeignAmount(foreignAmounts) {
   }
 }
 
+/** 이름 비교용 — 소문자, 숫자·영문·한글·가나·한자만 (가게 이름·세부내역 견주기) */
+export const normalizeName = s => String(s || '').toLowerCase().replace(/[^0-9a-z가-힣ぁ-んァ-ン一-龥]/g, '');
+
 export function dbRowsToObjects(result) {
   if (!result.length) return [];
   const { columns, values } = result[0];

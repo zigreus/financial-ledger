@@ -22,7 +22,7 @@ const SCHEMA = {
         properties: {
           date: { type: 'string', description: 'YYYY-MM-DD. 날짜 말이 없으면 빈 문자열' },
           merchant: { type: 'string', description: '가게·장소 이름. 없으면 빈 문자열' },
-          detail: { type: 'string', description: '가계부 세부내역 (입력 습관의 표기 우선, 없으면 짧게)' },
+          detail: { type: 'string', description: '가계부 세부내역 (입력 습관의 표기 우선, 없으면 짧게). 카테고리 이름을 되풀이할 뿐이면 빈 문자열' },
           amount: { type: 'number', description: '금액 숫자. "9천원"=9000, "1만2천"=12000. 모르면 0' },
           currency: { type: 'string', description: 'ISO 통화 코드. 원화면 KRW, "엔"이면 JPY, "달러"면 USD' },
           krw_amount: { type: 'number', description: '외화 결제인데 원화로 얼마였는지도 말했으면 그 원화 금액, 아니면 0' },

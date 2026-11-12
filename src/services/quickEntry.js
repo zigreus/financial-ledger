@@ -8,7 +8,7 @@
  *    확인할 거리(경고·중복·외화·취소·앞날짜)가 없는 것. 나머지는 지금처럼 확인받는다.
  *    바로 넣은 것도 되돌릴 수 있다(App의 알림·확인 화면의 버튼 → removeAddedTransactions).
  */
-import { isSuggestionComplete, normalizeName } from './receiptAssistant';
+import { isSuggestionComplete, normalizeName, suggestionName } from './receiptAssistant';
 import { findExistingTransaction } from './cardSms';
 import { getDetailPatterns } from './dbManager';
 import { todayStr } from './dateUtils';
@@ -140,7 +140,7 @@ export function familiarity(db, s, kind, { said } = {}) {
   return { familiar: true, reason: '' };
 }
 
-const batchKey = s => [s.date, s.amount, normalizeName(s.detail), s.payment_method].join('|');
+const batchKey = s => [s.date, s.amount, normalizeName(suggestionName(s)), s.payment_method].join('|');
 
 /**
  * 추천 목록을 바로 넣을 것과 확인할 것으로 나눈다 — { familiar: [추천], review: [{ s, reason }] } (원래 순서 유지)

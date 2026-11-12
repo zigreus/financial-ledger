@@ -17,6 +17,23 @@ describe('빠진 정보', () => {
     expect(suggestionGaps(full({ amount: 0 }))).toEqual([]);   // 0원은 읽은 금액이다
   });
 
+  test('세부내역은 꼭 채우지 않는다 — 카테고리를 알면 무엇에 썼는지 묻지 않고, 이름은 세부카테고리로 (I-056)', () => {
+    const s = full({ detail: '', sub_category: '저녁' });
+    expect(suggestionGaps(s)).toEqual([]);
+    expect(suggestionGaps(sug({ amount: 9000, payment_method: '현금', budget_category: '식비' }))).toEqual(['sub_category']);
+    expect(describeGaps([{ s: full({ detail: '', sub_category: '저녁', payment_method: '' }) }])[0].name).toBe('저녁');
+  });
+
+  test('세부내역을 비운 여러 건도 세부카테고리로 짝지어 고른 값을 이어받는다', () => {
+    const lunch = full({ detail: '', sub_category: '점심', amount: 10000 });
+    const dinner = full({ detail: '', sub_category: '저녁', amount: 20000 });
+    const old = [{ s: lunch, checked: false, off: true }, { s: dinner, checked: true, picks: { payment_method: { from: '현금', to: '신한카드' } } }];
+    const { items, dropped } = carryChoices(old, [dinner, lunch]);
+    expect(dropped).toEqual([]);
+    expect(items[0].s.payment_method).toBe('신한카드');
+    expect(items[1].off).toBe(true);
+  });
+
   test('외화는 읽었는데 원화를 못 구했으면 원화 금액을 묻는다', () => {
     const s = full({ amount: null, currency: 'USD', foreignAmount: 20 });
     expect(suggestionGaps(s)).toEqual(['krw_amount']);

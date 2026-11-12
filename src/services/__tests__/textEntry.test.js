@@ -170,3 +170,70 @@ describe('정리 결과', () => {
     expect(err.kind).toBe('network');
   });
 });
+
+describe('세부내역은 꼭 채우지 않는다 (I-056)', () => {
+  const withDinner = () => {
+    const db = makeDb();
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('식비','저녁')");
+    return db;
+  };
+  const addTx = (db, detail, n, sub = '저녁') => {
+    for (let i = 0; i < n; i++) {
+      db.run(
+        "INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '현금', '식비', ?, ?, 10000)",
+        [TODAY, sub, detail],
+      );
+    }
+  };
+
+  test('세부카테고리 이름을 되풀이한 세부내역은 비운다', async () => {
+    const db = withDinner();
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ detail: '저녁', amount: 20000, category: '식비 > 저녁' })], question: '' });
+    const [s] = await parse(db, '저녁 2만원');
+    expect(s).toMatchObject({ detail: '', budget_category: '식비', sub_category: '저녁', amount: 20000 });
+    expect(s.sources.detail).toBeUndefined();
+  });
+
+  test('더 알려 주는 말(가게·음식)은 남긴다', async () => {
+    const db = withDinner();
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ detail: '김치찌개', amount: 9000, category: '식비 > 저녁' })], question: '' });
+    const [s] = await parse(db, '저녁 김치찌개 9천원');
+    expect(s.detail).toBe('김치찌개');
+  });
+
+  test('카테고리 이름은 예전 세부내역 찾기에 쓰지 않는다', async () => {
+    const db = withDinner();
+    addTx(db, '저녁회식', 5);
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ detail: '저녁', amount: 20000, category: '식비 > 저녁' })], question: '' });
+    const [s] = await parse(db, '저녁 2만원');
+    expect(s.detail).toBe('');
+    expect(s.historyDetail).toBe('');
+  });
+
+  test('예전에 똑같이 적은 이름이면 습관(카테고리·결제수단)은 쓰고, 세부내역은 비운다', async () => {
+    const db = withDinner();
+    db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '신한카드', '식비', '저녁', '저녁', 10000)", [TODAY]);
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ detail: '저녁', amount: 20000, category: '식비 > 저녁' })], question: '' });
+    const [s] = await parse(db, '저녁 2만원');
+    expect(s).toMatchObject({ detail: '', historyDetail: '저녁', payment_method: '신한카드', sub_category: '저녁' });
+    expect(s.sources.category).toBe('history');
+  });
+
+  test('가나·한자 세부내역은 비운 것으로 세지 않는다', () => {
+    const db = withDinner();
+    addTx(db, 'ラーメン', 3);
+    addTx(db, '一蘭', 2);
+    expect(buildTextPrompt(db, '저녁', TODAY)).not.toContain('식비 > 저녁 (');
+  });
+
+  test('세부내역을 비워 두는 습관을 지시문에 알려 준다', () => {
+    const db = withDinner();
+    addTx(db, '', 4);
+    addTx(db, '저녁', 1);
+    addTx(db, '스타벅스', 3, '커피');
+    const p = buildTextPrompt(db, '저녁 2만원', TODAY);
+    expect(p).toContain('[세부내역 — 꼭 채우지 않아도 됩니다]');
+    expect(p).toContain('식비 > 저녁 (5/5)');
+    expect(p).not.toContain('식비 > 커피 (');
+  });
+});
