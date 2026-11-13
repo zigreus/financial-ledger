@@ -9,7 +9,7 @@
  * 쓰는 법: const signal = stallSignal(); fetch(url, { signal }) → poke(signal)(응답이 올 때마다) → readBody(res, signal)
  * 저장소 함수 사이에 signal만 넘기면 된다 — 멈춤 시계는 signal에 붙어 있다(pokers).
  */
-import { OfflineError } from './provider';
+import { OfflineError, offlineFrom } from './provider';
 
 /** 이만큼 아무것도 오지 않으면 멈춘 것으로 본다 */
 export const STALL_MS = 25000;
@@ -86,7 +86,7 @@ export async function readBody(res, signal) {
     const stalled = stalledReason(signal);
     if (stalled) throw stalled;
     if (e instanceof OfflineError) throw e;
-    throw new OfflineError(); // 받는 도중 끊겼다
+    throw offlineFrom('내용 받는 중', e); // 받는 도중 끊겼다
   }
 }
 

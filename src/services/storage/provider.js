@@ -81,7 +81,23 @@ export class OfflineError extends Error {
   constructor(message = '네트워크 오류 — 인터넷 연결을 확인하세요') {
     super(message);
     this.name = 'OfflineError';
+    /** 실제로 무엇이 실패했는지(단계·서버·브라우저 오류) — 문제 알리기 기록용, 화면 문구에는 쓰지 않는다 (B-095) */
+    this.detail = '';
   }
+}
+
+/**
+ * 연결 문제로 실패한 요청을 OfflineError로 — 원래 오류를 detail에 남긴다. 통신이 되는데도 '오프라인'이 될 때
+ * 어디서 왜 실패했는지 알 수 있게 (B-095). where: 'graph.microsoft.com'·'로그인 토큰'처럼 단계나 서버(경로는 넣지 않는다)
+ */
+export function offlineFrom(where, cause) {
+  const err = new OfflineError();
+  const what = cause == null ? ''
+    : cause.errorCode ? String(cause.errorCode)
+      : `${cause.name || 'Error'}: ${cause.message || ''}`.trim();
+  const deviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false ? ' (기기가 연결 없음으로 알림)' : '';
+  err.detail = `${where}${what ? ` — ${what}` : ''}${deviceOffline}`;
+  return err;
 }
 
 /**

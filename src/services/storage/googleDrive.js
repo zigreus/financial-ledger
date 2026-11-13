@@ -24,7 +24,7 @@
  *
  * 화면은 이 파일을 직접 부르지 않는다. App이 만든 저장소를 useLedgerSync·aiSettingsSync에 넘긴다.
  */
-import { ConflictError, OfflineError, ReconnectRequiredError } from './provider';
+import { ConflictError, OfflineError, ReconnectRequiredError, offlineFrom } from './provider';
 import { poke, readBody, stallSignal, stalledReason, stopStall, uploadStallMs } from './stall';
 
 const API = 'https://www.googleapis.com/drive/v3';
@@ -60,7 +60,9 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
       const stalled = stalledReason(signal); // 가계부를 다루다 멈춰 끊었다 (stall.js)
       if (stalled) throw stalled;
       if (signal?.aborted) throw new Error('Google Drive 응답이 없습니다 — 연결을 확인하세요');
-      throw new OfflineError();
+      let host = 'Google Drive';
+      try { host = new URL(url).host; } catch (e2) { /* 그대로 */ }
+      throw offlineFrom(host, e);
     }
     poke(signal); // 응답이 왔다 — 멈춤 시계를 처음부터
     if (res.status === 401) {

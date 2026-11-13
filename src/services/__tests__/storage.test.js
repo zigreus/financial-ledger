@@ -252,7 +252,18 @@ describe('OneDrive 요청 모양 (F-2로 옮기기 전과 같은지)', () => {
     expect(err).not.toBeInstanceOf(ConflictError);
     expect(err.message).toBe('OneDrive 저장 오류: 503 Service Unavailable');
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
-    await expect(s.read()).rejects.toThrow('네트워크 오류 — 인터넷 연결을 확인하세요');
+    const offline = await s.read().catch(e => e);
+    expect(offline.message).toBe('네트워크 오류 — 인터넷 연결을 확인하세요');
+    // 무엇이 실패했는지는 detail에 — 서버 이름과 브라우저 오류만(경로·토큰은 넣지 않는다) (B-095)
+    expect(offline.detail).toBe('graph.microsoft.com — TypeError: Failed to fetch');
+  });
+
+  test('로그인 토큰을 받다 연결 오류가 나면 연결 없음으로, 그 MSAL 오류 코드를 detail에 (B-095)', async () => {
+    const msal = { acquireTokenSilent: async () => { throw Object.assign(new Error('x'), { errorCode: 'post_request_failed' }); } };
+    const s = createOneDriveStorage(msal, [{ homeAccountId: 'me' }]);
+    const err = await s.read().catch(e => e);
+    expect(err).toBeInstanceOf(OfflineError);
+    expect(err.detail).toBe('로그인 토큰 — post_request_failed');
   });
 
   test('가계부를 쓰다 다시 로그인해야 하면 로그인 화면으로 넘기고 ReauthRedirectError, 설정 파일은 넘기지 않고 실패만', async () => {

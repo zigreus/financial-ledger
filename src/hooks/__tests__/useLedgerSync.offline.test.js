@@ -359,6 +359,23 @@ test('사본으로 먼저 연 뒤 받기가 멈춰 끊기면(StalledError) 오�
   B.unmount();
 });
 
+test('연결 문제로 받지 못하면 실제 원인(단계·서버·오류)을 문제 알리기에 남긴다 — 가장 최근 하나만 (B-095)', async () => {
+  const A = await opened();
+  const realRead = storage.read;
+  const fail = (detail) => { const e = new OfflineError(); e.detail = detail; return e; };
+  storage.read = async () => { throw fail('graph.microsoft.com — TypeError: Failed to fetch'); };
+  storage.getVersion = storage.read;
+  await act(async () => { await A.ref.current.loadDb(); });
+  storage.read = async () => { throw fail('로그인 토큰 — post_request_failed'); };
+  storage.getVersion = storage.read;
+  await act(async () => { await A.ref.current.loadDb(); });
+  const conn = getErrorLog().filter(e => e.kind === '연결');
+  expect(conn).toHaveLength(1);
+  expect(conn[0]).toMatchObject({ message: '가계부 받기에 실패했습니다 — 로그인 토큰 — post_request_failed', count: 2 });
+  storage.read = realRead;
+  A.unmount();
+});
+
 test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기에 남긴다', async () => {
   const realRead = storage.read;
   let now = 1000;

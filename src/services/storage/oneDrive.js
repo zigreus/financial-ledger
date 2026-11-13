@@ -13,7 +13,7 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { loginRequest } from '../../auth/msalConfig';
 import { ONEDRIVE_DB_PATH } from '../../config';
-import { ConflictError, OfflineError, ReauthRedirectError } from './provider';
+import { ConflictError, OfflineError, ReauthRedirectError, offlineFrom } from './provider';
 import { poke, readBody, stallSignal, stalledReason, stopStall, untilStalled, uploadStallMs } from './stall';
 
 // MSAL이 토큰을 받으러 나가다 연결이 없어 실패한 오류 (BrowserAuthError·ClientAuthError의 errorCode)
@@ -38,7 +38,7 @@ async function getToken(instance, accounts, { interactive = true, signal } = {})
   } catch (e) {
     if (e instanceof OfflineError) throw e; // 멈춰 끊었다
     // 연결이 없으면 로그인 화면으로 넘기지 않는다 — 열리지 않는 페이지로 가 입력 중인 앱을 잃는다 (I-024)
-    if (offlineNow() || MSAL_NETWORK_ERRORS.has(e?.errorCode)) throw new OfflineError();
+    if (offlineNow() || MSAL_NETWORK_ERRORS.has(e?.errorCode)) throw offlineFrom('로그인 토큰', e);
     // 사용자가 직접 로그인해야 하는 경우에만 리다이렉트한다 (B-005).
     // 네트워크 오류 같은 일시적 실패는 그냥 실패로 돌려 나중에 다시 시도하게 한다.
     if (e instanceof InteractionRequiredAuthError && !interactive) {
@@ -52,13 +52,15 @@ async function getToken(instance, accounts, { interactive = true, signal } = {})
   }
 }
 
+const hostOf = (url) => { try { return new URL(url).host; } catch (e) { return 'OneDrive'; } };
+
 async function graphFetch(url, init) {
   try {
     const res = await fetch(url, init);
     poke(init?.signal); // 응답이 왔다 — 멈춤 시계를 처음부터
     return res;
   } catch (e) {
-    throw stalledReason(init?.signal) || new OfflineError();
+    throw stalledReason(init?.signal) || offlineFrom(hostOf(url), e);
   }
 }
 

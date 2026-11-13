@@ -110,6 +110,17 @@ function required(storage) {
  *  - 연결이 없어 저장하지 못하는 동안은 오류 대신 offline으로 알린다(헤더). 로그아웃하면 사본을 지운다 (B-004).
  */
 /**
+ * 연결 문제로 받기·저장하지 못했을 때 그 이유를 문제 알리기 기록에 남긴다 — 통신이 되는데도 '오프라인'이 되면
+ * 어느 단계·서버에서 어떤 오류였는지 사용자가 보내 줄 수 있게 (B-095, 이 기기에만). 같은 갈래는 가장 최근 것 하나만.
+ * 로그인 시간이 끝난 것(Google, ReconnectRequiredError)은 늘 있는 일이라 남기지 않는다
+ */
+function noteConnectionFailure(e, what) {
+  if (!(e instanceof OfflineError) || e instanceof ReconnectRequiredError) return;
+  const why = e instanceof StalledError ? e.message : (e.detail || '원인 모름');
+  recordError(`${what}에 실패했습니다 — ${why}`, { kind: '연결', where: 'useLedgerSync', latestOnly: true });
+}
+
+/**
  * 가계부 받기 — 오래 걸렸으면 저장소가 알려 준 단계별 시간(timing)을 문제 알리기 기록에 남긴다.
  * 통신이 빠른데 느리게 열리는 원인(로그인 토큰·파일 정보·내용 받기 중 어디인지)을 사용자가 보내 줄 수 있게 (이 기기에만)
  */
@@ -384,6 +395,7 @@ export default function useLedgerSync({
         if (e instanceof ReauthRedirectError) setError(e.message);
         else if (e instanceof OfflineError) {
           // 연결이 없을 뿐 — 오류 대신 헤더에 '오프라인'으로 알리고, 연결되면 저장한다 (I-024)
+          noteConnectionFailure(e, '저장');
           setOffline(true);
           setError('');
         } else setError(`저장 실패: ${e.message} — 변경 내용은 이 기기에 보관되어 있고, 연결되면 다시 저장합니다`);
@@ -723,8 +735,8 @@ export default function useLedgerSync({
       throw new Error('다른 기기와 저장이 계속 겹칩니다 — 잠시 후 다시 시도하세요');
     } catch (e) {
       if (session !== sessionRef.current) return; // 로그아웃한 뒤의 실패는 알리지 않는다
-      // 멈춰 끊은 받기는 남긴다 — 통신이 빠른데도 '오프라인'이 되면 어디서 멈췄는지 문제 알리기로 볼 수 있게
-      if (e instanceof StalledError) recordError(e, { kind: '연결', where: 'useLedgerSync' });
+      // 통신이 빠른데도 '오프라인'이 되면 어디서 왜 실패했는지 문제 알리기로 볼 수 있게 (B-095)
+      noteConnectionFailure(e, '가계부 받기');
       setCatchingUp(false); // 받지 못했다 — 연결 없음이면 아래에서 '오프라인'으로
       if (e instanceof OfflineError) {
         setOffline(true);
