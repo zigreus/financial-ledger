@@ -5,11 +5,13 @@ import './Header.css';
 
 // userLabel: Microsoft가 아닌 계정(Google, M-1)으로 로그인했을 때 보일 이름
 // offlineLabel·offlineTitle: 저장소에 닿지 못하는 이유가 연결이 아니라 로그인 만료일 때(Google, M-1) 바꿔 보인다
-// catchingUp: 받기가 느려 이 기기의 사본으로 먼저 열고 뒤에서 받는 중 — '오프라인'이 아니다(받으면 사라진다)
+// catchingUp: 받기가 느려 이 기기의 사본으로 먼저 열고 뒤에서 받는 중 — '오프라인'이 아니다(받으면 멈춘다)
+// syncing: 뒤에서 불러오는 중(다시 시도 포함) — 오프라인이어도
+//   둘 다 글자 대신 🔄이 돌아 지금 맞추는 중임을 보인다(사용자 요청). 누르면 그 불러오기에 합류해 결과를 알린다
 // onCover: '가계부를 열 때 가리기'(U-7)를 켰을 때 — 지금 바로 화면을 가리는 버튼
 // ledgerName·onSwitchLedger: 다른 계정이 공유한 가계부(M-2) — 제목 자리에 지금 가계부 이름, 누르면 가계부 바꾸기
 function Header({
-  onRefresh, onSave, onLogout, onCover, ledgerName = '', onSwitchLedger = null, loading, saving, dirty, offline = false, catchingUp = false, pendingCount = 0, onSettings, settingsActive, userLabel,
+  onRefresh, onSave, onLogout, onCover, ledgerName = '', onSwitchLedger = null, loading, saving, dirty, offline = false, catchingUp = false, syncing = false, pendingCount = 0, onSettings, settingsActive, userLabel,
   offlineLabel = '오프라인', offlineTitle = '연결이 없습니다 — 입력한 내용은 이 기기에 보관했다가 연결되면 저장합니다',
 }) {
   const { accounts } = useMsal();
@@ -35,11 +37,6 @@ function Header({
             {offlineLabel}
           </span>
         )}
-        {catchingUp && !offline && (
-          <span className="header-offline header-catching-up" title={`이 기기에 둔 가계부로 먼저 열었습니다 — ${drive}에서 최신 가계부를 받는 중이고, 받으면 바로 바꿉니다`}>
-            맞추는 중
-          </span>
-        )}
         {(dirty || saving) && (
           <button
             className="btn-header btn-save"
@@ -56,12 +53,15 @@ function Header({
           <button className="btn-header btn-cover" onClick={onCover} title="화면 가리기" aria-label="화면 가리기">🔒</button>
         )}
         <button
-          className="btn-header btn-refresh"
+          className={`btn-header btn-refresh${loading || syncing || catchingUp ? ' is-syncing' : ''}`}
           onClick={onRefresh}
           disabled={loading}
-          title={`${drive}에서 새로고침`}
+          title={catchingUp
+            ? `이 기기에 둔 가계부로 먼저 열었습니다 — ${drive}에서 최신 가계부를 받는 중이고, 받으면 바로 바꿉니다`
+            : loading || syncing ? `${drive}와 맞추는 중` : `${drive}에서 새로고침`}
+          aria-label={loading || syncing || catchingUp ? `${drive}와 맞추는 중` : `${drive}에서 새로고침`}
         >
-          {loading ? '⏳' : '🔄'}
+          <span className="btn-refresh-icon" aria-hidden="true">🔄</span>
         </button>
         <button
           className={`btn-header btn-settings${settingsActive ? ' active' : ''}`}

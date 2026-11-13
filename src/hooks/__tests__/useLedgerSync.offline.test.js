@@ -376,6 +376,47 @@ test('연결 문제로 받지 못하면 실제 원인(단계·서버·오류)을
   A.unmount();
 });
 
+test('뒤에서 다시 시도하는 동안 syncing — 그때 🔄을 누르면 그 시도에 합류해 ⏳를 보이고, 실패하면 이유를 알린다 (B-095)', async () => {
+  const A = await opened();
+  A.unmount();
+  net.up = false;
+  const B = await opened();
+  expect(B.ref.current.offline).toBe(true);
+  expect(B.ref.current.syncing).toBe(false);
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const realRead = storage.read;
+  storage.read = async () => { await gate; throw new OfflineError(); };
+  let quiet;
+  await act(async () => { quiet = B.ref.current.loadDb({ silent: true }); });   // 30초마다의 조용한 다시 시도
+  expect(B.ref.current.syncing).toBe(true);
+  expect(B.ref.current.loading).toBe(false);
+  let pressed;
+  await act(async () => { pressed = B.ref.current.loadDb(); });                  // 🔄
+  expect(pressed).toBe(quiet);                                                 // 겹쳐 받지 않고 합류
+  expect(B.ref.current.loading).toBe(true);                                    // 눌린 것이 보인다
+  release();
+  await act(async () => { await pressed; });
+  await flush();
+  expect(B.ref.current.loading).toBe(false);
+  expect(B.ref.current.syncing).toBe(false);
+  expect(B.ref.current.error).toMatch(/연결이 없어 새로 받지 못했습니다/);       // 조용히 끝나지 않는다
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('저장 안 된 입력이 있을 때 🔄이 먼저 저장하다 연결 문제로 실패하면 조용히 끝나지 않고 이유를 알린다 (B-095)', async () => {
+  const A = await opened();
+  net.up = false;
+  await act(async () => { addTransaction(A.ref.current.db, tx('못 올린 입력')); });
+  await waitSave();
+  expect(A.ref.current.offline).toBe(true);
+  await act(async () => { await A.ref.current.loadDb(); });
+  expect(A.ref.current.loading).toBe(false);
+  expect(A.ref.current.error).toMatch(/연결이 없어 새로 받지 못했습니다/);
+  A.unmount();
+});
+
 test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기에 남긴다', async () => {
   const realRead = storage.read;
   let now = 1000;

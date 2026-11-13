@@ -152,6 +152,8 @@ export default function useLedgerSync({
   const [offline, setOfflineState] = useState(false); // 연결이 없어 저장소에 닿지 못하는 중 (I-024)
   // 받기가 느려 사본으로 먼저 열고 뒤에서 받는 중 — 실패하면 offline, 받으면 끝난다
   const [catchingUp, setCatchingUp] = useState(false);
+  // 불러오기(조용한 다시 시도·앱 복귀 포함)가 진행 중 — '오프라인'이어도 지금 다시 연결하는 중임을 보인다 (B-095)
+  const [syncing, setSyncing] = useState(false);
 
   // 이 기기에 두는 것(미저장 변경·연결 없이 열 사본·매일 백업 표식)의 열쇠 — 가계부마다 따로(M-2: 공유받은 가계부는 ledgerKey).
   // 열쇠가 바뀌면(계정 전환, 가계부 바꾸기) 지금 DB를 버리고 그 가계부를 새로 연다. AI 설정은 저장소의 accountKey를 그대로 쓴다
@@ -192,6 +194,8 @@ export default function useLedgerSync({
   // 그 뒤 이 기기에서 저장하지 않았으면(버전이 그대로) 그 결과를 그대로 쓴다(같은 파일을 두 번 받지 않게)
   const earlyReadRef = useRef(null);
   const loadDbRef = useRef(() => Promise.resolve());
+  // 조용한 불러오기(다시 시도·앱 복귀) 중에 사용자가 🔄을 눌렀다 — 그 불러오기의 진행(⏳)·결과(실패 안내)를 보인다 (B-095)
+  const visibleLoadRef = useRef(false);
   accountKeyRef.current = accountKey;
 
   const notify = useCallback((text) => setNotice({ text, seq: Date.now() }), []);
@@ -524,6 +528,7 @@ export default function useLedgerSync({
   const loadDbInner = useCallback(async ({ silent = false } = {}) => {
     if (loadingRef.current) return;
     const session = sessionRef.current;
+    const shown = () => !silent || visibleLoadRef.current;
     const hadDb = !!dbRef.current;
 
     /**
@@ -567,8 +572,16 @@ export default function useLedgerSync({
     // 맞추는 중이면 먼저 저장하지 않는다 — 받던 가계부에 이 기기의 변경을 다시 실행해 이어 저장한다(아래, I-057)
     const catching = earlyReadRef.current?.session === session;
     if (curLog && curLog.entries.length && !catching) {
+      if (shown()) setLoading(true);   // 먼저 저장하는 동안에도 ⏳ — 누른 것이 먹었는지 보이게
       const ok = await saveNow();
-      if (!ok) return;
+      if (!ok) {
+        // 저장하지 못하면 받지 않는다 — 🔄을 눌렀으면 조용히 끝내지 않고 이유를 보인다(저장 실패는 saveNow가 이미 알렸다)
+        if (shown() && session === sessionRef.current) {
+          setLoading(false);
+          if (offlineRef.current) setError('연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
+        }
+        return;
+      }
     } else if (loopRef.current) {
       await loopRef.current;
     }
@@ -742,7 +755,7 @@ export default function useLedgerSync({
         setOffline(true);
         if (!hadDb && !dbRef.current) {
           try { await openOfflineCopy(session, { reason: e }); } catch (e2) { if (session === sessionRef.current) setError(e2.message); }
-        } else if (!silent) {
+        } else if (shown()) {
           setError(e instanceof ReconnectRequiredError
             ? "로그인 시간이 끝나 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, '다시 연결'을 누르면 저장합니다"
             : '연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
@@ -759,11 +772,24 @@ export default function useLedgerSync({
 
   const loadDb = useCallback((opts) => {
     if (restoringRef.current) return Promise.resolve();
-    // 이미 불러오는 중이면 그 불러오기를 돌려준다 — 되돌리기가 진짜 진행 중인 불러오기를 기다릴 수 있게
-    if (loadPromiseRef.current) return loadPromiseRef.current;
+    // 이미 불러오는 중이면 그 불러오기를 돌려준다 — 되돌리기가 진짜 진행 중인 불러오기를 기다릴 수 있게.
+    // 조용한 불러오기에 🔄이 합류하면 그 진행·결과를 보인다 — 눌러도 아무 반응이 없어 보이지 않게 (B-095)
+    if (loadPromiseRef.current) {
+      if (!opts?.silent) { visibleLoadRef.current = true; setLoading(true); }
+      return loadPromiseRef.current;
+    }
     const p = loadDbInner(opts);
     loadPromiseRef.current = p;
-    p.finally(() => { if (loadPromiseRef.current === p) loadPromiseRef.current = null; }).catch(() => {});
+    setSyncing(true);
+    p.finally(() => {
+      if (loadPromiseRef.current !== p) return;
+      loadPromiseRef.current = null;
+      setSyncing(false);
+      if (visibleLoadRef.current) {
+        visibleLoadRef.current = false;
+        if (!loadingRef.current) setLoading(false);   // 합류한 🔄의 ⏳를 끈다(불러오기가 일찍 끝난 길에서도)
+      }
+    }).catch(() => {});
     return p;
   }, [loadDbInner]);
   loadDbRef.current = loadDb;
@@ -1058,7 +1084,7 @@ export default function useLedgerSync({
   }, []);
 
   return {
-    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp,
+    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp, syncing,
     pendingCount, dirty: pendingCount > 0,
     loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,

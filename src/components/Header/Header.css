@@ -27,12 +27,6 @@
   white-space: nowrap;
 }
 
-/* 받기가 느려 사본으로 먼저 열고 뒤에서 받는 중 — 오프라인(노랑)과 구별 */
-.header-catching-up {
-  background: var(--c-blue-100);
-  color: var(--c-blue-800);
-}
-
 .btn-header {
   padding: 6px 12px;
   border-radius: 8px;
@@ -45,6 +39,13 @@
 .btn-header:disabled { opacity: .5; cursor: not-allowed; }
 .btn-save { background: var(--primary); color: white; border-color: var(--primary); font-weight: 600; }
 .btn-refresh { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
+/* 맞추는 중(불러오기·다시 시도·사본으로 먼저 연 뒤 받기) — 🔄이 돈다 (B-095, I-057) */
+.btn-refresh-icon { display: inline-block; }
+.btn-refresh.is-syncing .btn-refresh-icon { animation: btn-refresh-spin 1s linear infinite; }
+@keyframes btn-refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .btn-refresh.is-syncing .btn-refresh-icon { animation: none; opacity: 0.5; }
+}
 .btn-settings { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
 .btn-cover { font-size: calc(16px * var(--fs)); padding: 6px 10px; } /* 지금 바로 가리기 (U-7) */
 .btn-settings.active { background: var(--primary); border-color: var(--primary); }

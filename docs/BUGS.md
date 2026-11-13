@@ -1024,8 +1024,8 @@
 - 영역: 저장·동기화
 - 문제: B-094를 고친 버전에서도 휴대폰(LTE)에서 🔄을 누르면 '오프라인'과 '연결이 없어 새로 받지 못했습니다'가 나온다(사용자 제보) — 멈춤이 아니라 요청이 바로 실패한다.
 - 원인: 확인 중 — 저장소가 실패한 요청을 모두 OfflineError로 바꾸며 원래 오류(서버·브라우저 오류·MSAL 코드)를 버려 어느 단계가 왜 실패했는지 알 수 없었다.
-- 해결: (1단계) 실패한 단계·서버·원래 오류를 OfflineError.detail에 담고 받기·저장 실패 때 문제 알리기 기록에 남긴다(가장 최근 하나) — 기록을 받아 원인을 고친다.
-- 파일: src/services/storage/provider.js(offlineFrom), storage/oneDrive.js·googleDrive.js·stall.js, src/hooks/useLedgerSync.js(noteConnectionFailure), 테스트(storage·useLedgerSync.offline)
+- 해결: (1단계) 실패한 단계·서버·원래 오류를 OfflineError.detail에 담고 받기·저장 실패 때 문제 알리기 기록에 남긴다(가장 최근 하나) — 기록을 받아 원인을 고친다. 함께: 조용한 다시 시도 중에 누른 🔄은 그 시도에 합류해 ⏳와 실패 안내를 보이고(전에는 아무 반응 없음), 먼저 저장하다 실패해도 조용히 끝내지 않으며, 뒤에서 맞추는 동안(오프라인이어도)은 글자 대신 🔄이 돈다(사용자 요청).
+- 파일: src/services/storage/provider.js(offlineFrom), storage/oneDrive.js·googleDrive.js·stall.js, src/hooks/useLedgerSync.js(noteConnectionFailure·visibleLoadRef·syncing), src/components/Header/Header.js·Header.css, App.js, 테스트(storage·useLedgerSync.offline·Header.sync)
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
@@ -1487,5 +1487,5 @@
 - 영역: 저장·동기화
 - 문제: 처음 받기가 15초를 넘기면 사본으로 열며 '오프라인'·알림을 띄웠고 그 뒤 30초를 기다려 같은 파일을 처음부터 다시 받았으며, 통신이 빠른데 왜 느린지 알 길이 없었다(사용자 요청).
 - 원인: 느림과 연결 없음을 같은 상태로 다뤘고, 사본으로 연 뒤 이어지던 받기의 결과를 쓰지 않았으며, 받기 단계별 시간을 남기지 않았다.
-- 해결: 3초 안에 못 받으면 사본으로 먼저 열고 머리글에 '맞추는 중'(오프라인 아님, 알림 없음)을 보이며 받던 것이 끝나면 바로 그것으로 바꾸며(그 사이 입력·되살린 변경의 저장은 미뤘다가 받은 가계부에 다시 실행해 한 번에 저장 — 같은 파일을 또 받지 않게, 실패하면 '오프라인'), 받기가 5초를 넘기면 단계별 시간(로그인 토큰·파일 정보·내용 받기, 크기)을 이 기기의 문제 알리기 기록에 남긴다(가장 최근 하나만 — errorLog latestOnly).
+- 해결: 3초 안에 못 받으면 사본으로 먼저 열고 머리글의 🔄이 돌며(오프라인 아님, 알림 없음 — 처음엔 '맞추는 중' 글자였으나 사용자 요청으로 아이콘) 받던 것이 끝나면 바로 그것으로 바꾸며(그 사이 입력·되살린 변경의 저장은 미뤘다가 받은 가계부에 다시 실행해 한 번에 저장 — 같은 파일을 또 받지 않게, 실패하면 '오프라인'), 받기가 5초를 넘기면 단계별 시간(로그인 토큰·파일 정보·내용 받기, 크기)을 이 기기의 문제 알리기 기록에 남긴다(가장 최근 하나만 — errorLog latestOnly).
 - 파일: src/hooks/useLedgerSync.js(timedRead·earlyReadRef·catchingUp), storage/oneDrive.js·googleDrive.js(timing), services/errorLog.js(latestOnly), src/components/Header/Header.js·Header.css, src/components/App/App.js, 테스트(useLedgerSync.offline)
