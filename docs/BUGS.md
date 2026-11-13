@@ -1024,7 +1024,7 @@
 - 영역: 저장·동기화
 - 문제: B-094를 고친 버전에서도 휴대폰(LTE)에서 🔄을 누르면 '오프라인'과 '연결이 없어 새로 받지 못했습니다'가 나온다(사용자 제보) — 멈춤이 아니라 요청이 바로 실패한다.
 - 원인: 확인 중 — 저장소가 실패한 요청을 모두 OfflineError로 바꾸며 원래 오류(서버·브라우저 오류·MSAL 코드)를 버려 어느 단계가 왜 실패했는지 알 수 없었다.
-- 해결: (1단계) 실패한 단계·서버·원래 오류를 OfflineError.detail에 담고 받기·저장 실패 때 문제 알리기 기록에 남긴다(가장 최근 하나) — 기록을 받아 원인을 고친다. 함께: 조용한 다시 시도 중에 누른 🔄은 그 시도에 합류해 ⏳와 실패 안내를 보이고(전에는 아무 반응 없음), 먼저 저장하다 실패해도 조용히 끝내지 않으며, 뒤에서 맞추는 동안(오프라인이어도)은 글자 대신 🔄이 돈다(사용자 요청).
+- 해결: (1단계) 실패한 단계·서버·원래 오류를 OfflineError.detail에 담고 받기·저장 실패 때 문제 알리기 기록에 남긴다(가장 최근 하나) — 기록을 받아 원인을 고친다. 함께: 조용한 다시 시도 중에 누른 🔄은 그 시도에 합류해 ⏳와 실패 안내를 보이고(전에는 아무 반응 없음), 먼저 저장하다 실패해도 조용히 끝내지 않으며, 뒤에서 맞추는 동안(오프라인이어도)은 글자 대신 🔄이 돈다(사용자 요청). 검증(실제 OneDrive 저장소+동기화 재현 14가지)에서 찾은 것도 고침: 단계마다 멈춤 시계를 새로 재고(토큰 20초+파일 정보 20초가 합쳐 끊기던 것) 멈춘 단계·시간을 기록하며, MSAL 시간 초과와 바로 실패를 구별하고, 맞추는 중 되돌리기가 실패해도 이어 맞춘다.
 - 파일: src/services/storage/provider.js(offlineFrom), storage/oneDrive.js·googleDrive.js·stall.js, src/hooks/useLedgerSync.js(noteConnectionFailure·visibleLoadRef·syncing), src/components/Header/Header.js·Header.css, App.js, 테스트(storage·useLedgerSync.offline·Header.sync)
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가

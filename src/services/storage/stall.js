@@ -18,10 +18,14 @@ const SLOW_UPLOAD_BYTES_PER_SEC = 16 * 1024;
 export const uploadStallMs = (bytes, base = STALL_MS) => base + Math.ceil(((bytes?.length || 0) / SLOW_UPLOAD_BYTES_PER_SEC) * 1000);
 
 export class StalledError extends OfflineError {
-  constructor(what = '저장소 응답') {
-    super(`${what}이(가) 멈춰 끊었습니다 — 곧 다시 시도합니다`);
+  /** what: 하던 일('OneDrive 가계부 받기'), stage: 멈춘 단계('로그인 토큰'·'파일 정보'·'내용 받기' — setStage), ms: 기다린 시간 */
+  constructor(what = '저장소 응답', { stage = '', ms = STALL_MS } = {}) {
+    super(`${what} — 응답이 멈춰 끊었습니다(곧 다시 시도합니다)`);
     this.name = 'StalledError';
     this.what = what;
+    this.stage = stage;
+    // 어느 단계에서 얼마나 기다렸는지 — 문제 알리기 기록에 남는다(B-095, 어디서 멈추는지 알 수 있게)
+    this.detail = `${stage ? `${stage}에서 ` : ''}${Math.round(ms / 1000)}초 동안 응답 없음`;
   }
 }
 
@@ -34,14 +38,27 @@ const pokers = new WeakMap(); // signal → { poke, stop }
 export function stallSignal(what, ms = STALL_MS) {
   const ctrl = new AbortController();
   let timer = null;
+  const entry = { stage: '' };
   const stop = () => { if (timer) clearTimeout(timer); timer = null; };
   const poke = (next = ms) => {
     stop();
-    if (!ctrl.signal.aborted) timer = setTimeout(() => ctrl.abort(new StalledError(what)), next);
+    if (!ctrl.signal.aborted) timer = setTimeout(() => ctrl.abort(new StalledError(what, { stage: entry.stage, ms: next })), next);
   };
   poke();
-  pokers.set(ctrl.signal, { poke, stop });
+  Object.assign(entry, { poke, stop });
+  pokers.set(ctrl.signal, entry);
   return ctrl.signal;
+}
+
+/**
+ * 다음 단계로 넘어간다 — 멈추면 이 단계 이름이 기록에 남고, 시계도 처음부터(앞 단계가 오래 걸렸어도 이 단계는 온전히 기다린다).
+ * nextMs: 이 단계에 줄 시간(올리기)
+ */
+export function setStage(signal, stage, nextMs) {
+  const entry = pokers.get(signal);
+  if (!entry) return;
+  entry.stage = stage;
+  entry.poke(nextMs);
 }
 
 /** 무언가 왔다 — 시계를 처음부터. nextMs: 다음 단계(올리기)에 더 줄 시간 */

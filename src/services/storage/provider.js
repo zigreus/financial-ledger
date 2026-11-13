@@ -93,7 +93,7 @@ export class OfflineError extends Error {
 export function offlineFrom(where, cause) {
   const err = new OfflineError();
   const what = cause == null ? ''
-    : cause.errorCode ? String(cause.errorCode)
+    : cause.errorCode ? `${cause.errorCode}${cause.subError ? ` (${cause.subError})` : ''}`
       : `${cause.name || 'Error'}: ${cause.message || ''}`.trim();
   const deviceOffline = typeof navigator !== 'undefined' && navigator.onLine === false ? ' (기기가 연결 없음으로 알림)' : '';
   err.detail = `${where}${what ? ` — ${what}` : ''}${deviceOffline}`;

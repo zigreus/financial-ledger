@@ -344,14 +344,14 @@ test('사본으로 먼저 연 뒤 받기가 멈춰 끊기면(StalledError) 오�
   const B = await mount({ firstLoadTimeoutMs: 30, offlineRetryMs: 40 });
   await act(async () => { await B.ref.current.loadDb(); });
   expect(B.ref.current.catchingUp).toBe(true);
-  fail(new StalledError('OneDrive 가계부 받기'));
+  fail(new StalledError('OneDrive 가계부 받기', { stage: '로그인 토큰' }));
   await flush();
   await flush();
   expect(B.ref.current.offline).toBe(true);
   expect(B.ref.current.catchingUp).toBe(false);
   expect(B.ref.current.error).toBe('');                            // 조용한 불러오기 — 오류 띠 없이 '오프라인'
   expect(getErrorLog()[0]).toMatchObject({ kind: '연결' });
-  expect(getErrorLog()[0].message).toMatch(/OneDrive 가계부 받기.*멈춰/);
+  expect(getErrorLog()[0].message).toBe('가계부 받기에 실패했습니다 — OneDrive 가계부 받기 — 로그인 토큰에서 25초 동안 응답 없음');
   storage.read = realRead;                                         // 연결이 돌아왔다 — 30초마다의 다시 시도가 막히지 않는다
   await act(async () => { await new Promise(r => setTimeout(r, 200)); });
   await flush();
@@ -415,6 +415,32 @@ test('저장 안 된 입력이 있을 때 🔄이 먼저 저장하다 연결 문
   expect(A.ref.current.loading).toBe(false);
   expect(A.ref.current.error).toMatch(/연결이 없어 새로 받지 못했습니다/);
   A.unmount();
+});
+
+test('맞추는 중에 백업으로 되돌리기가 실패해도 그사이 끝난 받기를 이어 맞춘다 — 🔄이 계속 돌지 않게', async () => {
+  const A = await opened();
+  A.unmount();
+  otherDevice('다른 기기');
+  const realRead = storage.read;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  storage.read = async () => { await gate; return realRead(); };
+  let failRestore;
+  storage.readBackup = () => new Promise((_, reject) => { failRestore = reject; });
+  const B = await mount({ firstLoadTimeoutMs: 30 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  expect(B.ref.current.catchingUp).toBe(true);
+  let restoring;
+  await act(async () => { restoring = B.ref.current.restoreBackup({ id: 'b1', date: '2026-11-12' }).catch(e => e); });
+  release();                                                       // 되돌리는 사이 받기가 끝났다 — 이어 불러오기는 막힌다
+  await flush();
+  await act(async () => { failRestore(new Error('백업을 받지 못했습니다')); await restoring; });
+  await flush();
+  await flush();
+  expect(B.ref.current.catchingUp).toBe(false);
+  expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기']);
+  storage.read = realRead;
+  B.unmount();
 });
 
 test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기에 남긴다', async () => {

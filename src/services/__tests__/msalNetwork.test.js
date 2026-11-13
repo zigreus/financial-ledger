@@ -24,7 +24,7 @@ test('응답이 오지 않으면 끊고 MSAL의 연결 오류 코드로 실패�
     init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
   });
   const client = createTimedNetworkClient({ fetchImpl, timeoutMs: 30 });
-  await expect(client.sendPostRequestAsync('https://login.example/token', {})).rejects.toMatchObject({ errorCode: 'post_request_failed' });
+  await expect(client.sendPostRequestAsync('https://login.example/token', {})).rejects.toMatchObject({ errorCode: 'post_request_failed', subError: 'timeout 0s' });
   await expect(client.sendGetRequestAsync('https://login.example/meta', {})).rejects.toMatchObject({ errorCode: 'get_request_failed' });
 });
 
@@ -32,4 +32,9 @@ test('내용이 JSON이 아니면 기본과 같은 오류', async () => {
   const fetchImpl = async () => ({ status: 200, headers: new Headers(), json: async () => { throw new SyntaxError('x'); } });
   const client = createTimedNetworkClient({ fetchImpl });
   await expect(client.sendGetRequestAsync('https://login.example/meta')).rejects.toMatchObject({ errorCode: 'failed_to_parse_response' });
+});
+
+test('바로 실패한 것은 브라우저 오류를 subError로 — 제한 시간으로 끊은 것과 구별된다 (B-095)', async () => {
+  const client = createTimedNetworkClient({ fetchImpl: async () => { throw new TypeError('Failed to fetch'); } });
+  await expect(client.sendPostRequestAsync('https://login.example/token', {})).rejects.toMatchObject({ errorCode: 'post_request_failed', subError: 'TypeError: Failed to fetch' });
 });

@@ -40,8 +40,10 @@ export function createTimedNetworkClient({ timeoutMs = MSAL_REQUEST_TIMEOUT_MS, 
         });
       } catch (e) {
         const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        // 제한 시간으로 끊은 것은 subError로 구별한다 — 문제 알리기 기록에서 '응답 없음'과 '바로 실패'를 가를 수 있게 (B-095)
         throw new BrowserAuthError(offline ? BrowserAuthErrorCodes.noNetworkConnectivity
-          : method === 'POST' ? BrowserAuthErrorCodes.postRequestFailed : BrowserAuthErrorCodes.getRequestFailed);
+          : method === 'POST' ? BrowserAuthErrorCodes.postRequestFailed : BrowserAuthErrorCodes.getRequestFailed,
+        ctrl.signal.aborted ? `timeout ${Math.round(timeoutMs / 1000)}s` : `${e?.name || 'Error'}: ${e?.message || ''}`.slice(0, 120));
       }
       const headers = dictOf(res.headers);
       let body;
@@ -49,7 +51,7 @@ export function createTimedNetworkClient({ timeoutMs = MSAL_REQUEST_TIMEOUT_MS, 
         body = await res.json();
       } catch (e) {
         // 받다가 끊었으면 연결 문제로 — 내용이 JSON이 아니면 기본과 같은 오류
-        if (ctrl.signal.aborted) throw new BrowserAuthError(method === 'POST' ? BrowserAuthErrorCodes.postRequestFailed : BrowserAuthErrorCodes.getRequestFailed);
+        if (ctrl.signal.aborted) throw new BrowserAuthError(method === 'POST' ? BrowserAuthErrorCodes.postRequestFailed : BrowserAuthErrorCodes.getRequestFailed, `timeout ${Math.round(timeoutMs / 1000)}s`);
         throw new BrowserAuthError(BrowserAuthErrorCodes.failedToParseResponse);
       }
       return { headers, body, status: res.status };

@@ -116,7 +116,7 @@ function required(storage) {
  */
 function noteConnectionFailure(e, what) {
   if (!(e instanceof OfflineError) || e instanceof ReconnectRequiredError) return;
-  const why = e instanceof StalledError ? e.message : (e.detail || '원인 모름');
+  const why = e instanceof StalledError ? `${e.what} — ${e.detail}` : (e.detail || '원인 모름');
   recordError(`${what}에 실패했습니다 — ${why}`, { kind: '연결', where: 'useLedgerSync', latestOnly: true });
 }
 
@@ -785,10 +785,9 @@ export default function useLedgerSync({
       if (loadPromiseRef.current !== p) return;
       loadPromiseRef.current = null;
       setSyncing(false);
-      if (visibleLoadRef.current) {
-        visibleLoadRef.current = false;
-        if (!loadingRef.current) setLoading(false);   // 합류한 🔄의 ⏳를 끈다(불러오기가 일찍 끝난 길에서도)
-      }
+      visibleLoadRef.current = false;
+      // 진행 중인 불러오기가 없으면 ⏳를 끈다 — 합류한 🔄, 먼저 저장하다 닫거나 로그아웃해 일찍 끝난 길에서도
+      if (!loadingRef.current) setLoading(false);
     }).catch(() => {});
     return p;
   }, [loadDbInner]);
@@ -918,6 +917,9 @@ export default function useLedgerSync({
     } finally {
       if (fresh) { try { fresh.close(); } catch (e) { /* 이미 닫힘 */ } }
       restoringRef.current = false;
+      // 맞추는 중에 되돌리기·바꾸기가 실패했다 — 그동안 끝난 받기의 이어 불러오기는 막혔으니 여기서 다시 잇는다
+      // (안 하면 🔄이 계속 돌고 옛 사본이 남는다)
+      if (!unmountedRef.current && earlyReadRef.current?.session === sessionRef.current) loadDbRef.current({ silent: true });
       if (!unmountedRef.current && getChangeLog(dbRef.current)?.entries.length && !saveTimerRef.current) {
         saveTimerRef.current = setTimeout(() => { saveNowRef.current(); }, SAVE_DEBOUNCE_MS);
       }
@@ -996,8 +998,10 @@ export default function useLedgerSync({
     failuresRef.current = 0;
     loadedForRef.current = '';
     offlineStartRef.current = false;
+    visibleLoadRef.current = false;
     setOffline(false);
     setLoading(false);
+    setSyncing(false);
     setSaving(false);
     setDb(null);
     setPendingCount(0);

@@ -8,6 +8,7 @@
 // 새 저장소(예: Google Drive)를 붙이면 contract('...')를 하나 더 부른다.
 import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { ConflictError, OfflineError, ReauthRedirectError } from '../storage/provider';
+import { StalledError } from '../storage/stall';
 import { createMemoryStorage } from '../storage/memory';
 import { createOneDriveStorage } from '../storage/oneDrive';
 import { createGoogleDriveStorage } from '../storage/googleDrive';
@@ -206,6 +207,52 @@ contract('Google Drive(가짜 Drive)', () => {
     removeLedger: () => drive.remove('ledger.db'),
     putSettingsText: (name, text) => drive.put(name, text),
   };
+});
+
+describe('OneDrive 멈춤 끊기 (B-094·B-095)', () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  const later = (ms, v) => new Promise(r => setTimeout(() => r(v), ms));
+  /** 신호가 끊기면 실제 fetch처럼 AbortError로 끝나는 끝나지 않는 요청 */
+  const hang = init => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+
+  test('로그인 토큰이 오래 걸려도 다음 단계는 처음부터 기다린다 — 단계마다 멈추지 않았으면 끊지 않는다', async () => {
+    vi.useFakeTimers();
+    const graph = fakeGraph();
+    graph.put(LEDGER, bytesOf(1, 2));
+    let first = true;
+    vi.stubGlobal('fetch', async (url, init) => { if (first) { first = false; await later(20000); } return graph.fetch(url, init); });
+    const msal = { acquireTokenSilent: () => later(20000, { accessToken: 'T' }) };  // 토큰 20초 + 파일 정보 20초 — 합치면 25초가 넘는다
+    const s = createOneDriveStorage(msal, [{ homeAccountId: 'me' }]);
+    const p = s.read();
+    await vi.advanceTimersByTimeAsync(41000);
+    const got = await p;
+    expect(list(got.bytes)).toEqual([1, 2]);
+    expect(got.timing.stages.map(([name]) => name)).toEqual(['로그인 토큰', '파일 정보', '내용 받기']);
+  });
+
+  test('멈추면 그 단계 이름과 기다린 시간을 담은 StalledError(연결 없음 갈래)로 끝난다', async () => {
+    vi.useFakeTimers();
+    const graph = fakeGraph();
+    graph.put(LEDGER, bytesOf(1));
+    vi.stubGlobal('fetch', async (url, init) => (url.startsWith('https://download.test/') ? hang(init) : graph.fetch(url, init)));
+    const s = createOneDriveStorage(instance, [{ homeAccountId: 'me' }]);
+    const p = s.read().catch(e => e);
+    await vi.advanceTimersByTimeAsync(26000);
+    const err = await p;
+    expect(err).toBeInstanceOf(StalledError);
+    expect(err).toBeInstanceOf(OfflineError);
+    expect(err.what).toBe('OneDrive 가계부 받기');
+    expect(err.detail).toBe('내용 받기에서 25초 동안 응답 없음');
+  });
+
+  test('로그인 토큰이 멈춰도 그 단계로 끊는다', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', fakeGraph().fetch);
+    const s = createOneDriveStorage({ acquireTokenSilent: () => new Promise(() => {}) }, [{ homeAccountId: 'me' }]);
+    const p = s.getVersion().catch(e => e);
+    await vi.advanceTimersByTimeAsync(26000);
+    expect((await p).detail).toBe('로그인 토큰에서 25초 동안 응답 없음');
+  });
 });
 
 describe('OneDrive 요청 모양 (F-2로 옮기기 전과 같은지)', () => {

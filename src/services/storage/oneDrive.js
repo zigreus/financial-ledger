@@ -14,7 +14,7 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { loginRequest } from '../../auth/msalConfig';
 import { ONEDRIVE_DB_PATH } from '../../config';
 import { ConflictError, OfflineError, ReauthRedirectError, offlineFrom } from './provider';
-import { poke, readBody, stallSignal, stalledReason, stopStall, untilStalled, uploadStallMs } from './stall';
+import { poke, readBody, setStage, stallSignal, stalledReason, stopStall, untilStalled, uploadStallMs } from './stall';
 
 // MSAL이 토큰을 받으러 나가다 연결이 없어 실패한 오류 (BrowserAuthError·ClientAuthError의 errorCode)
 const MSAL_NETWORK_ERRORS = new Set(['no_network_connectivity', 'endpoints_resolution_error', 'post_request_failed', 'get_request_failed', 'network_error']);
@@ -97,7 +97,9 @@ function sharedGone(target, res) {
 /** OneDrive 파일의 현재 eTag. 파일이 없으면 null. */
 async function getRemoteETag(instance, accounts, target = OWN_TARGET) {
   return watched('OneDrive 확인', async (signal) => {
+    setStage(signal, '로그인 토큰');
     const token = await getToken(instance, accounts, { signal });
+    setStage(signal, '파일 정보'); // 토큰이 오래 걸렸어도 이 단계는 처음부터 기다린다
     const res = await graphFetch(`${target.metaUrl}?$select=eTag`, { headers: { Authorization: `Bearer ${token}` }, signal });
     if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
     if (res.status === 404) return null;
@@ -115,8 +117,10 @@ async function readDb(instance, accounts, target = OWN_TARGET) {
   return watched('OneDrive 가계부 받기', async (signal) => {
     // 단계별 걸린 시간 — 느렸으면 동기화가 문제 알리기 기록에 남긴다(어디서 느린지 알 수 있게)
     const t0 = Date.now();
+    setStage(signal, '로그인 토큰');
     const token = await getToken(instance, accounts, { signal });
     const t1 = Date.now();
+    setStage(signal, '파일 정보'); // 토큰이 오래 걸렸어도 이 단계는 처음부터 기다린다
     const metaRes = await graphFetch(target.metaUrl, { headers: { Authorization: `Bearer ${token}` }, signal });
     if (sharedGone(target, metaRes)) throw new Error(SHARED_GONE_MESSAGE);
     if (metaRes.status === 404) return { bytes: null, version: null };
@@ -124,6 +128,7 @@ async function readDb(instance, accounts, target = OWN_TARGET) {
     const meta = await metaRes.json();
     const t2 = Date.now();
 
+    setStage(signal, '내용 받기');
     const downloadUrl = meta['@microsoft.graph.downloadUrl'];
     const res = downloadUrl
       ? await graphFetch(downloadUrl, { signal })
@@ -146,6 +151,7 @@ async function writeDb(instance, accounts, dbBytes, eTag, target = OWN_TARGET) {
   // 공유받은 가계부는 주인 드라이브의 그 파일에만 쓴다 — 없으면 새로 만들지 않는다(다른 곳에 새 가계부가 생기지 않게)
   if (target.shared && !eTag) throw new Error(SHARED_GONE_MESSAGE);
   return watched('OneDrive 저장', async (signal) => {
+    setStage(signal, '로그인 토큰');
     const token = await getToken(instance, accounts, { signal });
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -156,7 +162,7 @@ async function writeDb(instance, accounts, dbBytes, eTag, target = OWN_TARGET) {
     else url += '?@microsoft.graph.conflictBehavior=fail';
 
     // 올리는 동안은 진행을 볼 수 없다 — 파일 크기만큼 더 기다린다. 멈춰 끊기면 '올라갔는지 모르는 저장'(OfflineError)
-    poke(signal, uploadStallMs(dbBytes));
+    setStage(signal, '올리기', uploadStallMs(dbBytes));
     const res = await graphFetch(url, { method: 'PUT', headers, body: dbBytes, signal });
     if (res.status === 412 || res.status === 409) throw new ConflictError();
     if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);

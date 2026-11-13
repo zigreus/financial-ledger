@@ -25,7 +25,7 @@
  * 화면은 이 파일을 직접 부르지 않는다. App이 만든 저장소를 useLedgerSync·aiSettingsSync에 넘긴다.
  */
 import { ConflictError, OfflineError, ReconnectRequiredError, offlineFrom } from './provider';
-import { poke, readBody, stallSignal, stalledReason, stopStall, uploadStallMs } from './stall';
+import { poke, readBody, setStage, stallSignal, stalledReason, stopStall, uploadStallMs } from './stall';
 
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -138,7 +138,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     body.set(head, 0);
     body.set(bytes, head.length);
     body.set(tail, head.length + bytes.length);
-    poke(signal, uploadStallMs(body)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
+    setStage(signal, '올리기', uploadStallMs(body)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
     const res = await call(`${UPLOAD}/files?uploadType=multipart&fields=${encodeURIComponent(FILE_FIELDS)}`, {
       method: 'POST',
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
@@ -149,7 +149,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
   }
 
   async function upload(id, bytes, mimeType, signal) {
-    poke(signal, uploadStallMs(bytes)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
+    setStage(signal, '올리기', uploadStallMs(bytes)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
     const res = await call(`${UPLOAD}/files/${encodeURIComponent(id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': mimeType },
@@ -273,6 +273,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     const pending = { fileId: current.id, base: version, mine: updated.headRevisionId, mimeType, at: Date.now() };
     // 확인이 끝나기 전에 실패해도(연결 끊김·앱 종료) 다음에 마저 확인하도록 먼저 기억한다
     savePending(name, pending);
+    setStage(signal, '올린 뒤 확인');
     const result = await verifyWithRetry(pending, signal);
     if (result === 'unknown') {
       // 확인하지 못한 저장을 성공으로 돌려주면 동기화가 변경을 내려놓아, 나중에 되돌릴 때 내 입력이 사라진다 —
@@ -300,12 +301,14 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
 
   const read = () => watched('Google Drive 가계부 받기', async (signal) => {
     const t0 = Date.now();
+    setStage(signal, '파일 찾기');
     await settlePending(GOOGLE_LEDGER_NAME, signal);
     const folder = await appFolder(false, signal);
     if (!folder) return { bytes: null, version: null };
     const file = (await find(folder, GOOGLE_LEDGER_NAME, { signal }))[0];
     if (!file) return { bytes: null, version: null };
     const t1 = Date.now();
+    setStage(signal, '내용 받기');
     // 버전(메타데이터)을 먼저 읽고 그 리비전의 내용을 받는다 — 내용과 버전이 정확히 맞는다(계약, provider.js)
     const bytes = await download(file.id, file.headRevisionId || null, signal);
     // 단계별 걸린 시간 — 느렸으면 동기화가 문제 알리기 기록에 남긴다
@@ -314,6 +317,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
   });
 
   const getVersion = () => watched('Google Drive 확인', async (signal) => {
+    setStage(signal, '파일 찾기');
     await settlePending(GOOGLE_LEDGER_NAME, signal);
     const folder = await appFolder(false, signal);
     if (!folder) return null;
