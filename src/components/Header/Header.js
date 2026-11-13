@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { currentDriveName } from '../../services/storage/driveName';
+import { drawCenteredEmoji } from './centeredEmoji';
 import './Header.css';
 
 // userLabel: Microsoft가 아닌 계정(Google, M-1)으로 로그인했을 때 보일 이름
@@ -18,6 +19,14 @@ function Header({
   const { accounts } = useMsal();
   const userName = userLabel || accounts[0]?.name || accounts[0]?.username?.split('@')[0] || '';
   const drive = currentDriveName();
+  // 맞추는 중이면 🔄이 돈다 — 그림 중심으로 돌도록 돌기 시작할 때 이 기기의 이모지를 캔버스에 가운데 맞춰 그린다(I-060)
+  const spinning = !!(loading || syncing || catchingUp);
+  const glyphRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [centered, setCentered] = useState(false);
+  useLayoutEffect(() => {
+    if (spinning) setCentered(drawCenteredEmoji(canvasRef.current, glyphRef.current));
+  }, [spinning]);
 
   return (
     <header className="app-header">
@@ -61,15 +70,18 @@ function Header({
           <button className="btn-header btn-cover" onClick={onCover} title="화면 가리기" aria-label="화면 가리기">🔒</button>
         )}
         <button
-          className={`btn-header btn-refresh${loading || syncing || catchingUp ? ' is-syncing' : ''}`}
+          className={`btn-header btn-refresh${spinning ? ' is-syncing' : ''}`}
           onClick={onRefresh}
           disabled={loading}
           title={catchingUp
             ? `이 기기에 둔 가계부로 먼저 열었습니다 — ${drive}에서 최신 가계부를 받는 중이고, 받으면 바로 바꿉니다`
             : loading || syncing ? `${drive}와 맞추는 중` : `${drive}에서 새로고침`}
-          aria-label={loading || syncing || catchingUp ? `${drive}와 맞추는 중` : `${drive}에서 새로고침`}
+          aria-label={spinning ? `${drive}와 맞추는 중` : `${drive}에서 새로고침`}
         >
-          <span className="btn-refresh-icon" aria-hidden="true">🔄</span>
+          <span className={`btn-refresh-icon${spinning && centered ? ' is-centered' : ''}`} aria-hidden="true">
+            <span className="btn-refresh-glyph" ref={glyphRef}>🔄</span>
+            <canvas className="btn-refresh-canvas" ref={canvasRef} />
+          </span>
         </button>
         <button
           className={`btn-header btn-settings${settingsActive ? ' active' : ''}`}

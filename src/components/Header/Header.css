@@ -44,12 +44,29 @@
 .btn-header:disabled { opacity: .5; cursor: not-allowed; }
 .btn-save { background: var(--primary); color: white; border-color: var(--primary); font-weight: 600; }
 .btn-refresh { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
-/* 맞추는 중(불러오기·다시 시도·사본으로 먼저 연 뒤 받기) — 🔄이 돈다 (B-095, I-057) */
-.btn-refresh-icon { display: inline-block; }
-.btn-refresh.is-syncing .btn-refresh-icon { animation: btn-refresh-spin 1s linear infinite; }
+/* 맞추는 중(불러오기·다시 시도·사본으로 먼저 연 뒤 받기) — 🔄이 돈다 (B-095, I-057).
+   그림 중심으로 돌게(I-060): 1em 정사각형 상자 안에, 이 기기의 이모지를 그림만 잘라 한가운데 그린 캔버스(is-centered)를 돌린다.
+   캔버스를 쓸 수 없으면 글자 상자째 돈다(조금 흔들릴 수 있다) */
+.btn-refresh-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+  vertical-align: middle;
+}
+.btn-refresh-canvas { display: none; position: absolute; inset: 0; margin: auto; width: 1em; height: 1em; }
+.btn-refresh-icon.is-centered .btn-refresh-glyph { visibility: hidden; }
+.btn-refresh-icon.is-centered .btn-refresh-canvas { display: block; }
+.btn-refresh.is-syncing .btn-refresh-icon:not(.is-centered),
+.btn-refresh.is-syncing .btn-refresh-icon.is-centered .btn-refresh-canvas { animation: btn-refresh-spin 1s linear infinite; }
 @keyframes btn-refresh-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .btn-refresh.is-syncing .btn-refresh-icon { animation: none; opacity: 0.5; }
+  .btn-refresh.is-syncing .btn-refresh-icon:not(.is-centered),
+  .btn-refresh.is-syncing .btn-refresh-icon.is-centered .btn-refresh-canvas { animation: none; }
+  .btn-refresh.is-syncing .btn-refresh-icon { opacity: 0.5; }
 }
 .btn-settings { font-size: calc(16px * var(--fs)); padding: 6px 10px; }
 .btn-cover { font-size: calc(16px * var(--fs)); padding: 6px 10px; } /* 지금 바로 가리기 (U-7) */
