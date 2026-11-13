@@ -26,6 +26,11 @@
   font-weight: 700;
   white-space: nowrap;
 }
+/* 인터넷은 되는데 저장소만 응답하지 않음 — 이 기기의 연결 문제(오프라인, 노랑)와 구별 (I-058) */
+.header-service-down {
+  background: var(--c-red-100);
+  color: var(--c-red-800);
+}
 
 .btn-header {
   padding: 6px 12px;

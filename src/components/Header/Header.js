@@ -8,10 +8,11 @@ import './Header.css';
 // catchingUp: 받기가 느려 이 기기의 사본으로 먼저 열고 뒤에서 받는 중 — '오프라인'이 아니다(받으면 멈춘다)
 // syncing: 뒤에서 불러오는 중(다시 시도 포함) — 오프라인이어도
 //   둘 다 글자 대신 🔄이 돌아 지금 맞추는 중임을 보인다(사용자 요청). 누르면 그 불러오기에 합류해 결과를 알린다
+// serviceDown: 인터넷은 되는데 저장소만 응답하지 않는다 — '오프라인' 대신 'OneDrive 문제'(저장소 쪽 장애일 수 있음, I-058)
 // onCover: '가계부를 열 때 가리기'(U-7)를 켰을 때 — 지금 바로 화면을 가리는 버튼
 // ledgerName·onSwitchLedger: 다른 계정이 공유한 가계부(M-2) — 제목 자리에 지금 가계부 이름, 누르면 가계부 바꾸기
 function Header({
-  onRefresh, onSave, onLogout, onCover, ledgerName = '', onSwitchLedger = null, loading, saving, dirty, offline = false, catchingUp = false, syncing = false, pendingCount = 0, onSettings, settingsActive, userLabel,
+  onRefresh, onSave, onLogout, onCover, ledgerName = '', onSwitchLedger = null, loading, saving, dirty, offline = false, catchingUp = false, syncing = false, serviceDown = false, pendingCount = 0, onSettings, settingsActive, userLabel,
   offlineLabel = '오프라인', offlineTitle = '연결이 없습니다 — 입력한 내용은 이 기기에 보관했다가 연결되면 저장합니다',
 }) {
   const { accounts } = useMsal();
@@ -33,9 +34,16 @@ function Header({
       <div className="header-right">
         {offline && (
           // 연결이 없어 OneDrive에 닿지 못하는 중 (I-024) — 입력은 이 기기에 보관했다가 연결되면 저장한다
-          <span className="header-offline" title={offlineTitle}>
-            {offlineLabel}
-          </span>
+          // 로그인 시간이 끝난 것(로그인 필요)은 그 안내가 먼저 — 저장소 문제 표시는 기본 '오프라인' 자리에만
+          serviceDown && offlineLabel === '오프라인' ? (
+            <span className="header-offline header-service-down" title={`인터넷은 연결되어 있는데 ${drive}가 응답하지 않습니다 — ${drive} 쪽 장애일 수 있습니다. 입력한 내용은 이 기기에 보관했다가 복구되면 저장합니다`}>
+              {drive} 문제
+            </span>
+          ) : (
+            <span className="header-offline" title={offlineTitle}>
+              {offlineLabel}
+            </span>
+          )
         )}
         {(dirty || saving) && (
           <button

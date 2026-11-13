@@ -84,6 +84,7 @@ describe('남기기', () => {
     const expected = [
       "로그인 시간이 끝나 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, '다시 연결'을 누르면 저장합니다",
       '연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다',
+      'OneDrive가 응답하지 않습니다 — 인터넷은 연결되어 있어 OneDrive 쪽 장애일 수 있습니다. 이 기기의 가계부로 계속 쓸 수 있고, 복구되면 저장합니다 (원인: graph.microsoft.com — TypeError: Failed to fetch)',
       new ReauthRedirectError().message,
       '2027년 공휴일 데이터가 없어 계좌 자동등록의 휴일 보정이 주말만 반영됩니다 — src/data/holidays.js를 갱신하세요',
       'ResizeObserver loop completed with undelivered notifications.',

@@ -372,6 +372,7 @@ test('연결 문제로 받지 못하면 실제 원인(단계·서버·오류)을
   const conn = getErrorLog().filter(e => e.kind === '연결');
   expect(conn).toHaveLength(1);
   expect(conn[0]).toMatchObject({ message: '가계부 받기에 실패했습니다 — 로그인 토큰 — post_request_failed', count: 2 });
+  expect(A.ref.current.error).toBe('연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다 (원인: 로그인 토큰 — post_request_failed)');
   storage.read = realRead;
   A.unmount();
 });
@@ -441,6 +442,36 @@ test('맞추는 중에 백업으로 되돌리기가 실패해도 그사이 끝�
   expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기']);
   storage.read = realRead;
   B.unmount();
+});
+
+test('인터넷은 되는데 저장소만 실패하면 serviceDown — 🔄 안내가 저장소 쪽 장애일 수 있다고 알리고, 연결되면 풀린다 (I-058)', async () => {
+  const A = await opened({ probeInternet: async () => true });
+  const realRead = storage.read;
+  const realVersion = storage.getVersion;
+  const fail = async () => { const e = new OfflineError(); e.detail = 'graph.microsoft.com — TypeError: Failed to fetch'; throw e; };
+  storage.read = fail;
+  storage.getVersion = fail;
+  await act(async () => { await A.ref.current.loadDb(); });
+  expect(A.ref.current.offline).toBe(true);
+  expect(A.ref.current.serviceDown).toBe(true);
+  expect(A.ref.current.error).toBe('OneDrive가 응답하지 않습니다 — 인터넷은 연결되어 있어 OneDrive 쪽 장애일 수 있습니다. 이 기기의 가계부로 계속 쓸 수 있고, 복구되면 저장합니다 (원인: graph.microsoft.com — TypeError: Failed to fetch)');
+  expect(getErrorLog().filter(e => e.kind === '화면에 알린 오류')).toHaveLength(0);
+  storage.read = realRead;
+  storage.getVersion = realVersion;
+  await act(async () => { await A.ref.current.loadDb(); });
+  expect(A.ref.current.offline).toBe(false);
+  expect(A.ref.current.serviceDown).toBe(false);
+  A.unmount();
+});
+
+test('인터넷도 안 되면 serviceDown이 아니다 — 지금처럼 오프라인', async () => {
+  const A = await opened({ probeInternet: async () => false });
+  net.up = false;
+  await act(async () => { await A.ref.current.loadDb(); });
+  expect(A.ref.current.offline).toBe(true);
+  expect(A.ref.current.serviceDown).toBe(false);
+  expect(A.ref.current.error).toMatch(/^연결이 없어 새로 받지 못했습니다/);
+  A.unmount();
 });
 
 test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기에 남긴다', async () => {

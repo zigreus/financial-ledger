@@ -40,3 +40,18 @@ test('오프라인이어도 뒤에서 다시 시도하는 동안은 오프라인
   expect(refresh(el).classList.contains('is-syncing')).toBe(true);
   unmount();
 });
+
+test("인터넷은 되는데 저장소만 응답하지 않으면 '오프라인' 대신 'OneDrive 문제' (I-058)", () => {
+  const { el, unmount } = render({ offline: true, serviceDown: true });
+  const badge = el.querySelector('.header-offline');
+  expect(badge.textContent).toBe('OneDrive 문제');
+  expect(badge.classList.contains('header-service-down')).toBe(true);
+  expect(badge.title).toMatch(/인터넷은 연결되어 있는데 OneDrive가 응답하지 않습니다/);
+  unmount();
+});
+
+test("로그인 시간이 끝난 안내(로그인 필요)는 저장소 문제 표시보다 먼저", () => {
+  const { el, unmount } = render({ offline: true, serviceDown: true, offlineLabel: '로그인 필요' });
+  expect(el.querySelector('.header-offline').textContent).toBe('로그인 필요');
+  unmount();
+});

@@ -6,6 +6,8 @@ import {
 import { ConflictError, OfflineError, ReauthRedirectError, ReconnectRequiredError } from '../services/storage/provider';
 import { StalledError } from '../services/storage/stall';
 import { recordError } from '../services/errorLog';
+import { internetReachable } from '../services/connectivity';
+import { currentDriveName } from '../services/storage/driveName';
 import { defaultOfflineCache } from '../services/offlineCache';
 import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId,
@@ -115,10 +117,20 @@ function required(storage) {
  * 로그인 시간이 끝난 것(Google, ReconnectRequiredError)은 늘 있는 일이라 남기지 않는다
  */
 function noteConnectionFailure(e, what) {
-  if (!(e instanceof OfflineError) || e instanceof ReconnectRequiredError) return;
+  if (!(e instanceof OfflineError) || e instanceof ReconnectRequiredError) return '';
   const why = e instanceof StalledError ? `${e.what} — ${e.detail}` : (e.detail || '원인 모름');
   recordError(`${what}에 실패했습니다 — ${why}`, { kind: '연결', where: 'useLedgerSync', latestOnly: true });
+  return why;
 }
+
+/** 🔄이 연결 문제로 실패했을 때의 안내 — 원인을 알면 함께 보인다(설정에 들어가지 않아도 무엇이 실패했는지 보이게, B-095) */
+const offlineRefreshText = (why, serviceDown = false) => {
+  const cause = why ? ` (원인: ${why})` : '';
+  if (!serviceDown) return `연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다${cause}`;
+  // 인터넷은 되는데 저장소만 실패한다 — 저장소 쪽 장애일 수 있다 (I-058, 2026-11-13 Microsoft 365 장애 때 '오프라인'으로만 보여 헷갈렸다)
+  const drive = currentDriveName();
+  return `${drive}가 응답하지 않습니다 — 인터넷은 연결되어 있어 ${drive} 쪽 장애일 수 있습니다. 이 기기의 가계부로 계속 쓸 수 있고, 복구되면 저장합니다${cause}`;
+};
 
 /**
  * 가계부 받기 — 오래 걸렸으면 저장소가 알려 준 단계별 시간(timing)을 문제 알리기 기록에 남긴다.
@@ -140,7 +152,7 @@ function timedRead(store) {
 
 export default function useLedgerSync({
   storage, offlineCache = defaultOfflineCache(),
-  firstLoadTimeoutMs = FIRST_LOAD_TIMEOUT_MS, offlineRetryMs = OFFLINE_RETRY_MS,
+  firstLoadTimeoutMs = FIRST_LOAD_TIMEOUT_MS, offlineRetryMs = OFFLINE_RETRY_MS, probeInternet = internetReachable,
 }) {
   const [db, setDb] = useState(null);
   const [dataVersion, setDataVersion] = useState(0);
@@ -196,11 +208,31 @@ export default function useLedgerSync({
   const loadDbRef = useRef(() => Promise.resolve());
   // 조용한 불러오기(다시 시도·앱 복귀) 중에 사용자가 🔄을 눌렀다 — 그 불러오기의 진행(⏳)·결과(실패 안내)를 보인다 (B-095)
   const visibleLoadRef = useRef(false);
+  const lastFailureRef = useRef(''); // 마지막 연결 실패의 원인 — 🔄 실패 안내에 함께 보인다
   accountKeyRef.current = accountKey;
 
   const notify = useCallback((text) => setNotice({ text, seq: Date.now() }), []);
   // 연결됐는지(false)·안 됐는지(true)가 정해지면 '맞추는 중'도 끝난다
-  const setOffline = useCallback((v) => { offlineRef.current = v; setOfflineState(v); setCatchingUp(false); }, []);
+  // 저장소에 닿지 못하는데 인터넷은 된다 — '오프라인' 대신 저장소 쪽 문제로 알린다 (I-058)
+  const [serviceDown, setServiceDown] = useState(false);
+  const serviceDownRef = useRef(false);
+  const probeRef = useRef(probeInternet);
+  probeRef.current = probeInternet;
+  const setOffline = useCallback((v) => {
+    offlineRef.current = v;
+    setOfflineState(v);
+    setCatchingUp(false);
+    if (!v) { serviceDownRef.current = false; setServiceDown(false); }
+  }, []);
+  /** 연결 문제로 실패했다 — 인터넷이 되는지 확인해 저장소 쪽 문제인지 가른다. 로그인 시간이 끝난 것은 묻지 않는다 */
+  const checkService = useCallback(async (e) => {
+    if (!(e instanceof OfflineError) || e instanceof ReconnectRequiredError) return false;
+    const reachable = await Promise.resolve(probeRef.current()).catch(() => false);
+    const down = !!reachable && offlineRef.current;
+    serviceDownRef.current = down;
+    setServiceDown(down);
+    return down;
+  }, []);
 
   /**
    * 세대가 달라 넣지 못한 이 기기의 변경을 잃지 않게 — 그 변경이 담긴 이 기기의 가계부(bytes)를 백업으로 올린다 (I-035).
@@ -399,7 +431,8 @@ export default function useLedgerSync({
         if (e instanceof ReauthRedirectError) setError(e.message);
         else if (e instanceof OfflineError) {
           // 연결이 없을 뿐 — 오류 대신 헤더에 '오프라인'으로 알리고, 연결되면 저장한다 (I-024)
-          noteConnectionFailure(e, '저장');
+          lastFailureRef.current = noteConnectionFailure(e, '저장');
+          await checkService(e);   // 저장소 쪽 문제인지 — 🔄 안내·머리글 배지가 쓴다
           setOffline(true);
           setError('');
         } else setError(`저장 실패: ${e.message} — 변경 내용은 이 기기에 보관되어 있고, 연결되면 다시 저장합니다`);
@@ -424,7 +457,7 @@ export default function useLedgerSync({
     });
     loopRef.current = loop;
     return loop;
-  }, [storage, mergeRemote, persist, keepCopy, setOffline]);
+  }, [storage, mergeRemote, persist, keepCopy, setOffline, checkService]);
   // saveNow가 예약된 다시 시도를 지우고 시작한다 — 온라인·앱 복귀 때 불러도 예약이 겹치지 않는다
   saveNowRef.current = saveNow;
 
@@ -578,7 +611,7 @@ export default function useLedgerSync({
         // 저장하지 못하면 받지 않는다 — 🔄을 눌렀으면 조용히 끝내지 않고 이유를 보인다(저장 실패는 saveNow가 이미 알렸다)
         if (shown() && session === sessionRef.current) {
           setLoading(false);
-          if (offlineRef.current) setError('연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
+          if (offlineRef.current) setError(offlineRefreshText(lastFailureRef.current, serviceDownRef.current));
         }
         return;
       }
@@ -749,16 +782,19 @@ export default function useLedgerSync({
     } catch (e) {
       if (session !== sessionRef.current) return; // 로그아웃한 뒤의 실패는 알리지 않는다
       // 통신이 빠른데도 '오프라인'이 되면 어디서 왜 실패했는지 문제 알리기로 볼 수 있게 (B-095)
-      noteConnectionFailure(e, '가계부 받기');
+      const why = noteConnectionFailure(e, '가계부 받기');
+      if (why) lastFailureRef.current = why;
       setCatchingUp(false); // 받지 못했다 — 연결 없음이면 아래에서 '오프라인'으로
       if (e instanceof OfflineError) {
         setOffline(true);
+        const down = await checkService(e);
+        if (session !== sessionRef.current) return;
         if (!hadDb && !dbRef.current) {
           try { await openOfflineCopy(session, { reason: e }); } catch (e2) { if (session === sessionRef.current) setError(e2.message); }
         } else if (shown()) {
           setError(e instanceof ReconnectRequiredError
             ? "로그인 시간이 끝나 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, '다시 연결'을 누르면 저장합니다"
-            : '연결이 없어 새로 받지 못했습니다 — 이 기기의 가계부로 계속 쓸 수 있고, 연결되면 저장합니다');
+            : offlineRefreshText(lastFailureRef.current, down));
         }
       } else if (e instanceof ReauthRedirectError) setError(e.message);
       else setError(`불러오기 실패: ${e.message}`);
@@ -768,7 +804,7 @@ export default function useLedgerSync({
         setLoading(false);
       }
     }
-  }, [storage, saveNow, attach, swapDb, persist, takeRestorable, notify, runDailyBackup, keepCopy, setOffline, openOfflineCopy, firstLoadTimeoutMs, keepDropped]);
+  }, [storage, saveNow, attach, swapDb, persist, takeRestorable, notify, runDailyBackup, keepCopy, setOffline, openOfflineCopy, firstLoadTimeoutMs, keepDropped, checkService]);
 
   const loadDb = useCallback((opts) => {
     if (restoringRef.current) return Promise.resolve();
@@ -1088,7 +1124,7 @@ export default function useLedgerSync({
   }, []);
 
   return {
-    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp, syncing,
+    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp, syncing, serviceDown,
     pendingCount, dirty: pendingCount > 0,
     loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,
