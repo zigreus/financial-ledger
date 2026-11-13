@@ -114,7 +114,7 @@ function App() {
   // DB 불러오기·자동 저장·충돌 병합은 useLedgerSync가 맡는다.
   // 컴포넌트는 db에 쓰기만 하면 자동으로 저장된다. 화면은 dataVersion으로 갱신한다.
   const {
-    db, dataVersion, loading, saving, error, setError, notice, offline,
+    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp,
     dirty, pendingCount, loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,
   } = useLedgerSync({ storage });
@@ -939,6 +939,7 @@ function App() {
         saving={saving}
         dirty={dirty}
         offline={offline}
+        catchingUp={catchingUp}
         pendingCount={pendingCount}
         onSettings={() => { navigate({ activeTab: 'settings' }); document.querySelector('.app-main')?.scrollTo(0, 0); }}
         settingsActive={activeTab === 'settings'}

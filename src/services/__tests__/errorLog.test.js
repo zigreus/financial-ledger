@@ -172,3 +172,15 @@ describe('문제 알리기 글', () => {
     expect(text.endsWith(' 오류 3')).toBe(true);
   });
 });
+
+test('latestOnly: 같은 갈래는 가장 최근 것 하나만 두고 횟수를 이어 센다 — 매번 글이 다른 기록이 진짜 오류를 밀어내지 않게', () => {
+  clearErrorLog();
+  recordError(new Error('진짜 오류'));
+  recordError('느림 1.0초', { kind: '느린 연결', latestOnly: true });
+  recordError('느림 2.0초', { kind: '느린 연결', latestOnly: true });
+  recordError('느림 3.0초', { kind: '느린 연결', latestOnly: true });
+  const log = getErrorLog();
+  expect(log).toHaveLength(2);
+  expect(log[0]).toMatchObject({ message: '느림 3.0초', kind: '느린 연결', count: 3 });
+  expect(log[1].message).toMatch(/진짜 오류/);
+});

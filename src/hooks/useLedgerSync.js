@@ -4,6 +4,8 @@ import {
   getAutoIncrementSeqs, raiseAutoIncrementSeqs,
 } from '../services/dbManager';
 import { ConflictError, OfflineError, ReauthRedirectError, ReconnectRequiredError } from '../services/storage/provider';
+import { StalledError } from '../services/storage/stall';
+import { recordError } from '../services/errorLog';
 import { defaultOfflineCache } from '../services/offlineCache';
 import {
   attachChangeLog, getChangeLog, replayChanges, stampWriteId, readWriteId, hasWriteId,
@@ -37,9 +39,12 @@ function shortTime(iso) {
 /** 보관한 결과 모르는 업로드 — 예전 버전은 { writeId, n } 하나를 남겼다 */
 const inFlightList = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
 
-// 처음 열 때 저장소가 이보다 오래 답하지 않으면(약한 로밍 신호·호텔 와이파이 로그인 페이지), 열 수 있는 사본이 있으면 그것으로 연다.
-// 사본이 없으면 그대로 기다린다 — 느려도 연결은 돼 있을 수 있다(로그아웃 뒤 다시 로그인·새 기기는 사본이 없다)
-const FIRST_LOAD_TIMEOUT_MS = 15000;
+// 처음 열 때 저장소가 이보다 오래 답하지 않으면, 열 수 있는 사본이 있으면 그것으로 먼저 열고 받기는 뒤에서 이어 간다
+// ('맞추는 중', 받으면 그 자리에서 바꾼다). 사본이 없으면 그대로 기다린다 — 느려도 연결은 돼 있을 수 있다
+// (로그아웃 뒤 다시 로그인·새 기기는 사본이 없다). 받기를 끊는 것은 걸린 시간이 아니라 멈춤이다(storage/stall.js)
+const FIRST_LOAD_TIMEOUT_MS = 3000;
+// 가계부 받기가 이보다 오래 걸리면 단계별 시간을 문제 알리기 기록에 남긴다 — 어디서 느린지 알 수 있게
+const SLOW_READ_LOG_MS = 5000;
 // 연결이 없는 동안 이 간격으로 다시 확인한다 — 'online' 이벤트가 오지 않는 경우(onLine이 내내 true)도 있다
 const OFFLINE_RETRY_MS = 30000;
 // 처음 받기가 느려 사본으로 열었다 — 그 불러오기는 여기서 끝난다
@@ -104,6 +109,24 @@ function required(storage) {
  *    이어서 저장소에서 한 번 새로 받아 자동등록·매일 백업을 한다.
  *  - 연결이 없어 저장하지 못하는 동안은 오류 대신 offline으로 알린다(헤더). 로그아웃하면 사본을 지운다 (B-004).
  */
+/**
+ * 가계부 받기 — 오래 걸렸으면 저장소가 알려 준 단계별 시간(timing)을 문제 알리기 기록에 남긴다.
+ * 통신이 빠른데 느리게 열리는 원인(로그인 토큰·파일 정보·내용 받기 중 어디인지)을 사용자가 보내 줄 수 있게 (이 기기에만)
+ */
+function timedRead(store) {
+  const t0 = Date.now();
+  return store.read().then((got) => {
+    const ms = Date.now() - t0;
+    if (ms >= SLOW_READ_LOG_MS) {
+      const sec = n => `${(n / 1000).toFixed(1)}초`;
+      const stages = got?.timing?.stages?.map(([name, t]) => `${name} ${sec(t)}`).join(' · ');
+      const size = got?.timing?.size ? `, ${Math.round(got.timing.size / 1024)}KB` : '';
+      recordError(`가계부 받기가 느렸습니다 — 모두 ${sec(ms)}${stages ? ` (${stages}${size})` : ''}`, { kind: '느린 연결', where: 'useLedgerSync', latestOnly: true });
+    }
+    return got;
+  });
+}
+
 export default function useLedgerSync({
   storage, offlineCache = defaultOfflineCache(),
   firstLoadTimeoutMs = FIRST_LOAD_TIMEOUT_MS, offlineRetryMs = OFFLINE_RETRY_MS,
@@ -116,6 +139,8 @@ export default function useLedgerSync({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null); // { text, seq } — 토스트로 보여줄 안내
   const [offline, setOfflineState] = useState(false); // 연결이 없어 저장소에 닿지 못하는 중 (I-024)
+  // 받기가 느려 사본으로 먼저 열고 뒤에서 받는 중 — 실패하면 offline, 받으면 끝난다
+  const [catchingUp, setCatchingUp] = useState(false);
 
   // 이 기기에 두는 것(미저장 변경·연결 없이 열 사본·매일 백업 표식)의 열쇠 — 가계부마다 따로(M-2: 공유받은 가계부는 ledgerKey).
   // 열쇠가 바뀌면(계정 전환, 가계부 바꾸기) 지금 DB를 버리고 그 가계부를 새로 연다. AI 설정은 저장소의 accountKey를 그대로 쓴다
@@ -152,10 +177,15 @@ export default function useLedgerSync({
   const sessionRef = useRef(0);
   // 처음 열 때 진행 중인 받기 — 느려서 사본으로 열었거나 다시 시도할 때 새 받기를 겹쳐 시작하지 않는다(대역폭을 나눠 더 느려진다)
   const firstReadRef = useRef(null);
+  // 사본으로 먼저 열었을 때 뒤에서 이어 가는 처음 받기 { p, base, session } — base: 그때의 버전.
+  // 그 뒤 이 기기에서 저장하지 않았으면(버전이 그대로) 그 결과를 그대로 쓴다(같은 파일을 두 번 받지 않게)
+  const earlyReadRef = useRef(null);
+  const loadDbRef = useRef(() => Promise.resolve());
   accountKeyRef.current = accountKey;
 
   const notify = useCallback((text) => setNotice({ text, seq: Date.now() }), []);
-  const setOffline = useCallback((v) => { offlineRef.current = v; setOfflineState(v); }, []);
+  // 연결됐는지(false)·안 됐는지(true)가 정해지면 '맞추는 중'도 끝난다
+  const setOffline = useCallback((v) => { offlineRef.current = v; setOfflineState(v); setCatchingUp(false); }, []);
 
   /**
    * 세대가 달라 넣지 못한 이 기기의 변경을 잃지 않게 — 그 변경이 담긴 이 기기의 가계부(bytes)를 백업으로 올린다 (I-035).
@@ -299,6 +329,14 @@ export default function useLedgerSync({
     if (restoringRef.current) return Promise.resolve(false); // 되돌리기가 끝나면 이어서 저장한다
     if (loopRef.current) return loopRef.current;
     if (!dbRef.current) return Promise.resolve(true);
+    const early = earlyReadRef.current;
+    if (early && early.session === sessionRef.current) {
+      // 맞추는 중(I-057) — 받던 가계부가 오면 그 위에 이어 저장한다. 지금 사본 버전으로 저장하면 거절되어
+      // 합치느라 같은 파일을 또 받고, 그 저장으로 버전이 바뀌어 받던 것도 못 쓴다(느린 연결에서 두세 번 받기)
+      return early.p.then(() => {}, () => {})
+        .then(() => loadDbRef.current({ silent: true }))
+        .then(() => saveNowRef.current());
+    }
 
     const run = async () => {
       const session = sessionRef.current;
@@ -450,12 +488,20 @@ export default function useLedgerSync({
     loadedForRef.current = key;
     offlineStartRef.current = true;
     persist();
-    setOffline(true);
     setError(migrationErrors.length ? `DB 업데이트 일부 실패: ${migrationErrors.join(' / ')}` : '');
-    const when = shortTime(copy.savedAt);
-    notify(`연결이 ${slow ? '너무 느려' : '없어'} 이 기기에 둔 가계부${when ? `(${when} 기준)` : ''}로 열었습니다 — 입력한 내용은 연결되면 저장합니다${dropped ? ` (${DROPPED_NOTE})` : ''}`);
-    // 보관한 변경이 있으면 저장을 시도해 둔다 — 실패하면 점점 길게 다시 시도하고, 연결되면 바로 저장한다
-    if (restored.length) saveNowRef.current();
+    if (slow) {
+      // 느릴 뿐 연결은 돼 있을 수 있다 — '오프라인' 대신 '맞추는 중'. 받기는 뒤에서 이어 가고 받으면 그 자리에서 바꾼다
+      setCatchingUp(true);
+      if (dropped) notify(`이 기기에 둔 가계부로 먼저 열었습니다 (${DROPPED_NOTE})`);
+    } else {
+      setOffline(true);
+      const when = shortTime(copy.savedAt);
+      notify(`연결이 없어 이 기기에 둔 가계부${when ? `(${when} 기준)` : ''}로 열었습니다 — 입력한 내용은 연결되면 저장합니다${dropped ? ` (${DROPPED_NOTE})` : ''}`);
+    }
+    // 보관한 변경이 있으면 저장을 시도해 둔다 — 실패하면 점점 길게 다시 시도하고, 연결되면 바로 저장한다.
+    // 느려서 먼저 연 것이면 하지 않는다 — 받던 가계부가 오면 그 위에 다시 실행해 이어 저장한다(사본 버전으로 저장하면
+    // 거절되어 합치느라 같은 파일을 두세 번 받는다, I-057)
+    if (restored.length && !slow) saveNowRef.current();
   }, [attach, swapDb, persist, notify, setOffline]);
 
   /**
@@ -476,7 +522,7 @@ export default function useLedgerSync({
     const readFirst = async (store) => {
       let p = firstReadRef.current;
       if (!p) {
-        p = store.read();
+        p = timedRead(store);
         firstReadRef.current = p;
         const done = () => { if (firstReadRef.current === p) firstReadRef.current = null; };
         p.then(done, done);
@@ -490,7 +536,15 @@ export default function useLedgerSync({
       if (first !== TIMED_OUT) return first;
       try {
         await openOfflineCopy(session, { slow: true });
-        if (dbRef.current) return OPENED_FROM_COPY;
+        if (dbRef.current) {
+          // 받기는 뒤에서 이어 간다 — 끝나면(받았든 못 받았든) 바로 이어서 불러온다(받은 것을 쓰거나 실패를 '오프라인'으로)
+          earlyReadRef.current = { p, base: versionRef.current, session };
+          // 되살린 변경이 있으면 저장을 걸어 둔다 — 받던 가계부가 올 때까지 기다렸다가 그 위에 이어 저장한다(saveNow)
+          if (getChangeLog(dbRef.current)?.entries.length) saveNowRef.current();
+          const resume = () => { if (session === sessionRef.current && dbRef.current) loadDbRef.current({ silent: true }); };
+          p.then(resume, resume);
+          return OPENED_FROM_COPY;
+        }
       } catch (e) {
         // 열 수 있는 사본이 없다 — 받기를 계속 기다린다
       }
@@ -498,7 +552,9 @@ export default function useLedgerSync({
     };
 
     const curLog = getChangeLog(dbRef.current);
-    if (curLog && curLog.entries.length) {
+    // 맞추는 중이면 먼저 저장하지 않는다 — 받던 가계부에 이 기기의 변경을 다시 실행해 이어 저장한다(아래, I-057)
+    const catching = earlyReadRef.current?.session === session;
+    if (curLog && curLog.entries.length && !catching) {
       const ok = await saveNow();
       if (!ok) return;
     } else if (loopRef.current) {
@@ -533,8 +589,16 @@ export default function useLedgerSync({
         if (hadDb) {
           // 처음 받기가 아직 끝나지 않았으면(느려서 사본으로 열었다) 끝나기를 기다린 뒤 새로 받는다 — 겹쳐 받지 않게.
           // 그 결과를 쓰지는 않는다: 그 뒤 이 기기에서 저장했으면 그보다 옛 파일이라 방금 저장한 입력이 사라진다(B-090)
-          if (firstReadRef.current) await firstReadRef.current.catch(() => {});
-          got = await store.read();
+          const early = earlyReadRef.current?.session === session ? earlyReadRef.current : null;
+          earlyReadRef.current = null;
+          if (early) {
+            // 사본으로 먼저 열고 뒤에서 이어 간 받기 — 그 사이 이 기기에서 저장하지 않았으면(사본으로 연 그 버전 그대로)
+            // 그 결과를 쓴다(같은 파일을 두 번 받지 않게). 저장했으면 그보다 옛 파일이라 새로 받는다(B-090). 못 받았으면 오프라인
+            const r = await early.p.catch((e) => { if (e instanceof OfflineError) throw e; return null; });
+            if (session !== sessionRef.current) return;
+            if (r && versionRef.current === early.base) got = r;
+          } else if (firstReadRef.current) await firstReadRef.current.catch(() => {});
+          if (!got) got = await timedRead(store);
         } else {
           got = await readFirst(store);
           if (got === OPENED_FROM_COPY) return;
@@ -659,6 +723,9 @@ export default function useLedgerSync({
       throw new Error('다른 기기와 저장이 계속 겹칩니다 — 잠시 후 다시 시도하세요');
     } catch (e) {
       if (session !== sessionRef.current) return; // 로그아웃한 뒤의 실패는 알리지 않는다
+      // 멈춰 끊은 받기는 남긴다 — 통신이 빠른데도 '오프라인'이 되면 어디서 멈췄는지 문제 알리기로 볼 수 있게
+      if (e instanceof StalledError) recordError(e, { kind: '연결', where: 'useLedgerSync' });
+      setCatchingUp(false); // 받지 못했다 — 연결 없음이면 아래에서 '오프라인'으로
       if (e instanceof OfflineError) {
         setOffline(true);
         if (!hadDb && !dbRef.current) {
@@ -687,6 +754,7 @@ export default function useLedgerSync({
     p.finally(() => { if (loadPromiseRef.current === p) loadPromiseRef.current = null; }).catch(() => {});
     return p;
   }, [loadDbInner]);
+  loadDbRef.current = loadDb;
 
   // ── 백업 목록·직접 백업·되돌리기 (I-014) — 설정 › 데이터 화면이 쓴다 ─────────
 
@@ -801,6 +869,8 @@ export default function useLedgerSync({
       persist();
       keepCopy(uploaded, tag, session);
       offlineStartRef.current = false;
+      earlyReadRef.current = null;   // 바꾸기 전의 받기는 쓰지 않는다
+      setCatchingUp(false);
       fresh = null;
       setError('');
       if (mine) {
@@ -840,6 +910,7 @@ export default function useLedgerSync({
   const resetForLogout = useCallback(() => {
     sessionRef.current += 1;
     firstReadRef.current = null; // 다음 로그인(다른 계정일 수 있다)이 이 계정의 받기를 이어 쓰지 않게
+    earlyReadRef.current = null;
     clearTimeout(saveTimerRef.current);
     clearPending(accountKeyRef.current);
     // 이 계정의 다른 가계부(공유받은 가계부, M-2)에 남은 미저장 변경도 — 로그아웃하면 이 기기에서 지운다(처리방침 4항)
@@ -873,6 +944,7 @@ export default function useLedgerSync({
     persist();   // 지금 열쇠로 마지막 보관
     sessionRef.current += 1;
     firstReadRef.current = null;
+    earlyReadRef.current = null;
     loadPromiseRef.current = null;
     loadingRef.current = false;
     loopRef.current = null;
@@ -903,6 +975,8 @@ export default function useLedgerSync({
       prevAccountRef.current = accountKey;
       sessionRef.current += 1;
       firstReadRef.current = null;
+      earlyReadRef.current = null;
+      setCatchingUp(false);
     }
     if (dbRef.current && loadedForRef.current && loadedForRef.current !== accountKey) {
       const old = dbRef.current;
@@ -972,7 +1046,7 @@ export default function useLedgerSync({
   }, []);
 
   return {
-    db, dataVersion, loading, saving, error, setError, notice, offline,
+    db, dataVersion, loading, saving, error, setError, notice, offline, catchingUp,
     pendingCount, dirty: pendingCount > 0,
     loadDb, saveNow, resetForLogout, closeLedger,
     listBackups, createBackup, restoreBackup, replaceWithFile,

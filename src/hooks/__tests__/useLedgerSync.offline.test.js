@@ -8,6 +8,8 @@ import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js/dist/sql-asm.js';
 import { createMemoryStorage } from '../../services/storage/memory';
 import { OfflineError } from '../../services/storage/provider';
+import { StalledError } from '../../services/storage/stall';
+import { getErrorLog } from '../../services/errorLog';
 import { createMemoryOfflineCache } from '../../services/offlineCache';
 import { createDatabase, addTransaction, addRecurringTransaction } from '../../services/dbManager';
 import { savePending, stampWriteId } from '../../services/changeLog';
@@ -218,17 +220,154 @@ test('불러오는 사이 로그아웃하면 늦게 끝난 불러오기가 가�
   A.unmount();
 });
 
-test('처음 열 때 저장소가 너무 오래 답하지 않으면(약한 신호) 열 수 있는 사본으로 연다', async () => {
+test("처음 열 때 저장소가 늦게 답하면 사본으로 먼저 열고('맞추는 중', 오프라인 아님) 받기가 끝나면 그 자리에서 최신으로 바꾼다 — 다시 받지 않는다", async () => {
   const A = await opened();
   A.unmount();
+  otherDevice('다른 기기');                                       // 사본보다 저장소가 새것이다
   const realRead = storage.read;
-  storage.read = () => new Promise(() => {});                    // 끝나지 않는다
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const reads = vi.fn(async () => { await gate; return realRead(); });
+  storage.read = reads;
   const B = await mount({ firstLoadTimeoutMs: 30 });
   await act(async () => { await B.ref.current.loadDb(); });
   await flush();
+  expect(details(B.ref.current.db)).toEqual(['지금']);             // 사본으로 먼저
+  expect(B.ref.current.offline).toBe(false);
+  expect(B.ref.current.catchingUp).toBe(true);
+  expect(B.ref.current.notice).toBeNull();                        // 느릴 뿐 — 알림을 띄우지 않는다
+  release();
+  await flush();
+  await flush();
+  expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기']); // 받은 것으로 바꿨다
+  expect(B.ref.current.catchingUp).toBe(false);
+  expect(B.ref.current.offline).toBe(false);
+  expect(reads).toHaveBeenCalledTimes(1);                         // 받던 것을 그대로 썼다
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('사본으로 먼저 연 사이 입력하면 받던 가계부가 올 때까지 저장을 미뤘다가 그 위에 이어 저장한다 — 같은 파일을 다시 받지 않는다', async () => {
+  const A = await opened();
+  A.unmount();
+  otherDevice('다른 기기');                                        // 사본보다 저장소가 새것 — 사본 버전으로 저장했다면 충돌
+  const realRead = storage.read;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const reads = vi.fn(async () => { await gate; return realRead(); });
+  storage.read = reads;
+  const writes = vi.spyOn(storage, 'write');
+  const B = await mount({ firstLoadTimeoutMs: 30 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  await act(async () => { addTransaction(B.ref.current.db, tx('먼저 연 사이 입력')); });
+  await waitSave();
+  expect(writes).not.toHaveBeenCalled();                           // 받던 것이 올 때까지 미룬다
+  expect(B.ref.current.pendingCount).toBe(1);
+  release();
+  await flush();
+  await waitSave();
+  await flush();
+  expect(detailsOf(base.current())).toEqual(['지금', '다른 기기', '먼저 연 사이 입력']);
+  expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기', '먼저 연 사이 입력']);
+  expect(B.ref.current.pendingCount).toBe(0);
+  expect(B.ref.current.catchingUp).toBe(false);
+  expect(reads).toHaveBeenCalledTimes(1);
+  expect(writes).toHaveBeenCalledTimes(1);                         // 충돌 없이 한 번에
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('지난번에 저장하지 못한 변경이 있어도 사본으로 먼저 열고, 받던 가계부가 오면 그 위에 이어 저장한다', async () => {
+  const A = await opened();
+  net.up = false;
+  await act(async () => { addTransaction(A.ref.current.db, tx('닫기 전 입력')); });
+  await waitSave();
+  A.unmount();
+  net.up = true;
+  otherDevice('다른 기기');
+  const realRead = storage.read;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  storage.read = async () => { await gate; return realRead(); };
+  const B = await mount({ firstLoadTimeoutMs: 30 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  expect(details(B.ref.current.db)).toEqual(['지금', '닫기 전 입력']);
+  expect(B.ref.current.catchingUp).toBe(true);
+  release();
+  await flush();
+  await waitSave();
+  await flush();
+  // 지난번 저장은 결과를 모르는 업로드라(B-088) 받은 파일과 대조해 가려내느라 더 받을 수 있다 — 결과만 본다
+  expect(detailsOf(base.current())).toEqual(['지금', '다른 기기', '닫기 전 입력']);
+  expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기', '닫기 전 입력']);
+  expect(B.ref.current.pendingCount).toBe(0);
+  expect(B.ref.current.catchingUp).toBe(false);
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('저장을 시도하기 전에 닫힌 변경을 되살려 먼저 열었으면, 받던 가계부가 올 때 그 위에 한 번에 저장한다 — 한 번만 받는다', async () => {
+  const A = await opened();
+  await act(async () => { addTransaction(A.ref.current.db, tx('닫기 직전 입력')); });
+  await flush();                                                   // 저장을 시도하기 전에 앱이 닫혔다
+  A.unmount();
+  otherDevice('다른 기기');                                        // 사본 버전으로 저장했다면 충돌
+  const realRead = storage.read;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const reads = vi.fn(async () => { await gate; return realRead(); });
+  storage.read = reads;
+  const writes = vi.spyOn(storage, 'write');
+  const B = await mount({ firstLoadTimeoutMs: 30 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  expect(details(B.ref.current.db)).toEqual(['지금', '닫기 직전 입력']);
+  await waitSave();
+  expect(writes).not.toHaveBeenCalled();
+  release();
+  await flush();
+  await waitSave();
+  await flush();
+  expect(detailsOf(base.current())).toEqual(['지금', '다른 기기', '닫기 직전 입력']);
+  expect(reads).toHaveBeenCalledTimes(1);
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(B.ref.current.pendingCount).toBe(0);
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('사본으로 먼저 연 뒤 받기가 멈춰 끊기면(StalledError) 오프라인으로 바꾸고 문제 알리기에 남기며, 다시 시도해 연결되면 푼다', async () => {
+  const A = await opened();
+  A.unmount();
+  const realRead = storage.read;
+  let fail;
+  storage.read = vi.fn(() => new Promise((_, reject) => { fail = reject; }));
+  const B = await mount({ firstLoadTimeoutMs: 30, offlineRetryMs: 40 });
+  await act(async () => { await B.ref.current.loadDb(); });
+  expect(B.ref.current.catchingUp).toBe(true);
+  fail(new StalledError('OneDrive 가계부 받기'));
+  await flush();
+  await flush();
   expect(B.ref.current.offline).toBe(true);
-  expect(details(B.ref.current.db)).toEqual(['지금']);
-  expect(B.ref.current.notice.text).toMatch(/연결이 너무 느려 이 기기에 둔 가계부/);
+  expect(B.ref.current.catchingUp).toBe(false);
+  expect(B.ref.current.error).toBe('');                            // 조용한 불러오기 — 오류 띠 없이 '오프라인'
+  expect(getErrorLog()[0]).toMatchObject({ kind: '연결' });
+  expect(getErrorLog()[0].message).toMatch(/OneDrive 가계부 받기.*멈춰/);
+  storage.read = realRead;                                         // 연결이 돌아왔다 — 30초마다의 다시 시도가 막히지 않는다
+  await act(async () => { await new Promise(r => setTimeout(r, 200)); });
+  await flush();
+  expect(B.ref.current.offline).toBe(false);
+  B.unmount();
+});
+
+test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기에 남긴다', async () => {
+  const realRead = storage.read;
+  let now = 1000;
+  const spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  storage.read = async () => { now += 7000; return { ...(await realRead()), timing: { stages: [['로그인 토큰', 6000], ['파일 정보', 500], ['내용 받기', 500]], size: 2048 } }; };
+  const B = await opened();
+  spy.mockRestore();
+  expect(getErrorLog()[0]).toMatchObject({ kind: '느린 연결' });
+  expect(getErrorLog()[0].message).toBe('가계부 받기가 느렸습니다 — 모두 7.0초 (로그인 토큰 6.0초 · 파일 정보 0.5초 · 내용 받기 0.5초, 2KB)');
   storage.read = realRead;
   B.unmount();
 });

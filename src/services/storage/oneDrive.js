@@ -14,6 +14,7 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { loginRequest } from '../../auth/msalConfig';
 import { ONEDRIVE_DB_PATH } from '../../config';
 import { ConflictError, OfflineError, ReauthRedirectError } from './provider';
+import { poke, readBody, stallSignal, stalledReason, stopStall, untilStalled, uploadStallMs } from './stall';
 
 // MSAL이 토큰을 받으러 나가다 연결이 없어 실패한 오류 (BrowserAuthError·ClientAuthError의 errorCode)
 const MSAL_NETWORK_ERRORS = new Set(['no_network_connectivity', 'endpoints_resolution_error', 'post_request_failed', 'get_request_failed', 'network_error']);
@@ -29,11 +30,13 @@ const BACKUP_DIR_URL = `${GRAPH_BASE}/me/drive/root:/${BACKUP_DIR}`;
  * interactive: false — 다시 로그인해야 해도 로그인 화면으로 넘어가지 않고 실패만 돌려준다.
  * 화면 뒤에서 도는 부가 기능(예: AI 설정 공유)이 입력 중인 화면을 떠나게 하면 안 되기 때문이다.
  */
-async function getToken(instance, accounts, { interactive = true } = {}) {
+async function getToken(instance, accounts, { interactive = true, signal } = {}) {
   try {
-    const res = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+    // 토큰 갱신이 멈추면(약한 LTE) 끊는다 — 가계부 받기·저장이 영영 끝나지 않게 (stall.js)
+    const res = await untilStalled(instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] }), signal);
     return res.accessToken;
   } catch (e) {
+    if (e instanceof OfflineError) throw e; // 멈춰 끊었다
     // 연결이 없으면 로그인 화면으로 넘기지 않는다 — 열리지 않는 페이지로 가 입력 중인 앱을 잃는다 (I-024)
     if (offlineNow() || MSAL_NETWORK_ERRORS.has(e?.errorCode)) throw new OfflineError();
     // 사용자가 직접 로그인해야 하는 경우에만 리다이렉트한다 (B-005).
@@ -51,9 +54,24 @@ async function getToken(instance, accounts, { interactive = true } = {}) {
 
 async function graphFetch(url, init) {
   try {
-    return await fetch(url, init);
+    const res = await fetch(url, init);
+    poke(init?.signal); // 응답이 왔다 — 멈춤 시계를 처음부터
+    return res;
   } catch (e) {
-    throw new OfflineError();
+    throw stalledReason(init?.signal) || new OfflineError();
+  }
+}
+
+/** 가계부 파일을 다루는 동안의 멈춤 시계 — 끝나면(성공·실패) 멈춘다 */
+async function watched(what, fn) {
+  const signal = stallSignal(what);
+  try {
+    return await fn(signal);
+  } catch (e) {
+    // 작은 응답(JSON)을 읽다 끊긴 것도 멈춤으로 — 브라우저에 따라 그냥 AbortError로 올 수 있다
+    throw stalledReason(signal) || e;
+  } finally {
+    stopStall(signal);
   }
 }
 
@@ -76,12 +94,14 @@ function sharedGone(target, res) {
 
 /** OneDrive 파일의 현재 eTag. 파일이 없으면 null. */
 async function getRemoteETag(instance, accounts, target = OWN_TARGET) {
-  const token = await getToken(instance, accounts);
-  const res = await graphFetch(`${target.metaUrl}?$select=eTag`, { headers: { Authorization: `Bearer ${token}` } });
-  if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`OneDrive 확인 오류: ${res.status} ${res.statusText}`);
-  return (await res.json()).eTag || null;
+  return watched('OneDrive 확인', async (signal) => {
+    const token = await getToken(instance, accounts, { signal });
+    const res = await graphFetch(`${target.metaUrl}?$select=eTag`, { headers: { Authorization: `Bearer ${token}` }, signal });
+    if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`OneDrive 확인 오류: ${res.status} ${res.statusText}`);
+    return (await res.json()).eTag || null;
+  });
 }
 
 /**
@@ -90,20 +110,27 @@ async function getRemoteETag(instance, accounts, target = OWN_TARGET) {
  * 그 경우 다음 저장이 412로 거절되어 다시 합치므로 안전하다.
  */
 async function readDb(instance, accounts, target = OWN_TARGET) {
-  const token = await getToken(instance, accounts);
-  const metaRes = await graphFetch(target.metaUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (sharedGone(target, metaRes)) throw new Error(SHARED_GONE_MESSAGE);
-  if (metaRes.status === 404) return { bytes: null, version: null };
-  if (!metaRes.ok) throw new Error(`OneDrive 읽기 오류: ${metaRes.status} ${metaRes.statusText}`);
-  const meta = await metaRes.json();
+  return watched('OneDrive 가계부 받기', async (signal) => {
+    // 단계별 걸린 시간 — 느렸으면 동기화가 문제 알리기 기록에 남긴다(어디서 느린지 알 수 있게)
+    const t0 = Date.now();
+    const token = await getToken(instance, accounts, { signal });
+    const t1 = Date.now();
+    const metaRes = await graphFetch(target.metaUrl, { headers: { Authorization: `Bearer ${token}` }, signal });
+    if (sharedGone(target, metaRes)) throw new Error(SHARED_GONE_MESSAGE);
+    if (metaRes.status === 404) return { bytes: null, version: null };
+    if (!metaRes.ok) throw new Error(`OneDrive 읽기 오류: ${metaRes.status} ${metaRes.statusText}`);
+    const meta = await metaRes.json();
+    const t2 = Date.now();
 
-  const downloadUrl = meta['@microsoft.graph.downloadUrl'];
-  const res = downloadUrl
-    ? await graphFetch(downloadUrl)
-    : await graphFetch(target.contentUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`OneDrive 읽기 오류: ${res.status} ${res.statusText}`);
-  const buffer = await res.arrayBuffer();
-  return { bytes: new Uint8Array(buffer), version: meta.eTag || null };
+    const downloadUrl = meta['@microsoft.graph.downloadUrl'];
+    const res = downloadUrl
+      ? await graphFetch(downloadUrl, { signal })
+      : await graphFetch(target.contentUrl, { headers: { Authorization: `Bearer ${token}` }, signal });
+    if (!res.ok) throw new Error(`OneDrive 읽기 오류: ${res.status} ${res.statusText}`);
+    const bytes = await readBody(res, signal);
+    const timing = { stages: [['로그인 토큰', t1 - t0], ['파일 정보', t2 - t1], ['내용 받기', Date.now() - t2]], size: bytes.length };
+    return { bytes, version: meta.eTag || null, timing };
+  });
 }
 
 /**
@@ -116,21 +143,25 @@ async function readDb(instance, accounts, target = OWN_TARGET) {
 async function writeDb(instance, accounts, dbBytes, eTag, target = OWN_TARGET) {
   // 공유받은 가계부는 주인 드라이브의 그 파일에만 쓴다 — 없으면 새로 만들지 않는다(다른 곳에 새 가계부가 생기지 않게)
   if (target.shared && !eTag) throw new Error(SHARED_GONE_MESSAGE);
-  const token = await getToken(instance, accounts);
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/octet-stream',
-  };
-  let url = target.contentUrl;
-  if (eTag) headers['If-Match'] = eTag;
-  else url += '?@microsoft.graph.conflictBehavior=fail';
+  return watched('OneDrive 저장', async (signal) => {
+    const token = await getToken(instance, accounts, { signal });
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/octet-stream',
+    };
+    let url = target.contentUrl;
+    if (eTag) headers['If-Match'] = eTag;
+    else url += '?@microsoft.graph.conflictBehavior=fail';
 
-  const res = await graphFetch(url, { method: 'PUT', headers, body: dbBytes });
-  if (res.status === 412 || res.status === 409) throw new ConflictError();
-  if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
-  if (!res.ok) throw new Error(`OneDrive 저장 오류: ${res.status} ${res.statusText}`);
-  const item = await res.json().catch(() => ({}));
-  return item.eTag || null;
+    // 올리는 동안은 진행을 볼 수 없다 — 파일 크기만큼 더 기다린다. 멈춰 끊기면 '올라갔는지 모르는 저장'(OfflineError)
+    poke(signal, uploadStallMs(dbBytes));
+    const res = await graphFetch(url, { method: 'PUT', headers, body: dbBytes, signal });
+    if (res.status === 412 || res.status === 409) throw new ConflictError();
+    if (sharedGone(target, res)) throw new Error(SHARED_GONE_MESSAGE);
+    if (!res.ok) throw new Error(`OneDrive 저장 오류: ${res.status} ${res.statusText}`);
+    const item = await res.json().catch(() => ({}));
+    return item.eTag || null;
+  });
 }
 
 // ── 백업 폴더 (I-014) ────────────────────────────────────────────

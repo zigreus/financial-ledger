@@ -27,6 +27,12 @@
   white-space: nowrap;
 }
 
+/* 받기가 느려 사본으로 먼저 열고 뒤에서 받는 중 — 오프라인(노랑)과 구별 */
+.header-catching-up {
+  background: var(--c-blue-100);
+  color: var(--c-blue-800);
+}
+
 .btn-header {
   padding: 6px 12px;
   border-radius: 8px;

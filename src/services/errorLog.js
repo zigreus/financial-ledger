@@ -86,9 +86,10 @@ function write(list) {
 
 /**
  * 오류 하나를 남긴다. error: Error·문자열·그 밖의 값, opts.where: 위치를 직접 줄 때(없으면 스택에서), opts.kind: 갈래 이름
+ * opts.latestOnly: 같은 갈래는 가장 최근 것 하나만 둔다 — 매번 글이 달라지는 기록(느린 연결의 걸린 시간)이 쌓여 진짜 오류를 밀어내지 않게
  * 남겼으면 true
  */
-export function recordError(error, { where = '', kind = '' } = {}) {
+export function recordError(error, { where = '', kind = '', latestOnly = false } = {}) {
   if (error == null || error === '') return false;
   if (error?.name === 'AbortError') return false;
   // Error가 아닌 값(객체)은 내용을 풀어 쓰지 않는다 — 거래 같은 데이터가 그대로 담길 수 있다
@@ -101,10 +102,17 @@ export function recordError(error, { where = '', kind = '' } = {}) {
   const message = maskSensitive(raw).slice(0, MESSAGE_MAX);
   // 위치는 빌드 파일 이름·줄·칸뿐이라 가리지 않는다(칸 번호가 여섯 자리를 넘기도 한다)
   const place = String(where || (error instanceof Error ? locationFromStack(error.stack) : '')).slice(0, 120);
-  const list = read();
-  const same = list.findIndex(e => e.message === message && e.where === place && e.kind === kind);
-  const count = same >= 0 ? (list[same].count || 1) + 1 : 1;
-  if (same >= 0) list.splice(same, 1);
+  let list = read();
+  let count = 1;
+  if (latestOnly && kind) {
+    const prev = list.filter(e => e.kind === kind);
+    count = prev.reduce((n, e) => n + (e.count || 1), 0) + 1;   // 몇 번째인지는 이어 센다
+    list = list.filter(e => e.kind !== kind);
+  } else {
+    const same = list.findIndex(e => e.message === message && e.where === place && e.kind === kind);
+    count = same >= 0 ? (list[same].count || 1) + 1 : 1;
+    if (same >= 0) list.splice(same, 1);
+  }
   list.push({ at: stamp(), message, where: place, kind, count });
   write(list);
   return true;

@@ -25,6 +25,7 @@
  * 화면은 이 파일을 직접 부르지 않는다. App이 만든 저장소를 useLedgerSync·aiSettingsSync에 넘긴다.
  */
 import { ConflictError, OfflineError, ReconnectRequiredError } from './provider';
+import { poke, readBody, stallSignal, stalledReason, stopStall, uploadStallMs } from './stall';
 
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -56,9 +57,12 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     try {
       res = await doFetch(url, { ...init, signal, headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` } });
     } catch (e) {
+      const stalled = stalledReason(signal); // 가계부를 다루다 멈춰 끊었다 (stall.js)
+      if (stalled) throw stalled;
       if (signal?.aborted) throw new Error('Google Drive 응답이 없습니다 — 연결을 확인하세요');
       throw new OfflineError();
     }
+    poke(signal); // 응답이 왔다 — 멈춤 시계를 처음부터
     if (res.status === 401) {
       if (onUnauthorized) onUnauthorized(token);
       throw new ReconnectRequiredError();
@@ -76,12 +80,12 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     return (await res.json()).files || [];
   }
 
-  async function createFolder(parentId, name) {
+  async function createFolder(parentId, name, signal) {
     const res = await call(`${API}/files?fields=${encodeURIComponent(FILE_FIELDS)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }),
-    });
+    }, { signal });
     if (!res.ok) throw fail('폴더 만들기', res);
     return res.json();
   }
@@ -97,8 +101,8 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     let found = await find(parentId, name, { folder: true, signal });
     if (!found.length) {
       if (!create) return null;
-      const mine = await createFolder(parentId, name);
-      found = await find(parentId, name, { folder: true });
+      const mine = await createFolder(parentId, name, signal);
+      found = await find(parentId, name, { folder: true, signal });
       if (found.length && found[0].id !== mine.id) await remove(mine.id).catch(() => {});
       if (!found.length) found = [mine];
     }
@@ -117,7 +121,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
       : `${API}/files/${encodeURIComponent(id)}?alt=media`;
     const res = await call(url, {}, { signal });
     if (!res.ok) throw fail('읽기', res);
-    return new Uint8Array(await res.arrayBuffer());
+    return readBody(res, signal); // 조각이 올 때마다 멈춤 시계를 처음부터 — 느려도 오고 있으면 기다린다
   }
 
   /** 새 파일(내용과 함께 한 번에 — 빈 파일이 잠깐이라도 보이지 않게) */
@@ -132,6 +136,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     body.set(head, 0);
     body.set(bytes, head.length);
     body.set(tail, head.length + bytes.length);
+    poke(signal, uploadStallMs(body)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
     const res = await call(`${UPLOAD}/files?uploadType=multipart&fields=${encodeURIComponent(FILE_FIELDS)}`, {
       method: 'POST',
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
@@ -142,6 +147,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
   }
 
   async function upload(id, bytes, mimeType, signal) {
+    poke(signal, uploadStallMs(bytes)); // 올리는 동안은 진행을 볼 수 없다 — 크기만큼 더 기다린다
     const res = await call(`${UPLOAD}/files/${encodeURIComponent(id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': mimeType },
@@ -277,23 +283,41 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
   }
 
   // ── 가계부 파일 ─────────────────────────────────────────────────
-  async function read() {
-    await settlePending(GOOGLE_LEDGER_NAME);
-    const folder = await appFolder(false);
-    if (!folder) return { bytes: null, version: null };
-    const file = (await find(folder, GOOGLE_LEDGER_NAME))[0];
-    if (!file) return { bytes: null, version: null };
-    // 버전(메타데이터)을 먼저 읽고 그 리비전의 내용을 받는다 — 내용과 버전이 정확히 맞는다(계약, provider.js)
-    return { bytes: await download(file.id, file.headRevisionId || null), version: file.headRevisionId || null };
+  /** 가계부 파일을 다루는 동안의 멈춤 시계 — 멈추면 StalledError(연결 없음처럼), 끝나면 멈춘다 */
+  async function watched(what, fn) {
+    const signal = stallSignal(what);
+    try {
+      return await fn(signal);
+    } catch (e) {
+      // 작은 응답(JSON)을 읽다 끊긴 것도 멈춤으로 — 브라우저에 따라 그냥 AbortError로 올 수 있다
+      throw stalledReason(signal) || e;
+    } finally {
+      stopStall(signal);
+    }
   }
 
-  async function getVersion() {
-    await settlePending(GOOGLE_LEDGER_NAME);
-    const folder = await appFolder(false);
+  const read = () => watched('Google Drive 가계부 받기', async (signal) => {
+    const t0 = Date.now();
+    await settlePending(GOOGLE_LEDGER_NAME, signal);
+    const folder = await appFolder(false, signal);
+    if (!folder) return { bytes: null, version: null };
+    const file = (await find(folder, GOOGLE_LEDGER_NAME, { signal }))[0];
+    if (!file) return { bytes: null, version: null };
+    const t1 = Date.now();
+    // 버전(메타데이터)을 먼저 읽고 그 리비전의 내용을 받는다 — 내용과 버전이 정확히 맞는다(계약, provider.js)
+    const bytes = await download(file.id, file.headRevisionId || null, signal);
+    // 단계별 걸린 시간 — 느렸으면 동기화가 문제 알리기 기록에 남긴다
+    const timing = { stages: [['파일 찾기', t1 - t0], ['내용 받기', Date.now() - t1]], size: bytes.length };
+    return { bytes, version: file.headRevisionId || null, timing };
+  });
+
+  const getVersion = () => watched('Google Drive 확인', async (signal) => {
+    await settlePending(GOOGLE_LEDGER_NAME, signal);
+    const folder = await appFolder(false, signal);
     if (!folder) return null;
-    const file = (await find(folder, GOOGLE_LEDGER_NAME))[0];
+    const file = (await find(folder, GOOGLE_LEDGER_NAME, { signal }))[0];
     return file ? file.headRevisionId || null : null;
-  }
+  });
 
   // ── 백업 폴더 ───────────────────────────────────────────────────
   async function listBackups() {
@@ -359,7 +383,7 @@ export function createGoogleDriveStorage({ accountKey, getToken, onUnauthorized,
     accountKey: accountKey || '',
     read,
     getVersion,
-    write: (bytes, version) => writeVersioned(GOOGLE_LEDGER_NAME, bytes, version, 'application/octet-stream'),
+    write: (bytes, version) => watched('Google Drive 저장', signal => writeVersioned(GOOGLE_LEDGER_NAME, bytes, version, 'application/octet-stream', signal)),
     listBackups,
     createBackup,
     readBackup,
