@@ -42,9 +42,11 @@ function shortTime(iso) {
 const inFlightList = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
 
 // 처음 열 때 저장소가 이보다 오래 답하지 않으면, 열 수 있는 사본이 있으면 그것으로 먼저 열고 받기는 뒤에서 이어 간다
-// ('맞추는 중', 받으면 그 자리에서 바꾼다). 사본이 없으면 그대로 기다린다 — 느려도 연결은 돼 있을 수 있다
-// (로그아웃 뒤 다시 로그인·새 기기는 사본이 없다). 받기를 끊는 것은 걸린 시간이 아니라 멈춤이다(storage/stall.js)
-const FIRST_LOAD_TIMEOUT_MS = 3000;
+// (머리글 🔄이 돌고, 받으면 그 자리에서 바꾼다). 0 — 사본이 있으면 기다리지 않고 바로 연다(I-059, 사용자 요청: 켜자마자
+// 먼저 쓰고 싶다). 사본을 꺼내는 사이 저장소가 먼저 답하면 사본은 건너뛴다(화면이 두 번 바뀌지 않게).
+// 사본이 없으면 그대로 기다린다 — 느려도 연결은 돼 있을 수 있다(로그아웃 뒤 다시 로그인·새 기기는 사본이 없다).
+// 받기를 끊는 것은 걸린 시간이 아니라 멈춤이다(storage/stall.js)
+const FIRST_LOAD_TIMEOUT_MS = 0;
 // 가계부 받기가 이보다 오래 걸리면 단계별 시간을 문제 알리기 기록에 남긴다 — 어디서 느린지 알 수 있게
 const SLOW_READ_LOG_MS = 5000;
 // 연결이 없는 동안 이 간격으로 다시 확인한다 — 'online' 이벤트가 오지 않는 경우(onLine이 내내 true)도 있다
@@ -490,7 +492,7 @@ export default function useLedgerSync({
    * 연결이 없어 처음 열지 못할 때 — 이 기기에 둔 사본으로 열고 보관한 미저장 변경을 다시 실행한다 (I-024).
    * 열 수 없으면 이유를 담아 던진다(부르는 쪽이 화면에 보인다).
    */
-  const openOfflineCopy = useCallback(async (session, { slow = false, reason = null } = {}) => {
+  const openOfflineCopy = useCallback(async (session, { slow = false, reason = null, unless = null } = {}) => {
     const key = accountKeyRef.current;
     const copy = await offlineCacheRef.current.load(key).catch(() => null);
     if (session !== sessionRef.current) return;
@@ -508,6 +510,8 @@ export default function useLedgerSync({
       cached.close();
       throw new Error('이 기기의 사본이 더 새 버전의 앱에서 저장되었습니다 — 연결된 뒤 페이지를 새로고침하세요');
     }
+    // 사본을 꺼내는 사이 저장소가 먼저 답했다 — 사본은 열지 않고 받은 것으로 연다(화면이 두 번 바뀌지 않게, I-059)
+    if (unless && unless()) { cached.close(); return; }
 
     // ↓ 여기부터 교체까지는 동기 실행 — 그 사이 새 쓰기가 끼어들 수 없다
     const pending = loadPending(key);
@@ -577,6 +581,8 @@ export default function useLedgerSync({
         const done = () => { if (firstReadRef.current === p) firstReadRef.current = null; };
         p.then(done, done);
       }
+      let settled = false;
+      p.then(() => { settled = true; }, () => { settled = true; });
       const TIMED_OUT = {};
       let timer;
       const first = await Promise.race([
@@ -585,7 +591,7 @@ export default function useLedgerSync({
       ]).finally(() => clearTimeout(timer));
       if (first !== TIMED_OUT) return first;
       try {
-        await openOfflineCopy(session, { slow: true });
+        await openOfflineCopy(session, { slow: true, unless: () => settled });
         if (dbRef.current) {
           // 받기는 뒤에서 이어 간다 — 끝나면(받았든 못 받았든) 바로 이어서 불러온다(받은 것을 쓰거나 실패를 '오프라인'으로)
           earlyReadRef.current = { p, base: versionRef.current, session };

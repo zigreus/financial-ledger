@@ -487,6 +487,52 @@ test('가계부 받기가 오래 걸리면 단계별 시간을 문제 알리기�
   B.unmount();
 });
 
+test('기본 설정: 사본이 있으면 받기를 기다리지 않고 바로 연다 — 켜자마자 쓸 수 있게, 받으면 최신으로 (I-059)', async () => {
+  const A = await opened();
+  A.unmount();
+  otherDevice('다른 기기');
+  const realRead = storage.read;
+  storage.read = async () => { await new Promise(r => setTimeout(r, 150)); return realRead(); };   // 보통의 받기 시간
+  const B = await mount();                                          // firstLoadTimeoutMs 기본값
+  let loading;
+  await act(async () => { loading = B.ref.current.loadDb(); });
+  await act(async () => { await new Promise(r => setTimeout(r, 40)); });
+  expect(details(B.ref.current.db)).toEqual(['지금']);              // 받기 전에 사본이 열렸다
+  expect(B.ref.current.catchingUp).toBe(true);
+  expect(B.ref.current.offline).toBe(false);
+  await act(async () => { await loading; await new Promise(r => setTimeout(r, 200)); });
+  await flush();
+  expect(details(B.ref.current.db)).toEqual(['지금', '다른 기기']);
+  expect(B.ref.current.catchingUp).toBe(false);
+  storage.read = realRead;
+  B.unmount();
+});
+
+test('사본을 꺼내는 사이 저장소가 먼저 답하면 사본은 건너뛰고 받은 것으로 연다 — 화면이 두 번 바뀌지 않게 (I-059)', async () => {
+  const A = await opened();
+  A.unmount();
+  otherDevice('다른 기기');
+  const realRead = storage.read;
+  storage.read = async () => { await new Promise(r => setTimeout(r, 20)); return realRead(); };
+  const slowCache = { ...cache, load: async (...a) => { await new Promise(r => setTimeout(r, 120)); return cache.load(...a); } };
+  const seen = [];
+  const ref = { current: null };
+  function Harness() {
+    ref.current = useLedgerSync({ storage, offlineCache: slowCache });
+    if (ref.current.db) seen.push(details(ref.current.db).join(','));
+    return null;
+  }
+  const root = createRoot(document.createElement('div'));
+  await act(async () => { root.render(<Harness />); });
+  await act(async () => { await ref.current.loadDb(); await new Promise(r => setTimeout(r, 200)); });
+  await flush();
+  expect(details(ref.current.db)).toEqual(['지금', '다른 기기']);
+  expect(seen.every(v => v === '지금,다른 기기')).toBe(true);        // 사본(지금)이 한 번도 보이지 않았다
+  expect(ref.current.catchingUp).toBe(false);
+  storage.read = realRead;
+  act(() => root.unmount());
+});
+
 test('사본이 없으면(다시 로그인·새 기기) 느려도 오류 없이 기다려 연다 — 다시 시도해도 받기를 겹쳐 시작하지 않는다', async () => {
   const realRead = storage.read;
   let release;
