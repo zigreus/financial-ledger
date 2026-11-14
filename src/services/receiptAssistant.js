@@ -30,6 +30,7 @@ export const SOURCE_LABEL = {
   sms: '카드 문자',
   history: '기존 내역',
   ai: 'AI 추천',
+  carried: '추천', // 말로 입력에서 다른 건에 말한 결제수단을 이 건에도 (B-096)
   trip: '여행 일정',
   today: '오늘 날짜',
 };

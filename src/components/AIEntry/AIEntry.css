@@ -183,6 +183,7 @@
 .rs-src-receipt { background: var(--c-blue-50); color: var(--primary-text-strong); }
 .rs-src-history { background: var(--c-emerald-50); color: var(--c-emerald-700); }
 .rs-src-ai { background: var(--c-violet-50); color: var(--c-violet-700); }
+.rs-src-carried { background: var(--c-amber-50); color: var(--c-amber-700); }
 .rs-src-trip { background: var(--c-orange-50); color: var(--c-orange-700); }
 .rs-src-text,
 .rs-src-sms,

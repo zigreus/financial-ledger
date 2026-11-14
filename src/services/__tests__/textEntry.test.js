@@ -421,11 +421,11 @@ describe('말한 결제수단이 예전 습관보다 먼저 (B-096)', () => {
     expect(autoAdded(db, [mart], '롯데마트 3만원')).toEqual(['롯데카드']);
   });
 
-  test('바로 넣기: 한 번 말한 카드가 뒤의 건에도 걸릴 수 있어, 글에 결제수단 말이 있으면 습관 카드로 바로 넣지 않는다', async () => {
+  test('여러 건에서 한 번 말한 결제수단은 말하지 않은 건에도 추천한다 — 바로 넣지 않고 확인받는다', async () => {
     const db = withHabit();
     db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('식비','간식')");
     const text = '현대카드로 김밥천국 9000원, 붕어빵 3000원';
-    // AI가 현대카드를 첫 건에만 붙였다 — 붕어빵은 습관(하나카드)으로 채워지지만 바로 넣지 않는다
+    // AI가 현대카드를 첫 건에만 붙였다 — 붕어빵은 늘 하나카드였지만 앞에서 말한 현대카드를 추천한다
     for (let i = 1; i <= 2; i++) {
       db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '하나카드', '식비', '간식', '붕어빵', 3000)", [addDays(TODAY, -i)]);
     }
@@ -434,7 +434,27 @@ describe('말한 결제수단이 예전 습관보다 먼저 (B-096)', () => {
       question: '',
     });
     const list = await parse(db, text);
-    expect(list.map(s => s.payment_method)).toEqual(['현대카드M', '하나카드']);
+    expect(list.map(s => s.payment_method)).toEqual(['현대카드M', '현대카드M']);
+    expect(list[1].sources.payment_method).toBe('carried');
+    expect(list[1].warnings).toEqual(["말한 결제수단 '현대카드' 추천 — 이 건도 맞는지 확인해 주세요"]);
+    expect(isSpokenPaymentWarning(list[1].warnings[0])).toBe(true);
     expect(autoAdded(db, list, text)).toEqual(['현대카드M']);
+
+    // 말한 결제수단이 뒤에 있으면 앞 건에도 추천한다
+    analyzeWithAI.mockResolvedValueOnce({
+      entries: [entry({ detail: '붕어빵', amount: 3000, category: '식비 > 간식' }), said({ payment_said: '현대카드', payment_method: '현대카드' })],
+      question: '',
+    });
+    const back = await parse(db, '붕어빵 3000원, 김밥천국 9000원 현대카드');
+    expect(back.map(s => [s.payment_method, s.sources.payment_method])).toEqual([['현대카드M', 'carried'], ['현대카드M', 'text']]);
+
+    // 각자 말했거나, 말한 것이 목록에 없으면 추천하지 않는다(습관대로, 바로 넣지 않음)
+    analyzeWithAI.mockResolvedValueOnce({
+      entries: [said({ payment_said: '삼성페이', payment_method: '모름' }), entry({ detail: '붕어빵', amount: 3000, category: '식비 > 간식' })],
+      question: '',
+    });
+    const none = await parse(db, '삼성페이로 김밥천국 9000원, 붕어빵 3000원');
+    expect(none.map(s => s.payment_method)).toEqual(['', '하나카드']);
+    expect(none[1].sources.payment_method).toBe('history');
   });
 });

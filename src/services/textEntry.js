@@ -154,7 +154,15 @@ export async function parseTextEntry({ db, ai, text, followUps = [], signal, onP
   // 한 건인데 AI가 결제수단을 말하지 않았다고 보면 — 글에 목록의 결제수단이 또렷이 있는지 앱이 한 번 더 본다 (B-096)
   const lone = list.length === 1 && !list[0].payment_mentioned && !String(list[0].payment_said || '').trim();
   const foundPayment = lone ? paymentWordIn(db, spokenText, list[0]) : '';
-  return list.map(e => buildTextSuggestion(db, e, today, { spokenText, foundPayment }));
+  const out = list.map(e => buildTextSuggestion(db, e, today, { spokenText, foundPayment }));
+  // 여러 건 중 결제수단을 말하지 않은 건 — 다른 건에 말한 결제수단을 추천한다('현대카드로 병원 9천원, 약국 5천원'의 약국).
+  // 앞 건에 말한 것이 먼저, 없으면 뒤 건. 짐작이라 바로 넣지 않고 확인받는다
+  const told = out.map((s, i) => (s.paymentMentioned && s.paymentSaid && s.payment_method ? i : -1)).filter(i => i >= 0);
+  return out.map((s, i) => {
+    if (s.paymentMentioned || !told.length) return s;
+    const from = [...told].reverse().find(j => j < i) ?? told.find(j => j > i);
+    return buildTextSuggestion(db, list[i], today, { spokenText, carriedPayment: out[from].paymentSaid });
+  });
 }
 
 // 결제수단 낱말 끝에 붙는 말 — '현대카드로', '현금으로', '신한카드 결제'
@@ -215,8 +223,9 @@ function spokenPayment(e, spokenText) {
  * AI가 나눈 한 건을 이 가계부 데이터에 맞춘 추천으로.
  * spokenText: 사용자가 쓴 글(덧붙인 말 포함) — 있으면 AI가 짚은 결제수단 표현이 정말 글에 있는지 본다
  * foundPayment: AI는 결제수단을 말하지 않았다고 했는데 앱이 글에서 찾은 결제수단 낱말 — 그것으로 고르되 바로 넣지는 않는다(확인받는다)
+ * carriedPayment: 이 건은 결제수단을 말하지 않았고 다른 건에 말한 결제수단 표현 — 맞는 것이 있으면 '추천'으로 채운다(확인받는다)
  */
-export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, foundPayment = '' } = {}) {
+export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, foundPayment = '', carriedPayment = '' } = {}) {
   const { date, source: dateSource } = resolveDate(e.date, today, 'text');
   const money = withSpokenKrw(resolveAmount(db, { total: e.amount, currency: e.currency, date }), e.krw_amount);
   const cls = classify(db, {
@@ -229,6 +238,16 @@ export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, fou
     })
     : pickSpokenPayment(db, { said, aiMethod: e.payment_method, history: cls.history, sub: cls.sub_category });
   if (foundPayment && pay.source && pay.source !== 'ai') pay = { ...pay, source: 'ai' };
+  if (said === null && carriedPayment) {
+    const carried = pickSpokenPayment(db, { said: carriedPayment, aiMethod: '', history: cls.history, sub: cls.sub_category });
+    if (carried.payment_method) {
+      pay = {
+        payment_method: carried.payment_method,
+        source: 'carried',
+        warning: `말한 결제수단 '${carriedPayment}' 추천 — 이 건도 맞는지 확인해 주세요`,
+      };
+    }
+  }
 
   const sources = { date: dateSource, ...cls.sources };
   if (money.event_id) sources.event = 'trip';
