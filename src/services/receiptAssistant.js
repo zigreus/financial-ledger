@@ -57,7 +57,7 @@ const habitLine = p => `${p.detail} → ${p.budget_category}${p.sub_category ? `
 /**
  * 사용자가 사전에 동의한 범위(목록·입력 습관·여행 일정)만 담은 지시문 앞부분.
  * 영수증·말로 입력·카드 내역 대조가 함께 쓴다.
- * text(말로 입력·AI 명령의 글)를 주면 글에 나온 이름의 예전 기록도 함께 보낸다 — AI가 판단 근거로 쓰게 (relatedPatterns, I-062)
+ * text(말로 입력·AI 명령의 글, 사진 설명)를 주면 글에 나온 이름의 예전 기록도 함께 보낸다 — AI가 판단 근거로 쓰게 (relatedPatterns, I-062)
  */
 export function buildDataContext(db, today = todayStr(), { text = '' } = {}) {
   const methods = getPaymentMethods(db);
@@ -252,7 +252,7 @@ const NAMES_ONLY_SOURCES = new Set(['sms', 'statement']);
  *  - 가게 이름만 주는 갈래(카드 문자·카드 명세서 대조)는 산 것을 알 수 없어 같은 가게의 예전 기록이 판단이다
  *  - 말로 입력에서 가게와 산 것을 함께 말했으면 산 것의 예전 기록을 먼저 찾는다('이마트 우유' → '우유')
  * 여행 일정이면 여행 카테고리 안에서(예전 기록이 여행 카테고리 안이면 그 세부카테고리를 살린다).
- * promptText: 말로 입력·AI 명령의 글 — 지시문에 글에 나온 이름의 예전 기록도 보냈다(relatedPatterns)
+ * promptText: 말로 입력·AI 명령의 글, 사진과 함께 보낸 설명 — 지시문에 글에 나온 이름의 예전 기록도 보냈다(relatedPatterns)
  * aiAltCategory: AI가 헷갈릴 때 준 2순위 분류
  * 반환: { detail, budget_category, sub_category, history, alternatives, categoryGuess, sources: { detail, category } }
  *  - history: 원문과 같은 것을 가리키는 예전 기록일 때만 (결제수단 습관·바로 넣기·'예전에 N번' 안내가 쓴다)
@@ -587,12 +587,14 @@ export function suggestionToTransaction(db, s) {
 /**
  * 영수증 AI 응답을 이 가계부 데이터에 맞춘 입력 추천으로 바꾼다.
  * 반환값의 sources는 항목별 근거 (SOURCE_LABEL 키).
+ * promptText: 사진과 함께 보낸 사용자 설명(I-063) — 지시문에 설명에 나온 이름의 예전 기록도 보냈다(classify 참고)
  */
-export function buildSuggestion(db, raw, { today = todayStr() } = {}) {
+export function buildSuggestion(db, raw, { today = todayStr(), promptText = '' } = {}) {
   const { date, source: dateSource } = resolveDate(raw.date, today, 'receipt');
   const money = resolveAmount(db, { total: raw.total, currency: raw.currency, date });
   const cls = classify(db, {
     merchant: raw.merchant, detail: raw.detail, aiCategory: raw.category, aiAltCategory: raw.category_alt, eventId: money.event_id,
+    promptText,
   });
   const pay = pickPaymentMethod(db, {
     aiMethod: raw.payment_method, evident: !!raw.payment_hint, history: cls.history, sub: cls.sub_category,

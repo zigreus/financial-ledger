@@ -536,7 +536,7 @@ function App() {
       // 꺼내는 사이 로그아웃했거나 빈 가계부(첫 실행 안내)면 열지 않는다
       if (!dbRef.current || blankLedgerRef.current) return;
       if (shared) {
-        setAiStart({ text: shared.text, files: shared.files });
+        setAiStart({ text: shared.text, caption: shared.caption, files: shared.files });
         navigate({ showForm: true, editingTx: null, copyFromTx: null });
       } else if (action === 'ai') {
         navigate({ showAssistant: true });

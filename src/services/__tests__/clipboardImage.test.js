@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 // 클립보드 이미지 꺼내기 (I-020) — 캡처는 이미지로, 글 붙여넣기는 그대로
-import { imagesFromPaste, readClipboardImages, canReadClipboardImages, pasteShortcut } from '../clipboardImage';
+import { imagesFromPaste, readClipboardImages, canReadClipboardImages, pasteShortcut, isImageSideText } from '../clipboardImage';
 
 const png = (name = 'image.png') => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
 
@@ -127,4 +127,12 @@ describe('붙여넣기 버튼 (클립보드 읽기)', () => {
     expect(err.message).toMatch(/^클립보드를 읽지 못했습니다/);
     expect(err.message).not.toMatch(/not allowed/);
   });
+});
+
+test('그림에 딸려 온 글이 이미지 주소·파일 이름뿐인지 — 공유받은 사진의 글을 설명으로 보낼지 가린다 (I-063)', () => {
+  expect(isImageSideText('')).toBe(false);
+  expect(isImageSideText('https://example.com/a.jpg')).toBe(true);
+  expect(isImageSideText('영수증.png')).toBe(true);
+  expect(isImageSideText('어제 마트 영수증')).toBe(false);
+  expect(isImageSideText('영수증 보세요 https://example.com/a.png')).toBe(false);
 });

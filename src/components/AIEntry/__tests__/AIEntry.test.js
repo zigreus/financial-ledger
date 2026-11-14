@@ -10,7 +10,7 @@ import { AIError } from '../../../services/aiClient';
 import AIEntry from '../AIEntry';
 import { parseTextEntry } from '../../../services/textEntry';
 
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+vi.mock('../../../services/textEntry', async (importOriginal) => ({ ...(await importOriginal()), parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
 // 설정 화면은 저장·취소만 흉내 낸다 (실제 화면은 AISettingsForm.test.js)
 vi.mock('../AISettingsForm', () => ({
   default: ({ onSaved, onCancel }) => (

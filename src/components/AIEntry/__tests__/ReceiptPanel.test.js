@@ -12,11 +12,10 @@ import { preparePhotos } from '../../../services/imageUtils';
 import { familiarity, splitFamiliar } from '../../../services/quickEntry';
 
 // 겹친 결제 다시 따지기는 보통 지금 표시를 그대로 둔다 — 줄 사이가 얽히는 경우는 실제 규칙(realMarkDuplicates)과 가짜 가계부(ledger)로
-vi.mock('../../../services/photoEntry', async (importOriginal) => ({
-  analyzePhotos: vi.fn(),
-  markDuplicates: vi.fn(),
-  realMarkDuplicates: (await importOriginal()).markDuplicates,
-}));
+vi.mock('../../../services/photoEntry', async (importOriginal) => {
+  const real = await importOriginal();
+  return { analyzePhotos: vi.fn(), markDuplicates: vi.fn(), realMarkDuplicates: real.markDuplicates, cleanPhotoNotes: real.cleanPhotoNotes };
+});
 vi.mock('../../../services/receiptAssistant', async (importOriginal) => ({
   ...(await importOriginal()),
   suggestionToTransaction: (db, s) => ({ detail: s.detail || s.merchant, amount: s.amount, payment_method: s.payment_method }),
@@ -711,3 +710,386 @@ test('이미 넣은 결제는 고칠 것이 없다 — 수정 필요를 보이�
   expect(container.querySelector('.rs-fix-count')).toBeNull();
 });
 
+
+// 설명 덧붙여 다시 읽기 (I-063) — 사진에 없는 것(나눠 냄·누구 것·일부만)을 적으면 사진을 그 설명과 함께 처음부터 다시 읽는다
+const noteLink = () => [...container.querySelectorAll('button')].find(b => b.textContent === '+ 설명 덧붙여 다시 읽기');
+const noteBox = () => container.querySelector('.tp-followup textarea');
+const rereadButton = () => [...container.querySelectorAll('.tp-followup button')].find(b => b.textContent === '다시 읽기');
+const buttonNamed = name => [...container.querySelectorAll('button')].find(b => b.textContent === name);
+const writeNote = async (text) => {
+  if (!noteBox()) await act(async () => { noteLink().click(); });
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(noteBox(), text);
+    noteBox().dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
+const sentNotes = () => analyzePhotos.mock.calls.map(c => c[0].notes);
+
+test('한 건 결과에서 설명을 덧붙이면 같은 사진을 설명과 함께 다시 읽고, 덧붙인 설명은 화면에 남는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 30000 }));
+  const onApply = vi.fn();
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={onApply} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  await writeNote('친구랑 반반 냈어요');
+  expect(buttonNamed('이대로 채우기').disabled).toBe(true);       // 쓴 설명을 두고 채우지 않게
+  expect(container.textContent).toContain("'다시 읽기'를 누르거나 지우면");
+
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 15000 }));
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(sentNotes()).toEqual([[], ['친구랑 반반 냈어요']]);
+  expect(analyzePhotos.mock.calls[1][0].parts).toBe(IMAGE.parts); // 같은 사진을 다시 보낸다
+  expect(container.querySelector('.tp-quote').textContent).toContain('친구랑 반반 냈어요');
+  expect(noteBox()).toBeNull();                                    // 상자는 닫히고 링크만
+  await act(async () => { buttonNamed('이대로 채우기').click(); });
+  expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ amount: 15000 }));
+
+  // 또 덧붙이면 앞 설명과 함께 보낸다
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 15000 }));
+  await writeNote('현금이었어요');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(sentNotes()[2]).toEqual(['친구랑 반반 냈어요', '현금이었어요']);
+});
+
+test('설명과 함께 다시 읽는 중에 취소하거나 실패하면 앞 결과로 돌아가고, 쓰던 설명은 상자에 남는다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [row('주유소', 50000), row('마트', 7000)], cancels: [], note: '' });
+  const onClose = vi.fn();
+  await renderList({ onBulkAdd: vi.fn(), onClose });
+  await flush();
+  await openEdit(1);
+  await typeInto(amountField(1), '8000');                         // 직접 고친 값
+
+  analyzePhotos.mockImplementationOnce(({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => {
+    const e = new Error('aborted'); e.name = 'AbortError'; reject(e);
+  })));
+  await writeNote('마트는 생활용품이에요');
+  await act(async () => { rereadButton().click(); });
+  expect(container.textContent).toContain('설명과 함께 다시 읽는 중');
+  await act(async () => { buttonNamed('취소').click(); });
+  await flush();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('사진에서 결제 2건을 찾았어요');
+  expect(addButton().textContent).toBe('2건 추가 (58,000원)');    // 고친 값(마트 8,000원)도 그대로
+  expect(noteBox().value).toBe('마트는 생활용품이에요');
+
+  const busy = new Error('요청이 너무 많습니다'); busy.kind = 'quota';
+  analyzePhotos.mockRejectedValueOnce(busy);
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(container.textContent).toContain('사진에서 결제 2건을 찾았어요');
+  expect(container.querySelector('.tp-followup .rs-error-text').textContent).toBe('요청이 너무 많습니다');
+  expect([...container.querySelectorAll('.tp-followup button')].some(b => b.textContent === 'AI 설정')).toBe(true);
+  expect(noteBox().value).toBe('마트는 생활용품이에요');
+  expect(addButton().disabled).toBe(true);                        // 쓴 설명이 남아 있는 동안은 추가하지 않는다
+});
+
+test('설명을 덧붙였으면 늘 넣던 결제라도 바로 넣지 않고 확인받는다 — 처음부터 설명과 함께 온 사진도', async () => {
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  familiarity.mockReturnValue({ familiar: true, reason: '' });
+  const onAutoAdd = vi.fn(() => null);
+  // 사진과 함께 온 설명 (AI 입력 상자에 먼저 쓴 글)
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 5000 }));
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} initialNotes={['  회사 경비예요 ']} onApply={() => {}} onAutoAdd={onAutoAdd} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  expect(sentNotes()[0]).toEqual(['회사 경비예요']);
+  expect(onAutoAdd).not.toHaveBeenCalled();
+  expect(familiarity).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  expect(container.querySelector('.tp-quote').textContent).toContain('회사 경비예요');
+
+  // 여러 건을 읽은 뒤 덧붙인 설명 — 다시 읽은 결과도 바로 넣지 않는다
+  splitFamiliar.mockReturnValue({ familiar: [], review: [] });
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [row('주유소', 50000), row('마트', 7000)], cancels: [], note: '' });
+  await renderList({ onAutoAdd, files: [{ name: 'b.jpg' }] });
+  await flush();
+  expect(sentNotes()[1]).toEqual([]);                              // 새 사진 — 앞 설명은 따라가지 않는다
+  splitFamiliar.mockClear();
+  const a = row('주유소', 50000);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [a, row('마트', 7000)], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [a], review: [] });
+  await writeNote('남편 카드 내역이에요');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(splitFamiliar).not.toHaveBeenCalled();
+  expect(onAutoAdd).not.toHaveBeenCalled();
+  expect(boxes().map(b => b.checked)).toEqual([true, true]);
+});
+
+test('결제를 찾지 못한 화면에서도 설명을 덧붙여 다시 읽을 수 있다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [], cancels: [], note: '' });
+  await renderList();
+  await flush();
+  expect(container.textContent).toContain('사진에서 결제를 찾지 못했습니다');
+  expect(buttonNamed('다시 시도')).toBeDefined();
+  await writeNote('토스 송금 내역이에요 — 3만원 보낸 것');
+  expect(buttonNamed('다시 시도')).toBeUndefined();               // 쓴 설명을 버리고 다시 시도하지 않게
+
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [], cancels: [], note: '' });
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(container.querySelector('.tp-followup .rs-error-text').textContent).toContain('설명과 함께 읽어도 결제를 찾지 못했어요');
+
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 30000 }));
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  expect(sentNotes().slice(1)).toEqual([['토스 송금 내역이에요 — 3만원 보낸 것'], ['토스 송금 내역이에요 — 3만원 보낸 것']]);
+});
+
+test('바로 넣은 뒤 설명과 함께 다시 읽으면 그 결제는 새 목록의 "이미 넣은 거래"로, 되돌리면 "되돌린 거래"로 (두 번 넣지 않게)', async () => {
+  useRealRules();
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const f = row('주유소', 50000);
+  const r = row('마트', 7000);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [f, r], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [f], review: [{ s: r, reason: '처음 보는 곳이에요' }] });
+  let undone;
+  const onAutoAdd = vi.fn((rows) => {
+    rows.forEach((x, i) => ledger.push({ id: 100 + i, date: '2025-01-01', ...x }));
+    return { undo: () => 1, onUndone: (fn) => { undone = fn; return () => {}; } };
+  });
+  const onBulkAdd = vi.fn();
+  await renderList({ onAutoAdd, onBulkAdd });
+  await flush();
+  expect(onAutoAdd).toHaveBeenCalledTimes(1);
+
+  // 다시 읽은 결과 — 바로 넣은 주유소도 다시 읽힌다(사진 읽기가 가계부와 대조해 '이미 넣은 거래'로 표시)
+  const dup = { id: 100, date: '2025-01-01', detail: '주유소', amount: 50000, payment_method: '현대EV' };
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [row('주유소', 50000, { duplicateOf: dup }), row('마트', 7000)], cancels: [], note: '' });
+  await writeNote('마트는 생활용품이에요');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(onAutoAdd).toHaveBeenCalledTimes(1);
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  expect(items()[0].textContent).toContain('이미 넣은 거래가 있어요');
+  expect(container.textContent).toContain('자주 넣던 1건은 바로 추가했어요');  // 되돌리기는 그대로
+
+  // 다른 줄을 고쳐도 '이미 넣은 거래'는 풀리지 않는다 (앞서 바로 넣은 것은 이제 새 목록의 줄이 대신한다)
+  await openEdit(1);
+  await typeInto(amountField(1), '7500');
+  expect(items()[0].textContent).toContain('이미 넣은 거래가 있어요');
+  expect(boxes()[0].checked).toBe(false);
+
+  // 되돌리면 줄을 더하지 않고, 그 줄이 체크 없이 '되돌린 거래'가 된다
+  ledger = ledger.filter(t => t.id !== 100);
+  await act(async () => { undone(1); });
+  expect(items().length).toBe(2);
+  expect(items()[0].textContent).toContain('되돌린 거래예요');
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd).toHaveBeenCalledWith([expect.objectContaining({ detail: '마트', amount: 7500 })]);
+});
+
+// 리뷰에서 찾은 경우 (I-063) — 다시 읽은 결과가 앞서 바로 넣은·되돌린 결제와 겹치면 저절로 체크하지 않는다
+function autoAddedList() {
+  useRealRules();
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const f = row('주유소', 50000);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [f, row('마트', 7000)], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [f], review: [] });
+  const ctl = { undone: null };
+  const onAutoAdd = vi.fn((rows) => {
+    rows.forEach((x, i) => ledger.push({ id: 100 + i, date: '2025-01-01', ...x }));
+    return { undo: () => 1, onUndone: (fn) => { ctl.undone = fn; return () => {}; } };
+  });
+  return { ctl, onAutoAdd };
+}
+const undoAutoAdded = ctl => act(async () => { ledger = ledger.filter(t => t.id !== 100); ctl.undone(1); });
+
+test('설명대로 금액이 바뀐 결제가 앞서 바로 넣은 것과 같은 곳·같은 날이면 체크 없이 알리고, 되돌리면 "설명대로 다시 읽은 것"으로 (두 번 넣지 않게)', async () => {
+  const { ctl, onAutoAdd } = autoAddedList();
+  const onBulkAdd = vi.fn();
+  await renderList({ onAutoAdd, onBulkAdd });
+  await flush();
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [row('주유소', 25000), row('마트', 7000)], cancels: [], note: '' });
+  await writeNote('주유소는 반반 냈어요');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  expect(items()[0].textContent).toContain('앞에서 바로 넣은 결제와 같은 곳·같은 날이에요');
+
+  await undoAutoAdded(ctl);
+  expect(items().length).toBe(2);
+  expect(items()[0].textContent).toContain('되돌린 결제를 설명대로 다시 읽은 것 같아요');
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  await act(async () => { boxes()[0].click(); });                 // 맞으면 직접 고른다
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd.mock.calls[0][0].map(r => r.amount)).toEqual([25000, 7000]);
+});
+
+test('바로 넣었다 되돌린 거래는 설명과 함께 다시 읽어도 체크 없이 "되돌린 거래"로 돌아온다', async () => {
+  const { ctl, onAutoAdd } = autoAddedList();
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  await undoAutoAdded(ctl);
+  expect(boxes().map(b => b.checked)).toEqual([true, false]);       // 마트, 되돌린 주유소
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [row('주유소', 50000), row('마트', 7000)], cancels: [], note: '' });
+  await writeNote('마트는 생활용품이에요');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  expect(items()[0].textContent).toContain('되돌린 거래예요');
+});
+
+test('설명과 함께 읽은 한 건이 이미 넣은 거래와 같으면, 바로 넣기를 따지지 않아도 확인 화면에 그 이유를 보인다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  const dup = { id: 7, date: '2025-01-01', detail: '스타벅스', amount: 5000, payment_method: '현대EV' };
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 5000, duplicateOf: dup }));
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} initialNotes={['회사 경비예요']} onApply={() => {}} onAutoAdd={vi.fn()} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  expect(familiarity).not.toHaveBeenCalled();
+  expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요(스타벅스 5,000원 · 현대EV)');
+});
+
+test('설명 없이 다시 시도하면 지난 "다시 읽기" 오류는 지운다', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [], cancels: [], note: '' });
+  await renderList();
+  await flush();
+  await writeNote('카드 이용내역이에요');
+  const busy = new Error('요청이 너무 많습니다'); busy.kind = 'quota';
+  analyzePhotos.mockRejectedValueOnce(busy);
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  expect(container.querySelector('.tp-followup .rs-error-text').textContent).toBe('요청이 너무 많습니다');
+  // 오류 화면에는 'AI 설정'이 이미 있다 — 설명 상자에 또 두지 않는다
+  expect([...container.querySelectorAll('button')].filter(b => b.textContent === 'AI 설정').length).toBe(1);
+  await writeNote('');
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 5000 }));
+  await act(async () => { buttonNamed('다시 시도').click(); });
+  await flush();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  expect(container.textContent).not.toContain('요청이 너무 많습니다');
+  expect(noteBox()).toBeNull();
+});
+
+test('설명은 보내는 그대로 화면에 남는다 — 많으면 첫 설명과 최근 것만', async () => {
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockResolvedValue(one({ ...SUGGESTION, amount: 5000 }));
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} initialNotes={['설명1', '설명2', '설명3', '설명4', '설명5', '설명6']} onApply={() => {}} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  await writeNote('설명7');
+  await act(async () => { rereadButton().click(); });
+  await flush();
+  const sent = sentNotes().at(-1);
+  expect(sent).toEqual(['설명1', '설명3', '설명4', '설명5', '설명6', '설명7']);
+  expect(container.querySelector('.tp-quote').textContent).not.toContain('설명2');
+  expect(container.querySelector('.tp-quote').textContent).toContain('설명7');
+});
+
+// 다시 리뷰에서 찾은 경우 (I-063) — 바로 넣은 결제와 같은 곳·같은 날인 줄은 모두 체크 없이, 고쳐도 저절로 체크되지 않게
+async function rereadWith(next, note = '설명') {
+  analyzePhotos.mockResolvedValueOnce(next);
+  await writeNote(note);
+  await act(async () => { rereadButton().click(); });
+  await flush();
+}
+
+test('품목대로 나뉜 줄은 바로 넣은 결제와 같은 곳·같은 날이면 모두 체크 없이 둔다', async () => {
+  const { onAutoAdd } = autoAddedList();                                          // 주유소 50,000 바로 넣음
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  await rereadWith({ suggestions: [row('주유소', 40000), row('주유소', 10000), row('마트', 7000)], cancels: [], note: '' }, '세차는 따로');
+  expect(boxes().map(b => b.checked)).toEqual([false, false, true]);
+  expect(items()[1].textContent).toContain('앞에서 바로 넣은 결제와 같은 곳·같은 날이에요');
+});
+
+test('같은 곳 결제가 둘이면 어느 줄이 바로 넣은 것인지 알 수 없어 그곳 줄을 모두 체크 없이 둔다', async () => {
+  useRealRules();
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  const a = row('스타벅스', 4500);
+  analyzePhotos.mockResolvedValueOnce({ suggestions: [a, row('스타벅스', 6000)], cancels: [], note: '' });
+  splitFamiliar.mockReturnValue({ familiar: [a], review: [] });
+  const onAutoAdd = vi.fn((rows) => {
+    rows.forEach((x, i) => ledger.push({ id: 100 + i, date: '2025-01-01', ...x }));
+    return { undo: () => 1, onUndone: () => () => {} };
+  });
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  await rereadWith({ suggestions: [row('스타벅스', 6000), row('스타벅스', 2250)], cancels: [], note: '' }, '4500원은 반반');
+  expect(boxes().map(b => b.checked)).toEqual([false, false]);
+});
+
+test('체크 없이 둔 줄(바로 넣은 결제와 같은 곳)은 고쳐서 넣을 수 있게 돼도 저절로 체크되지 않고 이유가 남는다', async () => {
+  const { onAutoAdd } = autoAddedList();
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  await rereadWith({ suggestions: [row('주유소', 25000, { payment_method: '' }), row('마트', 7000)], cancels: [], note: '' }, '주유소는 반반');
+  expect(boxes().map(b => b.checked)).toEqual([false, true]);
+  await act(async () => {
+    const sel = items()[0].querySelector('.tp-item-fields select');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, '현대EV');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(boxes()[0].checked).toBe(false);
+  expect(items()[0].textContent).toContain('앞에서 바로 넣은 결제와 같은 곳·같은 날이에요');
+});
+
+test('설명 빼고 다시 읽기 — 넘겨받은 설명이 맞지 않으면 설명 없이 다시 읽고, 다시 읽은 결과는 바로 넣지 않는다', async () => {
+  memberNames = [];
+  preparePhotos.mockResolvedValue(IMAGE);
+  familiarity.mockReturnValue({ familiar: true, reason: '' });
+  const onAutoAdd = vi.fn(() => null);
+  analyzePhotos.mockResolvedValueOnce(one({ ...SUGGESTION, amount: 2500 }));
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} initialNotes={['반반 냈어요']} onApply={() => {}} onAutoAdd={onAutoAdd} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  const drop = () => buttonNamed('설명 빼고 다시 읽기');
+  await writeNote('현금');
+  expect(drop()).toBeUndefined();                                  // 쓰는 중인 설명이 있으면 그 상자부터
+  await writeNote('');
+  const answer = deferred();
+  analyzePhotos.mockReturnValueOnce(answer.promise);
+  await act(async () => { drop().click(); });
+  expect(container.textContent).toContain('설명 없이 다시 읽는 중');
+  await act(async () => { answer.resolve(one({ ...SUGGESTION, amount: 5000 })); });
+  await flush();
+  expect(sentNotes().at(-1)).toEqual([]);
+  expect(onAutoAdd).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  expect(container.querySelector('.tp-quote')).toBeNull();
+  expect(drop()).toBeUndefined();
+});
+
+test('한 건 화면에서도 바로 넣은 결제를 되돌리면 이유를 맞춘다 — "이미 넣은 거래"로 남지 않게', async () => {
+  const { ctl, onAutoAdd } = autoAddedList();
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  const dup = { id: 100, date: '2025-01-01', detail: '주유소', amount: 50000, payment_method: '현대EV' };
+  await rereadWith(one(row('주유소', 50000, { duplicateOf: dup, confidence: 'high' })), '마트는 다른 사람 거예요');
+  expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요');
+  await undoAutoAdded(ctl);
+  expect(container.querySelector('.quick-reason').textContent).toContain('되돌린 거래예요');
+});
+
+test("'모두 고르기'는 체크 없이 둔 줄(바로 넣은 결제와 같은 곳)을 켜지 않고, 그 줄 때문에 '모두 고르기'로 보이지도 않는다", async () => {
+  const { onAutoAdd } = autoAddedList();
+  await renderList({ onAutoAdd, onBulkAdd: vi.fn() });
+  await flush();
+  await rereadWith({ suggestions: [row('주유소', 25000), row('마트', 7000), row('카페', 3000)], cancels: [], note: '' }, '주유소는 반반');
+  const allButton = () => [...container.querySelectorAll('button')].find(b => /모두 (빼기|고르기)/.test(b.textContent));
+  expect(boxes().map(b => b.checked)).toEqual([false, true, true]);
+  expect(allButton().textContent).toBe('모두 빼기');
+  await act(async () => { allButton().click(); });
+  expect(boxes().map(b => b.checked)).toEqual([false, false, false]);
+  await act(async () => { allButton().click(); });
+  expect(boxes().map(b => b.checked)).toEqual([false, true, true]);
+});

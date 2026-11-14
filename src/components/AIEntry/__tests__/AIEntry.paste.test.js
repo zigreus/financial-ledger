@@ -10,17 +10,34 @@ import { createDatabase } from '../../../services/dbManager';
 import AIEntry from '../AIEntry';
 
 // 영수증 화면은 받은 파일의 이름·크기만 보여 준다 (실제 화면은 ReceiptPanel.test.js)
-vi.mock('../ReceiptPanel', () => ({
-  default: ({ files, onClose }) => (
-    <div className="fake-receipt">
-      <span className="fake-file">{files ? files.map(f => f.name).join(',') : ''}</span>
-      <span className="fake-size">{files ? files.map(f => f.size).join(',') : ''}</span>
-      <button type="button" onClick={onClose}>닫기</button>
-    </div>
-  ),
-}));
+// 함께 보낸 설명(initialNotes, I-063)도 — 실제 화면처럼 지금 설명을 notesRef로 알리고(덧붙이던 것은 fakeAddition),
+// '다른 사진'은 버튼에 onRepick을 바로 물린다. '세기'는 화면이 살아 있는지(다시 그려지지 않았는지) 보려고
+let fakeAddition = '';
+vi.mock('../ReceiptPanel', async () => {
+  const { useState } = await import('react');
+  return {
+    default: function FakeReceipt({ files, initialNotes, notesRef, onClose, onRepick, onSetup }) {
+      const [count, setCount] = useState(0);
+      if (notesRef) notesRef.current = [...(initialNotes || []), fakeAddition].filter(Boolean);
+      return (
+        <div className="fake-receipt">
+          <span className="fake-file">{files ? files.map(f => f.name).join(',') : ''}</span>
+          <span className="fake-size">{files ? files.map(f => f.size).join(',') : ''}</span>
+          <span className="fake-note">{Array.isArray(initialNotes) ? initialNotes.join('|') : `(${typeof initialNotes})`}</span>
+          <span className="fake-count">{count}</span>
+          <button type="button" onClick={() => setCount(c => c + 1)}>세기</button>
+          <button type="button" onClick={onClose}>닫기</button>
+          <button type="button" onClick={onRepick}>다른 사진</button>
+          <button type="button" onClick={onSetup}>사진 AI 설정</button>
+        </div>
+      );
+    },
+  };
+});
 // 말로 입력은 정리하는 중으로 머문다 (AI 응답은 TextPanel 테스트에서)
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(() => new Promise(() => {})), UNCLEAR: 'unclear' }));
+vi.mock('../../../services/textEntry', async (importOriginal) => ({
+  ...(await importOriginal()), parseTextEntry: vi.fn(() => new Promise(() => {})), UNCLEAR: 'unclear',
+}));
 vi.mock('../AISettingsForm', () => ({
   default: ({ onSaved, onCancel }) => (
     <div className="fake-settings">
@@ -42,6 +59,7 @@ beforeAll(async () => { SQL = await initSqlJs(); });
 beforeEach(() => {
   window.localStorage.clear();
   window.localStorage.setItem('ai_receipt_config', JSON.stringify({ provider: 'gemini', keys: { gemini: 'k' }, models: {} }));
+  fakeAddition = '';
   ({ db } = createDatabase(SQL, null));
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -237,4 +255,99 @@ test('클립보드를 읽는 동안 다음 거래로 넘어가면(resetKey, 같�
   await act(async () => { resolve([clipboardImage()]); await new Promise(r => setTimeout(r, 0)); });
   expect(receiptFile()).toBeNull();
   expect(container.querySelector('.ai-entry-bar')).not.toBeNull();
+});
+
+// 사진 설명 (I-063) — AI 입력 상자에 쓴 글을 사진과 함께 보낸다. 막대에서 바로 올린 사진은 설명 없이
+const receiptNote = () => container.querySelector('.fake-note')?.textContent ?? null;
+const quickText = () => container.querySelector('.quick-box textarea');
+const pickFiles = list => act(async () => {
+  const input = container.querySelector('input[type=file]');
+  Object.defineProperty(input, 'files', { value: list, configurable: true });
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+});
+const stubPicker = () => vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+
+test('AI 입력 상자에 글을 쓰고 📷으로 고른 사진은 그 글을 설명으로 함께 읽는다 — 다른 사진·붙여넣기로 바꾼 사진도 그 설명으로', async () => {
+  const picker = stubPicker();
+  await render();
+  await openQuick();
+  expect(button('📷 사진')).toBeDefined();
+  expect(container.querySelector('.quick-photo-note')).toBeNull();
+  await setValue(quickText(), '  친구랑 반반 냈어요 ');
+  expect(button('📷 사진')).toBeUndefined();                      // 글이 있으면 함께 간다는 것을 버튼이 보여 준다
+  expect(container.querySelector('.quick-photo-note').textContent).toContain('사진 설명으로 함께');
+  await click(button('📷 글 + 사진'));
+  expect(picker).toHaveBeenCalledTimes(1);
+  await pickFiles([png(3)]);
+  expect(receiptSize()).toBe('3');
+  expect(receiptNote()).toBe('친구랑 반반 냈어요');
+
+  // 다시 찍기·다른 사진 — 사진 화면의 설명(덧붙이던 것까지)을 이어받는다. 클릭 이벤트가 설명으로 가지 않는다
+  fakeAddition = '현금이었어요';
+  await click(button('세기'));                                    // 다시 그려 지금 설명을 알린다
+  await click(button('다른 사진'));
+  await pickFiles([png(4)]);
+  expect(receiptSize()).toBe('4');
+  expect(receiptNote()).toBe('친구랑 반반 냈어요|현금이었어요');
+  fakeAddition = '';                                              // 새 사진 — 덧붙이던 것은 이제 설명에 들어 있다
+  await click(button('세기'));
+  await paste({ images: [png(6)] });                              // 사진 화면에서 붙여넣은 캡처도
+  expect(receiptSize()).toBe('6');
+  expect(receiptNote()).toBe('친구랑 반반 냈어요|현금이었어요');
+});
+
+test('사진 화면에서 AI 설정을 열었다 돌아오면(저장·취소) 그 화면이 그대로 남아 있다', async () => {
+  await render();
+  await paste({ images: [png(2)] });
+  await click(button('세기'));
+  expect(container.querySelector('.fake-count').textContent).toBe('1');
+  await click(button('사진 AI 설정'));
+  expect(container.querySelector('.fake-settings')).not.toBeNull();
+  expect(container.querySelector('.fake-receipt').closest('[hidden]')).not.toBeNull(); // 숨겨 둔 채 살려 둔다
+  await click(button('설정 취소'));
+  expect(container.querySelector('.fake-receipt').closest('[hidden]')).toBeNull();
+  expect(container.querySelector('.fake-count').textContent).toBe('1');
+  await click(button('사진 AI 설정'));
+  await click(button('설정 저장'));
+  expect(container.querySelector('.fake-count').textContent).toBe('1');
+  expect(receiptSize()).toBe('2');
+});
+
+test('AI 입력 상자에서 붙여넣은 캡처는 상자의 글을 설명으로 함께, 막대에서 붙여넣으면 설명 없이 읽는다', async () => {
+  await render();
+  await paste({ images: [png(1)] });
+  expect(receiptNote()).toBe('');
+  await click(button('닫기'));
+  await openQuick();
+  await paste({ images: [png(2)] });                              // 글이 없으면 설명도 없다
+  expect(receiptNote()).toBe('');
+  await click(button('닫기'));
+  await openQuick();
+  await setValue(quickText(), '남편 카드 내역이에요');
+  await paste({ images: [png(5)] });
+  expect(receiptSize()).toBe('5');
+  expect(receiptNote()).toBe('남편 카드 내역이에요');
+});
+
+test('AI 설정 전이면 설정을 마친 뒤에도 쓴 글을 사진 설명으로 함께 보낸다 (📷·붙여넣기)', async () => {
+  stubPicker();
+  window.localStorage.clear();
+  await render();
+  await openQuick();
+  await setValue(quickText(), '회사 경비예요');
+  await click(button('📷 글 + 사진'));
+  expect(container.querySelector('.fake-settings')).not.toBeNull();
+  await click(button('설정 저장'));
+  await pickFiles([png(5)]);
+  expect(receiptNote()).toBe('회사 경비예요');
+
+  await click(button('닫기'));
+  window.localStorage.clear();
+  await openQuick();
+  await setValue(quickText(), '아이 학용품이에요');
+  await paste({ images: [png(6)] });
+  expect(container.querySelector('.fake-settings')).not.toBeNull();
+  await click(button('설정 저장'));
+  expect(receiptSize()).toBe('6');
+  expect(receiptNote()).toBe('아이 학용품이에요');
 });

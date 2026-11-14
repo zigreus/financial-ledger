@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-098, I-063
+다음 번호: B-099, I-064
 
 ## 요약표
 
@@ -113,6 +113,7 @@
 | B-095 | ✅ | 높음 | 저장·동기화 | 통신이 되는데도(와이파이·PC 포함) '연결이 없어 새로 받지 못했습니다'로 실패하고 🔄이 안 먹는 것처럼 보임 — 원인은 Microsoft 365 장애 |
 | B-096 | ✅ | 높음 | AI 입력 | AI 입력에 '현대카드 병원 9000원'이라고 썼는데 늘 쓰던 하나카드로 바로 들어감 |
 | B-097 | ✅ | 중간 | AI 입력 | '오메가3 구매'가 예전 세부내역 '메가'(커피)로 바뀌고 카테고리도 간식/카페로 추천됨 |
+| B-098 | ✅ | 중간 | AI 입력 | AI 입력 상자에 설명을 쓰고 📷 사진을 고르면 그 글이 조용히 버려짐(공유받은 사진의 글도 AI에 가지 않음) |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -175,6 +176,7 @@
 | I-060 | ✅ | - | 화면 | 맞추는 중에 도는 🔄의 중심이 그림 중심과 어긋나 흔들려 보임 |
 | I-061 | ✅ | - | AI 입력 | 여러 건을 말하며 결제수단을 한 번만 말하면 나머지 건은 늘 쓰던 결제수단으로 채워짐 |
 | I-062 | ✅ | - | AI 입력 | 예전 기록이 있으면 사진·쓴 글보다 그 기록으로 덮어씀 → AI가 판단 근거로 쓰고, 다른 후보(예전 기록·2순위)는 '이걸로'로 |
+| I-063 | ✅ | - | AI 입력 | 사진 AI 입력에 설명을 덧붙일 수 없어, 사진만으로 알 수 없는 것(나눠 냄·누구 카드·일부만)이 있으면 결과를 손으로 고쳐야 함 |
 
 
 ## 상세
@@ -1052,6 +1054,15 @@
 - 해결: 짧은 이름이 긴 이름의 낱말 첫머리부터 들어 있을 때만 맞는 것으로 본다('이마트 성수점'·'(주)이마트' → 이마트, '메가커피' → 메가는 그대로 / '오메가3'의 메가, '하이마트'의 이마트는 아님).
 - 파일: src/services/receiptAssistant.js(nameWithStarts·nameMatchLength·matchHistory), 테스트(textEntry)
 
+### B-098 AI 입력 상자에 설명을 쓰고 📷 사진을 고르면 그 글이 조용히 버려짐(공유받은 사진의 글도 AI에 가지 않음)
+- 상태: ✅ 해결 (2026-11-15)
+- 심각도: 중간
+- 영역: AI 입력
+- 문제: AI 입력 상자에 "친구랑 반반 냈어"처럼 쓰고 📷 사진을 누르면 사진만 읽고 쓴 글은 아무 데도 쓰이지 않았다 — 함께 보낸 줄 알기 쉽다. 공유받은 사진에 함께 온 글도 화면에 보이기만 했다.
+- 원인: 사진 읽기(analyzePhotos)가 사진과 목록·습관만 받아 사용자 글을 보낼 자리가 없었고, 사진을 고르는 길(📷·붙여넣기·공유)이 상자의 글을 넘기지 않았다.
+- 해결: 상자에 글이 있으면 📷 버튼이 '📷 글 + 사진'으로 바뀌고 그 글을 사진 설명으로 함께 보낸다(상자에서 붙여넣은 캡처·AI 설정을 마친 뒤 고른 사진도, 공유받은 사진은 본문만 — 제목('Screenshot …')·이미지 주소·파일 이름뿐이면 보내지 않음). 막대에서 바로 붙여넣은 사진은 지금처럼 설명 없이 바로 읽는다.
+- 파일: src/components/AIEntry/AIEntry.js, src/services/clipboardImage.js(isImageSideText), shareInbox.js(caption), public/sw.js(공유 본문 caption), src/components/App/App.js, 테스트(AIEntry.paste·AIEntry.quick·clipboardImage·shareInbox)
+
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)
 - 영역: 테스트
@@ -1557,3 +1568,11 @@
 - 원인: classify가 '예전 습관 > AI 추천' 순서라 찾은 기록의 표기·분류를 무조건 썼고, AI는 많이 쓴 40개 습관만 보아 드문 가게는 판단 근거가 없었다.
 - 해결: AI 지시문을 '말한·보이는 것이 먼저, 습관은 판단 근거'로 바꾸고 AI가 고른 분류를 먼저 쓰며(예전 기록은 AI가 못 골랐거나 못 봤을 때만 채우고 바로 넣지 않음, 가게 이름뿐인 카드 문자·명세서는 예전 기록이 판단), 말로 입력·AI 명령은 글에 나온 이름의 예전 기록도 보내고, 고르지 않은 후보(예전 기록·AI 추천·AI가 헷갈릴 때 준 2순위 — 2순위가 있으면 바로 넣지 않음)를 카드·목록에 '이걸로'로 보여 바꾸고 되돌릴 수 있게 했다.
 - 파일: src/services/receiptAssistant.js(classify·relatedPatterns·buildDataContext·alternatives), textEntry.js, photoEntry.js, aiCommand.js, quickEntry.js, src/components/AIEntry/SuggestionCard.js·SuggestionItem.js·TextPanel.js·TextFollowUp.js·ReceiptPanel.js·AIEntry.css, public/privacy.html, AGENTS.md, 테스트(classify·textEntry·photoEntry·TextPanel.followup·SuggestionCard·ReceiptPanel)
+
+### I-063 사진 AI 입력에 설명을 덧붙일 수 없어, 사진만으로 알 수 없는 것(나눠 냄·누구 카드·일부만)이 있으면 결과를 손으로 고쳐야 함
+- 상태: ✅ 해결 (2026-11-15)
+- 영역: AI 입력
+- 문제: 사진을 올리면 설명 없이 바로 읽어 평소엔 편하지만, 반반 냈거나 가족 카드 내역이거나 영수증 일부만 넣을 때는 알려 줄 방법이 없어 읽은 결과를 줄마다 고쳐야 했다(사용자 요청).
+- 원인: 사진 결과·오류 화면에 말로 입력의 '덧붙여 말하기' 같은 자리가 없고, 사진 지시문에 사용자 글이 들어갈 칸이 없었다.
+- 해결: 결과(한 건·여러 건)·'결제를 찾지 못함' 화면의 '+ 설명 덧붙여 다시 읽기'로 같은 사진을 설명과 함께 처음부터 다시 읽는다(설명은 쌓이고 화면에 보이며, 다시 읽는 중 취소·실패하면 앞 결과로). 설명은 지시문에서 사진과 같은 원문이라 규칙보다 먼저이고(나누기·내 몫·일부만, 바꾼 점은 note로), 설명에 나온 이름의 예전 기록도 함께 보낸다. 설명이 있으면 바로 넣지 않고 모두 확인받으며(이미 넣은 거래와 같으면 이유를 보임), 앞서 바로 넣은 결제는 다시 읽은 목록에 '이미 넣은 거래'로, 설명대로 금액이 바뀌었으면 '같은 곳·같은 날'로 체크 없이 보이고 되돌린 것은 체크 없이 돌아온다. 다시 찍기·다른 사진·붙여넣기로 바꾼 사진은 설명을 이어받되 '설명 빼고 다시 읽기'로 뺄 수 있고, 설명 상자에서 AI 설정에 다녀와도 결과가 남는다.
+- 파일: src/services/photoEntry.js(buildPhotoPrompt·cleanPhotoNotes·analyzePhotos·SYSTEM_WITH_NOTES), receiptAssistant.js(buildSuggestion promptText), src/components/AIEntry/ReceiptPanel.js(batchReasons·notesRef)·AIEntry.js(receipt-panel)·TextFollowUp.js(FollowUpBox 제목·예시·버튼, SETTINGS_KINDS)·TextPanel.js, public/privacy.html, AGENTS.md, 테스트(ReceiptPanel·photoEntry·AIEntry.paste·AIEntry.quick)

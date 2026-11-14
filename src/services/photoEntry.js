@@ -19,6 +19,7 @@ import {
 } from './receiptAssistant';
 import { getTransactions } from './dbManager';
 import { namesMatch } from './cardSms';
+import { cleanFollowUps } from './textEntry';
 import { todayStr } from './dateUtils';
 
 const ENTRY = {
@@ -26,7 +27,7 @@ const ENTRY = {
   properties: {
     date: { type: 'string', description: '결제일 YYYY-MM-DD. 보이지 않으면 빈 문자열' },
     merchant: { type: 'string', description: '가맹점(상호)명. 보이는 그대로' },
-    total: { type: 'number', description: '이 결제의 최종 금액(할인 후, 부가세 포함). 숫자만, 취소도 양수' },
+    total: { type: 'number', description: '이 결제의 최종 금액(할인 후, 부가세 포함). 사용자 설명이 다른 금액(내 몫 등)을 말하면 그 금액. 숫자만, 취소도 양수' },
     currency: { type: 'string', description: 'ISO 4217 통화 코드. 한국 원화는 KRW' },
     is_cancel: { type: 'boolean', description: '취소·환불 건이면 true' },
     payment_hint: { type: 'string', description: '이 결제에 보이는 카드·결제 수단 그대로 (예: 현대카드 EV, 신한카드 1234, 현금). 없으면 빈 문자열' },
@@ -73,11 +74,26 @@ const SYSTEM = [
   '영수증·카드 결제 내역 사진에서 실제로 보이는 결제만 빠짐없이, 중복 없이 옮기고, 보이지 않는 값은 지어내지 않습니다.',
   '분류(결제수단·카테고리)는 반드시 주어진 목록 안에서 고르고, 사진에 보이는 것(품목·가게)이 먼저이며 기존 입력 습관은 판단 근거로 씁니다.',
 ].join(' ');
+// 사용자가 사진에 설명을 덧붙였을 때 시스템 지시문에 더한다 — 설명대로 금액·건수를 정하는 것은 지어내는 것이 아니다 (I-063)
+const SYSTEM_WITH_NOTES = `${SYSTEM} 사용자가 덧붙인 설명은 사진과 같은 원문이며, 설명이 말한 대로 금액(내 몫)·건수(나누기·일부만)를 정합니다.`;
 
-/** 사진 AI 지시문 (테스트·디버깅용으로 노출) */
-export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
-  return [
-    buildDataContext(db, today).text,
+/**
+ * 사용자가 덧붙인 사진 설명 — 빈 것은 버리고, 길거나 많으면 말로 입력의 덧붙인 말과 같은 규칙으로 줄인다 (I-063)
+ */
+export function cleanPhotoNotes(notes) {
+  if (!Array.isArray(notes)) return [];
+  return cleanFollowUps(notes.map(said => ({ said }))).map(f => f.said);
+}
+
+/**
+ * 사진 AI 지시문 (테스트·디버깅용으로 노출)
+ * notes: 사용자가 덧붙인 설명 — 사진에 보이지 않는 사실(산 것·누구 것·나눠 냄·일부만)을 원문으로 함께 읽는다 (I-063)
+ */
+export function buildPhotoPrompt(db, { photos = 1, today = todayStr(), notes = [] } = {}) {
+  const said = cleanPhotoNotes(notes);
+  const lines = [
+    // 설명에 나온 이름의 예전 기록도 함께 보낸다 — 말로 입력처럼 AI가 판단 근거로 쓰게 (I-062)
+    buildDataContext(db, today, { text: said.join('\n') }).text,
     '',
     `[첨부] 사진 ${photos}장. 세로로 긴 사진은 겹치게 잘라 여러 조각으로 보냈습니다.`,
     '',
@@ -101,23 +117,37 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
     '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
     '- 가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 결제(간편결제·결제대행 이름뿐 등)만 needs_fix에 무엇을 고칠지 한 줄로. 쿠팡·편의점처럼 가게가 분명하면 빈 문자열.',
     '- 영수증·결제 내역이 아니면 is_payment=false.',
-  ].join('\n');
+  ];
+  if (said.length) {
+    lines.push(
+      '- 아래 [사용자가 덧붙인 설명]은 사진에 보이지 않는 사실(산 물건·용도, 누구 것인지, 나눠 냈는지, 어떤 결제만 넣을지 등)을 사용자가 알려 준 것이다. 사진과 함께 판단의 원문으로 쓴다.',
+      '- 설명이 위 규칙과 다르면 설명을 따른다 (예: "식비와 생활용품으로 나눠 줘" → 영수증 한 장을 품목대로 여러 건, "반반 냈어" → total은 내 몫, "11월 것만" → 그 결제만). 설명끼리 다르면 나중 설명을 따른다.',
+      '- 설명 때문에 사진에 보이는 금액·날짜·건수와 다르게 적었으면 그 결제의 note에 무엇을 왜 바꿨는지 한 줄로.',
+      '- 설명이 있어도 결제수단·카테고리는 위 목록 안에서만 고른다.',
+      '',
+      '[사용자가 덧붙인 설명]',
+      // 여러 줄 설명은 이어지는 줄을 들여 써 한 설명으로 읽히게
+      ...said.map(n => `- ${n.split(/\r\n|\r|\n/).join('\n  ')}`),
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
  * 사진들(prepared.parts — imageUtils.preparePhotos)을 AI로 읽어 입력 추천을 만든다.
+ * notes: 사용자가 덧붙인 설명(I-063) — 없으면 사진만 읽는다.
  * 반환: buildPhotoSuggestions 참고
  */
-export async function analyzePhotos({ db, ai, parts, photos = 1, signal, onProgress, today = todayStr() }) {
+export async function analyzePhotos({ db, ai, parts, photos = 1, notes = [], signal, onProgress, today = todayStr() }) {
   const raw = await analyzeWithAI({
-    ai, system: SYSTEM, prompt: buildPhotoPrompt(db, { photos, today }), schema: SCHEMA,
+    ai, system: cleanPhotoNotes(notes).length ? SYSTEM_WITH_NOTES : SYSTEM, prompt: buildPhotoPrompt(db, { photos, today, notes }), schema: SCHEMA,
     toolName: 'record_payments', description: '사진에서 읽은 결제를 기록한다',
     files: parts, signal, onProgress, maxTokens: 16000,
   });
   if (raw && raw.is_payment === false) {
     throw new AIError('영수증이나 결제 내역으로 보이지 않습니다 — 잘 보이게 다시 찍어 주세요', 'parse');
   }
-  return buildPhotoSuggestions(db, raw || {}, { today });
+  return buildPhotoSuggestions(db, raw || {}, { today, promptText: cleanPhotoNotes(notes).join('\n') });
 }
 
 // 간편결제·결제대행 이름 — 이 이름만 있으면 무엇을 샀는지 알 수 없다 (예: 네이버페이)
@@ -181,7 +211,7 @@ const sameMerchant = (a, b) => {
  *  - cancels: [{ date, merchant, amount, currency, paired }] — paired: 같은 묶음의 결제와 짝이 맞음
  * 결제 건 칸(entries)이 아예 없으면 오류 — 0건이면 "넣을 것 없음"으로 잘못 보인다.
  */
-export function buildPhotoSuggestions(db, raw, { today = todayStr() } = {}) {
+export function buildPhotoSuggestions(db, raw, { today = todayStr(), promptText = '' } = {}) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.entries)) {
     throw new AIError('사진 내용을 읽지 못했습니다 — 다시 시도해 주세요', 'parse');
   }
@@ -206,7 +236,7 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr() } = {}) {
 
   const suggestions = approvals.map(e => {
     const entryNote = String(e.note || '').trim();
-    const s = buildSuggestion(db, { ...e, note: '' }, { today });
+    const s = buildSuggestion(db, { ...e, note: '' }, { today, promptText });
     const fixes = fixesFor(e, s, today);
     if (single) {
       // 한 건이면 고칠 점·알릴 점(사진 전체·이 결제)을 그 건의 경고로 — 같은 말은 한 번만

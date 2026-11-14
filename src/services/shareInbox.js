@@ -10,7 +10,10 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 하루가 지난 것은 버린다 —
 
 const hasCaches = () => typeof caches !== 'undefined' && !!caches.open;
 
-/** 받아 둔 것을 꺼낸다(꺼내면 지운다) — { text, files: File[] } | null */
+/**
+ * 받아 둔 것을 꺼낸다(꺼내면 지운다) — { text, caption, files: File[] } | null
+ * caption: 사진 설명으로 보낼 글 — 공유의 본문만(제목·주소 빼고, I-063). 옛 서비스 워커가 넣은 것은 본문과 제목을 가를 수 없어 비운다
+ */
 export async function takeSharedItems() {
   if (!hasCaches()) return null;
   const cache = await caches.open(INBOX);
@@ -35,8 +38,9 @@ export async function takeSharedItems() {
   await clearSharedItems();
   if (!meta) return null;
   const text = String(meta.text || '').trim();
+  const caption = typeof meta.caption === 'string' ? meta.caption.trim() : '';
   const images = files.filter(f => /^image\//.test(f.type));
-  return images.length || text ? { text, files: images } : null;
+  return images.length || text ? { text, caption, files: images } : null;
 }
 
 /** 받아 둔 것을 지운다 (로그아웃할 때도) */

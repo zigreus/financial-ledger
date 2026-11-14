@@ -27,11 +27,20 @@ function isTextField(el) {
   return !['button', 'checkbox', 'radio', 'file', 'submit', 'reset', 'range', 'color', 'image'].includes(type);
 }
 
+/**
+ * 그림에 딸려 온 글이 이미지 주소·파일 이름뿐인지 — 사람이 쓴 글이 아니다.
+ * 공유받은 사진에 함께 온 글을 사진 설명으로 보낼지도 이것으로 가린다 (I-063)
+ */
+export function isImageSideText(text) {
+  const t = String(text || '').trim();
+  return !!t && t.split(/\r\n|\r|\n/).every(line => SIDE_TEXT_LINE.test(line.trim()));
+}
+
 /** 이 붙여넣기의 글을 글로 붙여넣어야 하는지 — 글 입력 칸이면 늘, 그 밖에서는 주소·파일 이름이 아닌 글일 때 */
 function textWins(text, target) {
   if (!text) return false;
   if (isTextField(target)) return true;
-  return !text.split(/\r\n|\r|\n/).every(line => SIDE_TEXT_LINE.test(line.trim()));
+  return !isImageSideText(text);
 }
 
 /** 캡처 이미지는 이름이 없거나 'image.png' 같은 이름이라 시각을 붙인다(탐색기에서 복사한 파일은 원래 이름 그대로). seq: 여러 장일 때 1부터 */

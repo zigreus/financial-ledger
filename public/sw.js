@@ -200,6 +200,8 @@ async function receiveShare(request) {
     const meta = {
       at: Date.now(),
       text,
+      // 사진 설명으로 보낼 글은 본문만 — 제목은 'Screenshot (…)'처럼 보내는 앱이 붙인 이름일 수 있다 (I-063)
+      caption: body,
       files: files.map((f, i) => ({ path: `/__share/file-${i}`, name: f.name || `shared-${i}`, type: f.type || '' })),
     };
     await Promise.all(files.map((f, i) => cache.put(meta.files[i].path, new Response(f, {

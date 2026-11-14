@@ -206,14 +206,19 @@ export function SaidSoFar({ text, followUps }) {
   );
 }
 
+// 설정 화면에서 고칠 수 있는 오류 (키·모델·한도·크레딧) — 덧붙여 다시 정리·읽기가 실패했을 때 'AI 설정' 버튼을 보인다
+export const SETTINGS_KINDS = new Set(['auth', 'model', 'quota', 'billing']);
+
 /**
  * 덧붙여 말하기 상자.
  * question: 되묻는 말(결제 건을 못 찾았을 때), gaps: describeGaps 결과(정리한 건에 빠진 정보가 있을 때).
+ * heading·example·submitLabel: 다른 화면(사진 설명 덧붙이기, I-063)의 제목·예시·버튼 글
  * onSetup을 주면 오류 아래에 AI 설정 버튼을 보여 준다 (키·모델 문제일 때).
  * autoFocus는 상자가 처음 나타날 때만 본다 — 사용자가 열었을 때 한 번만 키보드를 띄우고, 나중에 값이 바뀌어도 다시 띄우지 않는다.
  */
 export function FollowUpBox({
   question, gaps = [], total = 0, value, onChange, onSubmit, error, onSetup, hint, pendingNote, autoFocus = false,
+  heading = '', example = '', submitLabel = '덧붙여 정리하기',
 }) {
   const ref = useRef(null);
   const focusOnOpen = useRef(autoFocus);
@@ -224,9 +229,9 @@ export function FollowUpBox({
   let title = null;
   if (question) title = <div className="tp-ask">{question}</div>;
   else if (gaps.length) title = <div className="tp-followup-title">빠진 정보가 있어요 — 덧붙여 말해 주세요</div>;
-  else title = <div className="tp-followup-title">덧붙이거나 고칠 것을 말해 주세요</div>;
+  else title = <div className="tp-followup-title">{heading || '덧붙이거나 고칠 것을 말해 주세요'}</div>;
 
-  let placeholder = gapPlaceholder(gaps);
+  let placeholder = example || gapPlaceholder(gaps);
   if (question) placeholder = '예) 점심에 김치찌개 9천원, 현금으로 냈어요';
 
   return (
@@ -256,7 +261,7 @@ export function FollowUpBox({
       <div className="tp-followup-actions">
         {error && onSetup && <button type="button" className="rs-btn-secondary" onClick={onSetup}>AI 설정</button>}
         <button type="button" className="rs-btn-primary" disabled={!value.trim()} onClick={onSubmit}>
-          덧붙여 정리하기
+          {submitLabel}
         </button>
       </div>
     </div>

@@ -14,7 +14,8 @@ import { parseTextEntry } from '../../../services/textEntry';
 import { loadAIDraft, saveAIDraft } from '../../../services/aiDraft';
 import { preparePhotos } from '../../../services/imageUtils';
 
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+// 사진 설명 정리(cleanFollowUps)는 실제 것을 쓴다 — 사진 화면이 photoEntry를 거쳐 부른다 (I-063)
+vi.mock('../../../services/textEntry', async (importOriginal) => ({ ...(await importOriginal()), parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
 // 사진 준비는 끝나지 않는다 — 몇 장을 읽는지만 본다 (읽은 결과 화면은 ReceiptPanel.test.js)
 vi.mock('../../../services/imageUtils', async (importOriginal) => ({ ...(await importOriginal()), preparePhotos: vi.fn(() => new Promise(() => {})) }));
 vi.mock('../AISettingsForm', () => ({
@@ -362,16 +363,31 @@ describe('바로가기·공유 받기로 연 입력 창 (I-024)', () => {
     expect(quickBox().value).toBe('점심 9천원');
   });
 
-  test('사진을 여러 장 공유하면 모두 함께 읽고, 함께 온 글은 무엇인지 알린다', async () => {
+  test('사진을 여러 장 공유하면 모두 함께 읽고, 함께 온 글은 사진 설명으로 함께 보낸다 (I-063)', async () => {
     window.localStorage.removeItem('ai_receipt_config');
     const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
     await renderWith({ text: '어제 마트 영수증', files: [png(1), png(2), png(3)] });
     await click(button('설정 저장'));                                    // 설정을 마치면 그 사진들을 읽는다
-    const note = container.querySelector('.ai-start-note');
-    expect(note.textContent).not.toContain('첫 장만');
-    expect(note.textContent).toContain('함께 온 글: “어제 마트 영수증”');
-    expect(container.textContent).toContain('사진 3장 읽는 중');
+    expect(container.querySelector('.ai-start-note')).toBeNull();        // 읽는 화면이 그 글을 설명으로 보인다
+    expect(container.textContent).toContain('사진 3장을 설명과 함께 읽는 중');
+    expect(container.querySelector('.rs-analyzing .tp-quote').textContent).toContain('어제 마트 영수증');
     expect(preparePhotos.mock.calls.at(-1)[0].map(f => f.name)).toEqual(['r1.jpg', 'r2.jpg', 'r3.jpg']);
+  });
+
+  test('공유받은 사진의 본문이 비었으면(제목만 — 예: 스크린샷 이름) 설명으로 보내지 않고 무엇인지만 알린다', async () => {
+    const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
+    await renderWith({ text: 'Screenshot (11월 14일)', caption: '', files: [png(1)] });
+    expect(container.querySelector('.ai-start-note').textContent).toContain('함께 온 글: “Screenshot (11월 14일)”');
+    expect(container.textContent).toContain('사진 읽는 중');
+    expect(container.querySelector('.rs-analyzing .tp-quote')).toBeNull();
+  });
+
+  test('공유받은 사진에 함께 온 글이 이미지 주소·파일 이름뿐이면 설명으로 보내지 않고 무엇인지만 알린다', async () => {
+    const png = n => new File([new Uint8Array([n])], `r${n}.jpg`, { type: 'image/jpeg' });
+    await renderWith({ text: 'https://example.com/r1.jpg', files: [png(1)] });
+    expect(container.querySelector('.ai-start-note').textContent).toContain('함께 온 글: “https://example.com/r1.jpg”');
+    expect(container.textContent).toContain('사진 읽는 중');
+    expect(container.querySelector('.rs-analyzing .tp-quote')).toBeNull();
   });
 
   test('사진이 너무 많으면 앞의 10장만 읽는다고 알린다', async () => {

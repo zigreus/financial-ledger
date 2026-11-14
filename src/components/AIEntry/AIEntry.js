@@ -12,7 +12,7 @@ import SmsPanel from './SmsPanel';
 import CommandPanel from './CommandPanel';
 import { looksLikeCommand } from '../../services/aiCommand';
 import { usePasteImages } from '../../hooks/usePasteImages';
-import { canReadClipboardImages, readClipboardImages, pasteShortcut } from '../../services/clipboardImage';
+import { canReadClipboardImages, readClipboardImages, pasteShortcut, isImageSideText } from '../../services/clipboardImage';
 import { MAX_PHOTOS } from '../../services/imageUtils';
 import './AIEntry.css';
 
@@ -37,11 +37,15 @@ const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금 / 방금 �
  * resetKey가 바뀌면(연속 입력으로 다음 거래로 넘어가면) 처음 상태로 돌아간다.
  * 말로 입력 중에 AI 설정을 열면 그 화면을 숨겨 둔 채 살려 두어, 설정을 마치거나 취소하면 하던 대화로 돌아간다.
  * 캡처한 영수증은 단축키(Ctrl+V·⌘V)나 막대 아래 '캡처한 영수증 붙여넣기' 버튼으로도 넣는다(I-020).
+ * AI 입력 상자에 글을 쓴 채 사진을 올리면(📷·붙여넣기) 그 글을 사진 설명으로 함께 보낸다 — 공유받은 사진에 함께 온 글도(I-063).
+ * 사진 화면에서 다시 찍기·다른 사진·붙여넣기로 바꾼 사진은 그 화면의 설명을 이어받는다. 막대에서 바로 붙여넣은 사진은 설명 없이 바로 읽는다.
+ * 사진 화면에서 AI 설정을 열면 그 화면을 숨겨 둔 채 살려 두어, 설정을 마치거나 취소하면 읽은 결과로 돌아간다.
  */
 export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickAdd, onCommand, onExit, resetKey }) {
   const [mode, setMode] = useState('idle'); // idle | quick | setup | receipt | text | sms | command
   const [pending, setPending] = useState(null); // 설정을 마치면 이어서 할 일
   const [files, setFiles] = useState(null); // 읽을 사진들 (여러 장 가능)
+  const [photoNotes, setPhotoNotes] = useState([]); // 사진과 함께 보낼 설명 — AI 입력 상자에 먼저 쓴 글·공유받은 글 (I-063)
   const [notice, setNotice] = useState('');
   const [textAlive, setTextAlive] = useState(false); // 말로 입력 화면을 (설정 화면 뒤에) 살려 둘지
   const [pasteError, setPasteError] = useState('');
@@ -68,7 +72,9 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
   const fileRef = useRef(null);
   // 처음 그린 때의 resetKey — 실제로 바뀌었을 때만 처음 상태로 돌린다(StrictMode가 효과를 다시 실행해도 시작 정보를 지우지 않게)
   const prevResetKeyRef = useRef(resetKey);
-  const waitingFileRef = useRef(null); // AI 설정을 마치면 읽을 사진들
+  const waitingFileRef = useRef(null); // AI 설정을 마치면 읽을 사진들 { files, notes }
+  const pickNotesRef = useRef([]);      // 사진 선택창에서 고른 사진과 함께 보낼 설명 — 선택창을 열 때 정한다
+  const panelNotesRef = useRef([]);     // 사진 화면의 지금 설명(덧붙이던 것까지) — 그 화면에서 바꾼 사진이 이어받는다
   const pasteTokenRef = useRef(0);      // 클립보드를 읽는 동안 화면이 바뀌면 늦게 온 결과를 버린다
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -84,6 +90,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     prevResetKeyRef.current = resetKey;
     setMode('idle');
     setFiles(null);
+    setPhotoNotes([]);
     setNotice('');
     setPasteError('');
     setTextAlive(false);
@@ -98,8 +105,10 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     waitingFileRef.current = null;
   }, [resetKey, resetSmsBatches]);
 
-  const openPicker = () => {
+  /** 사진 선택창을 연다 — notes: 고른 사진과 함께 보낼 설명(AI 입력 상자의 글, 사진 화면의 설명) */
+  const openPicker = (notes = []) => {
     if (!fileRef.current) return;
+    pickNotesRef.current = Array.isArray(notes) ? notes : []; // 버튼에 바로 물려 클릭 이벤트가 와도 설명으로 보내지 않게
     fileRef.current.value = '';
     fileRef.current.click();
   };
@@ -109,7 +118,16 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     setMode('setup');
   };
 
-  const startReceipt = () => (activeAI() ? openPicker() : needSetup('receipt'));
+  /** AI 입력 상자의 글 — 사진과 함께 보낼 설명으로 (I-063) */
+  const boxNotes = () => (quickText.trim() ? [quickText.trim()] : []);
+
+  /** AI 입력 상자의 📷 — 상자에 쓴 글이 있으면 사진 설명으로 함께 보낸다 (I-063) */
+  const startReceipt = () => {
+    const notes = boxNotes();
+    if (activeAI()) { openPicker(notes); return; }
+    pickNotesRef.current = notes;
+    needSetup('receipt');
+  };
   const openText = () => { setTextAlive(true); setMode('text'); };
   /** 남은 글 버리기 (막대의 '버리기') */
   const dropDraft = () => {
@@ -133,6 +151,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
   /** 막대로 돌아간다 — 다음에 열면 처음부터(쓰던 글·말로 입력 대화를 버리고, 이 창에서 정리하던 글 기록도 지운다) */
   const closeAll = () => {
     setMode('idle');
+    panelNotesRef.current = [];
     setTextAlive(false);
     setQuickText('');
     setQuickError('');
@@ -172,29 +191,31 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
 
   /**
    * 고르거나 붙여넣은 사진들(영수증·결제 내역 캡처, 여러 장 가능)을 읽는다 — AI 설정 전이면 설정을 마친 뒤 이어서 읽는다.
-   * 너무 많으면 앞의 MAX_PHOTOS장만 읽고 알린다
+   * 너무 많으면 앞의 MAX_PHOTOS장만 읽고 알린다. notes: 사진과 함께 보낼 설명 (I-063)
    */
-  const acceptImages = (list) => {
+  const acceptImages = (list, notes = []) => {
     const all = Array.from(list || []);
     if (!all.length) return;
     const picked = all.slice(0, MAX_PHOTOS);
     setNotice('');
     setPasteError('');
     if (all.length > picked.length) {
-      setStartNote(note => [`사진 ${all.length}장 중 앞의 ${MAX_PHOTOS}장만 읽어요 — 나머지는 다음에 올려 주세요`, note].filter(Boolean).join(' · '));
+      setStartNote(prev => [`사진 ${all.length}장 중 앞의 ${MAX_PHOTOS}장만 읽어요 — 나머지는 다음에 올려 주세요`, prev].filter(Boolean).join(' · '));
     }
     if (!activeAI()) {
-      waitingFileRef.current = picked;
+      waitingFileRef.current = { files: picked, notes };
       needSetup('receipt-file');
       return;
     }
     setFiles(picked);
+    setPhotoNotes(notes);
+    panelNotesRef.current = notes; // 사진 화면이 그리기 전에 또 바꿔도 같은 설명으로
     setMode('receipt');
   };
 
   const onFile = (e) => {
     const list = e.target.files ? Array.from(e.target.files) : [];
-    if (list.length) { setStartNote(''); acceptImages(list); }
+    if (list.length) { setStartNote(''); acceptImages(list, pickNotesRef.current); }
   };
 
   // 홈 화면 바로가기('AI 입력')·안드로이드 공유 받기로 연 입력 창 (I-024) — 처음 한 번만.
@@ -203,10 +224,13 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     if (startedRef.current || !start) return;
     startedRef.current = true;
     if (start.files && start.files.length) {
-      // 공유한 사진은 모두 함께 읽는다 — 함께 온 글이 있으면 그 글을 알린다
-      const caption = String(start.text || '').trim();
-      setStartNote(caption ? `함께 온 글: “${caption.length > 40 ? `${caption.slice(0, 40)}…` : caption}”` : '');
-      acceptImages(start.files);
+      // 공유한 사진은 모두 함께 읽는다 — 함께 온 본문은 사진 설명으로 함께 보내고(I-063, 읽는 화면에 보인다),
+      // 보내지 않는 글(제목·이미지 주소·파일 이름뿐)은 무엇인지만 알린다
+      const text = String(start.text || '').trim();
+      const said = String(start.caption ?? text).trim();
+      const note = said && !isImageSideText(said) ? said : '';
+      setStartNote(!note && text ? `함께 온 글: “${text.length > 40 ? `${text.slice(0, 40)}…` : text}”` : '');
+      acceptImages(start.files, note ? [note] : []);
       return;
     }
     if (start.text) { setQuickText(start.text); setSharedText(start.text); }
@@ -214,8 +238,15 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 막대·AI 입력 상자·사진 화면이 보이는 동안 Ctrl+V로 붙여넣은 캡처 — 사진 화면에서는 새 사진으로 바꿔 다시 읽는다
-  usePasteImages(list => { setStartNote(''); acceptImages(list); }, mode === 'idle' || mode === 'quick' || mode === 'receipt');
+  // 막대·AI 입력 상자·사진 화면이 보이는 동안 Ctrl+V로 붙여넣은 캡처 — 사진 화면에서는 새 사진으로 바꿔 다시 읽는다.
+  // AI 입력 상자에서 붙여넣었으면 상자에 쓴 글을, 사진 화면이면 그 화면의 설명을 함께 보낸다 (I-063)
+  usePasteImages(list => {
+    setStartNote('');
+    let notes = [];
+    if (modeRef.current === 'quick') notes = boxNotes();
+    else if (modeRef.current === 'receipt') notes = panelNotesRef.current;
+    acceptImages(list, notes);
+  }, mode === 'idle' || mode === 'quick' || mode === 'receipt');
 
   const pasteFromClipboard = async () => {
     setPasteError('');
@@ -308,9 +339,11 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     if (next === 'receipt-file' && waitingFileRef.current) {
       const waiting = waitingFileRef.current;
       waitingFileRef.current = null;
-      setFiles(waiting);
+      setFiles(waiting.files);
+      setPhotoNotes(waiting.notes);
       setMode('receipt');
-    } else if (next === 'receipt') { setMode('idle'); openPicker(); }
+    } else if (next === 'receipt') { setMode('idle'); openPicker(pickNotesRef.current); }
+    else if (next === 'receipt-panel') setMode('receipt');
     else if (next === 'text' || next === 'quick-text') openText();
     else if (next === 'command') setMode('command');
     else setMode('idle');
@@ -320,8 +353,9 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     const next = pending;
     setPending(null);
     waitingFileRef.current = null;
-    // 말로 입력 중에 연 설정이면 하던 대화로, AI 입력 상자에서 왔으면 쓰던 글로 돌아간다
-    if (next === 'quick-text' || next === 'command') setMode('quick');
+    // 말로 입력 중에 연 설정이면 하던 대화로, AI 입력 상자에서 왔으면(📷 포함) 쓰던 글로, 사진 화면에서 왔으면 그 화면으로 돌아간다
+    if (next === 'quick-text' || next === 'command' || next === 'receipt') setMode('quick');
+    else if (next === 'receipt-panel') setMode('receipt');
     else setMode(next === 'text' && textAlive ? 'text' : 'idle');
   };
 
@@ -358,6 +392,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
         />
         <div className="tp-hint">
           말하듯 적거나 카드 문자를 붙여넣거나 영수증·카드 이용내역 사진을 올리세요(여러 장도 한 번에 돼요). 늘 넣던 가게는 바로 추가하고, 처음 보는 건 확인을 받아요.
+          {' 사진에 없는 것(나눠 냈는지 등)은 먼저 적고 사진을 올리면 함께 읽어요.'}
           {onCommand && ' 거래 고치기·지우기, 정기지출·예산·설정 바꾸기, "얼마 썼어?" 같은 질문도 말하면 알아서 해요.'}
           카드 문자는 AI 키 없이도 읽어요.
         </div>
@@ -368,29 +403,20 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
           <div className="quick-reason">공유받은 글이에요 — 확인하고 '정리하기'를 누르세요</div>
         )}
         {quickError && <div className="rs-error-text">{quickError}</div>}
+        {quickText.trim() && (
+          <div className="quick-reason quick-photo-note">
+            {showShortcut ? `📷 버튼이나 ${pasteShortcut()}로 사진을 올리면` : '📷 버튼으로 사진을 올리면'} 이 글을 사진 설명으로 함께 보내요
+          </div>
+        )}
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={exit}>닫기</button>
-          <button type="button" className="rs-btn-secondary" onClick={startReceipt}>📷 사진</button>
+          <button type="button" className="rs-btn-secondary" onClick={startReceipt}>{quickText.trim() ? '📷 글 + 사진' : '📷 사진'}</button>
           <button type="button" className="rs-btn-primary" disabled={!quickText.trim()} onClick={submitQuick}>정리하기</button>
         </div>
       </div>
     );
   } else if (mode === 'receipt') {
-    body = (
-      <>
-        {startNote && <div className="quick-reason ai-start-note">{startNote}</div>}
-        <ReceiptPanel
-          db={db}
-          files={files}
-          onApply={s => apply(s, '사진 내용을 채웠습니다')}
-          onAutoAdd={autoAdd}
-          onBulkAdd={rows => onBulkAdd(rows)}
-          onRepick={openPicker}
-          onClose={closePanel}
-          onSetup={() => needSetup(null)}
-        />
-      </>
-    );
+    body = null; // 아래 receiptPanel이 보인다
   } else if (mode === 'sms') {
     body = (
       <SmsPanel
@@ -461,6 +487,26 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     );
   }
 
+  // 사진 화면 — AI 설정에 다녀오는 동안(receipt-panel)은 숨겨 둔 채 살려 두어 읽은 결과·써 둔 설명을 잃지 않는다
+  const receiptAlive = mode === 'receipt' || (mode === 'setup' && pending === 'receipt-panel');
+  const receiptPanel = receiptAlive && (
+    <div hidden={mode !== 'receipt'}>
+      {startNote && <div className="quick-reason ai-start-note">{startNote}</div>}
+      <ReceiptPanel
+        db={db}
+        files={files}
+        initialNotes={photoNotes}
+        notesRef={panelNotesRef}
+        onApply={s => apply(s, '사진 내용을 채웠습니다')}
+        onAutoAdd={autoAdd}
+        onBulkAdd={rows => onBulkAdd(rows)}
+        onRepick={() => openPicker(panelNotesRef.current)}
+        onClose={closePanel}
+        onSetup={() => needSetup('receipt-panel')}
+      />
+    </div>
+  );
+
   const textPanel = textAlive && (
     <div hidden={mode !== 'text'}>
       <TextPanel
@@ -487,6 +533,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
     <>
       <input ref={fileRef} type="file" accept="image/*" multiple onChange={onFile} style={{ display: 'none' }} />
       {body}
+      {receiptPanel}
       {textPanel}
     </>
   );

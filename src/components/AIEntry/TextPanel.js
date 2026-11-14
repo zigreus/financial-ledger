@@ -9,14 +9,14 @@ import { QUICK_REASONS, isCategoryReason, mayAutoAddText, splitFamiliar } from '
 import { findExistingTransaction } from '../../services/cardSms';
 import SuggestionDetails from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
-import { FollowUpBox, SaidSoFar, describeGaps, gapQuestion, recordPick, carryChoices } from './TextFollowUp';
+import {
+  FollowUpBox, SaidSoFar, describeGaps, gapQuestion, recordPick, carryChoices, SETTINGS_KINDS,
+} from './TextFollowUp';
 import QuickAutoNote from './QuickAutoNote';
 import { useQuickBatches } from './useQuickBatches';
 import './AIEntry.css';
 
 const EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 4500 카카오페이';
-// 설정 화면에서 고칠 수 있는 오류 (키·모델·한도·크레딧)
-const SETTINGS_KINDS = new Set(['auth', 'model', 'quota', 'billing']);
 const PENDING_NOTE = "덧붙여 쓴 말이 있어요 — '덧붙여 정리하기'를 누르거나 지우면 진행할 수 있어요.";
 const MERGE_HINT = '앞에서 말한 것과 합쳐 다시 정리합니다.';
 // 바로 넣은(또는 되돌린) 거래를 알아보는 열쇠 — 다시 정리하면 같은 건·고쳐 말한 건은 바로 넣지 않고,

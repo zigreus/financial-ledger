@@ -22,9 +22,10 @@ function fakeCaches() {
 const jsonRes = obj => ({ json: async () => obj });
 const blobRes = (bytes, type) => ({ blob: async () => new Blob([new Uint8Array(bytes)], { type }) });
 
-async function share({ at = Date.now(), text = '', files = [] } = {}) {
+async function share({ at = Date.now(), text = '', caption, files = [] } = {}) {
   const cache = await global.caches.open('share-inbox');
   const meta = { at, text, files: files.map((f, i) => ({ path: `/__share/file-${i}`, name: f.name, type: f.type })) };
+  if (caption !== undefined) meta.caption = caption;
   await Promise.all(files.map((f, i) => cache.put(meta.files[i].path, blobRes(f.bytes, f.type))));
   await cache.put('/__share/meta', jsonRes(meta));
 }
@@ -43,7 +44,17 @@ test('공유받은 사진(이미지만)과 글을 꺼내고, 꺼내면 지운다
 
 test('글만 공유받아도 꺼낸다 (카드 문자)', async () => {
   await share({ text: '[Web발신]\n신한카드(1234)승인 12,500원' });
-  expect(await takeSharedItems()).toEqual({ text: '[Web발신]\n신한카드(1234)승인 12,500원', files: [] });
+  expect(await takeSharedItems()).toEqual({ text: '[Web발신]\n신한카드(1234)승인 12,500원', caption: '', files: [] });
+});
+
+test('사진 설명으로 보낼 글은 공유의 본문만 — 제목(앱이 붙인 이름)은 빼고, 본문을 가를 수 없는 옛 서비스 워커의 것은 비운다 (I-063)', async () => {
+  const shot = [{ name: 's.png', type: 'image/png', bytes: [1] }];
+  await share({ text: 'Screenshot (11월 14일 오후 3:02)', caption: '', files: shot });
+  expect(await takeSharedItems()).toMatchObject({ text: 'Screenshot (11월 14일 오후 3:02)', caption: '' });
+  await share({ text: '반반 냈어요', caption: ' 반반 냈어요 ', files: shot });
+  expect((await takeSharedItems()).caption).toBe('반반 냈어요');
+  await share({ text: 'Screenshot (11월 14일 오후 3:02)', files: shot });
+  expect((await takeSharedItems()).caption).toBe('');
 });
 
 test('하루가 지난 것·비어 있는 것은 버린다', async () => {

@@ -1,7 +1,7 @@
 // 사진으로 입력 (I-052) — 영수증 여러 장·카드 이용내역 캡처의 여러 결제를 한 번에 읽는다
 import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../dbManager';
-import { buildPhotoSuggestions, buildPhotoPrompt, markDuplicates, isPaymentGateway } from '../photoEntry';
+import { buildPhotoSuggestions, buildPhotoPrompt, cleanPhotoNotes, markDuplicates, isPaymentGateway } from '../photoEntry';
 import { todayStr, addDays } from '../dateUtils';
 import { otherAlternatives, CATEGORY_ALT_RULE } from '../receiptAssistant';
 
@@ -303,4 +303,50 @@ test('지시문에 사진 수와 목록·겹침 규칙이 들어간다', () => {
   expect(prompt).toContain('결제(이용) 내역 목록이면 보이는 결제마다 한 건씩');
   expect(prompt).toContain('현대EV');
   expect(prompt).toContain('결제마다 note에 확실하지 않은 점');
+});
+
+// 사용자가 덧붙인 설명 (I-063) — 사진에 보이지 않는 사실을 원문으로 함께 읽는다
+test('설명이 있으면 지시문 끝에 설명과 그 설명을 따르는 규칙을 넣고, 없으면 넣지 않는다', () => {
+  const db = makeDb();
+  const plain = buildPhotoPrompt(db, { today: TODAY });
+  expect(plain).not.toContain('[사용자가 덧붙인 설명]');
+
+  const prompt = buildPhotoPrompt(db, { today: TODAY, notes: ['  친구랑 반반 냈어요 ', '', '세제는 생활용품으로 따로'] });
+  expect(prompt).toContain('설명이 위 규칙과 다르면 설명을 따른다');
+  expect(prompt).toContain('그 결제의 note에 무엇을 왜 바꿨는지');
+  expect(prompt).toContain('설명이 있어도 결제수단·카테고리는 위 목록 안에서만');
+  expect(prompt.split('\n[사용자가 덧붙인 설명]\n')[1]).toBe('- 친구랑 반반 냈어요\n- 세제는 생활용품으로 따로');
+  // 여러 줄 설명은 이어지는 줄을 들여 써 한 설명으로
+  const multi = buildPhotoPrompt(db, { today: TODAY, notes: ['마트 영수증\r\n세제는 생활용품'] });
+  expect(multi.split('\n[사용자가 덧붙인 설명]\n')[1]).toBe('- 마트 영수증\n  세제는 생활용품');
+});
+
+test('설명은 길면 자르고, 많으면 첫 설명과 최근 것만 보낸다 (말로 입력의 덧붙인 말과 같은 규칙)', () => {
+  expect(cleanPhotoNotes(null)).toEqual([]);
+  expect(cleanPhotoNotes([' a ', '', null, 'b'])).toEqual(['a', 'b']);
+  expect(cleanPhotoNotes(['가'.repeat(600)])[0].length).toBe(500);
+  const many = Array.from({ length: 9 }, (_, i) => `설명${i + 1}`);
+  expect(cleanPhotoNotes(many)).toEqual(['설명1', '설명5', '설명6', '설명7', '설명8', '설명9']);
+});
+
+test('설명에 나온 가게의 예전 기록도 보내고, AI가 그 기록을 보고 달리 고른 분류는 설명 때문으로 본다 (I-062와 같이)', () => {
+  const db = makeDb();
+  db.run("INSERT INTO budget_categories (name, sort_order) VALUES ('생활', 2), ('교육', 3)");
+  db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('생활', '생활용품', 0), ('교육', '학용품', 0)");
+  for (let i = 0; i < 40; i++) {
+    for (let k = 0; k < 3; k++) addTransaction(db, { payment_method: '현금', date: D1, budget_category: '식비', sub_category: '외식', detail: `가게${i}`, amount: 1000 });
+  }
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 5000 });
+  addTransaction(db, { payment_method: '현대EV', date: D2, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 3000 });
+  const note = '다이소에서 산 건 아이 학용품이에요';
+  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소 →');
+  expect(buildPhotoPrompt(db, { today: TODAY, notes: [note] })).toContain('다이소 → 생활 > 생활용품');
+
+  const raw = { is_payment: true, kind: 'receipt', note: '', entries: [entry({ merchant: '다이소 성수점', total: 5000, category: '교육 > 학용품' })] };
+  // 설명 없이 읽었으면 AI가 습관을 못 봤으니 예전 기록으로 (기존 규칙)
+  expect(buildPhotoSuggestions(db, raw).suggestions[0]).toMatchObject({ budget_category: '생활', categoryGuess: true });
+  // 설명에 다이소가 나와 습관을 함께 보냈다 — AI가 설명을 따라 고른 분류가 먼저
+  const [s] = buildPhotoSuggestions(db, raw, { promptText: note }).suggestions;
+  expect(s).toMatchObject({ detail: '다이소', budget_category: '교육', sub_category: '학용품', categoryGuess: false });
+  expect(s.sources.category).toBe('ai');
 });
