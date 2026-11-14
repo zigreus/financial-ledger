@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { isSuggestionComplete, normalizeName, suggestionName } from '../../services/receiptAssistant';
+import {
+  isSpokenPaymentWarning, isSuggestionComplete, normalizeName, samePaymentPhrase, suggestionName,
+} from '../../services/receiptAssistant';
 import './AIEntry.css';
 
 /**
@@ -71,11 +73,15 @@ export function gapPlaceholder(list) {
 
 // ── 목록에서 고른 값 남기기 ─────────────────────────────────────
 
+/** 결제수단을 말했는지 — 표현을 못 짚었어도 말했다고 하면(paymentMentioned) */
+const mentionedPayment = s => !!s.paymentMentioned || !!normalizeName(s.paymentSaid);
+
 const categoryOf = s => (s.budget_category ? `${s.budget_category} > ${s.sub_category || ''}` : '');
 
 /**
- * 목록에서 고친 값을 기억한다 → { payment_method: { from, to }, category: { from, to } }.
+ * 목록에서 고친 값을 기억한다 → { payment_method: { from, to, said }, category: { from, to } }.
  * from은 처음 고치기 전 값(같은 칸을 여러 번 바꿔도 처음 값), to는 마지막으로 고른 값이다.
+ * said·mentioned는 처음 고칠 때 사용자가 말한 결제수단 표현과 말했는지 — 덧붙인 말로 결제수단을 새로 말했는지 본다 (B-096)
  */
 export function recordPick(item, patch) {
   const picks = { ...(item.picks || {}) };
@@ -83,6 +89,8 @@ export function recordPick(item, patch) {
     picks.payment_method = {
       from: picks.payment_method ? picks.payment_method.from : item.s.payment_method,
       to: patch.payment_method,
+      said: picks.payment_method ? picks.payment_method.said : (item.s.paymentSaid || ''),
+      mentioned: picks.payment_method ? picks.payment_method.mentioned : mentionedPayment(item.s),
     };
   }
   if ('budget_category' in patch) {
@@ -97,16 +105,18 @@ export function recordPick(item, patch) {
 /**
  * 고른 값을 새로 정리한 건에 다시 얹는다.
  * 새 값이 비었거나 고치기 전 값과 같으면(새로 알게 된 것이 없으면) 고른 값을 쓰고,
- * 덧붙인 말로 다른 값이 나왔으면 그 말을 따른다.
- * 한계: 덧붙인 말이 마침 고치기 전 값과 같으면(습관으로 신한카드 → 목록에서 현금 → "신한카드였어") 고른 값이 남는다.
- * 처음 말에 있던 값과 구별할 수 없어서다 — 드물고, 목록에서 다시 고르면 된다.
+ * 덧붙인 말로 다른 값이 나왔으면 그 말을 따른다. 결제수단을 새로 말했으면(말한 표현이 바뀜) 비었어도 고른 값을 다시 얹지 않는다
+ * — '신한이었어'라고 했는데 신한카드·신한체크 중 몰라 비운 것을 앞서 고른 하나카드로 채우지 않게 (B-096).
+ * 한계: 말한 표현이 같은 채로(AI가 짚지 못함) 덧붙인 말이 마침 고치기 전 값과 같으면 고른 값이 남는다 — 드물고, 목록에서 다시 고르면 된다.
  */
 function applyPicks(s, picks) {
   const out = { ...s, sources: { ...s.sources } };
   const pay = picks.payment_method;
-  if (pay && (!s.payment_method || s.payment_method === pay.from)) {
+  const saidAgain = !!pay && mentionedPayment(s) && (!pay.mentioned || !samePaymentPhrase(s.paymentSaid, pay.said || ''));
+  if (pay && !saidAgain && (!s.payment_method || s.payment_method === pay.from)) {
     out.payment_method = pay.to;
     delete out.sources.payment_method;
+    if (pay.to && out.warnings) out.warnings = out.warnings.filter(w => !isSpokenPaymentWarning(w));
   }
   const cat = picks.category;
   if (cat && (!s.budget_category || categoryOf(s) === cat.from)) {

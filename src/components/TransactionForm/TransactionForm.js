@@ -49,6 +49,8 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
   const discount = useDiscountControl();
   // 수정 화면을 처음 채울 때의 카테고리 — 이 카테고리로 바뀔 때는 세부카테고리를 지우지 않는다
   const skipSubResetRef = useRef(null);
+  // AI 입력이 말한 결제수단을 목록에서 못 맞춰 비워 두었다 — 사용자가 결제수단을 고르거나 폼을 비울 때까지 자동 결제수단으로 채우지 않는다 (B-096)
+  const noAutoPaymentRef = useRef(false);
   const formRef = useRef(null);
 
   // 저장 후 백그라운드 새로고침으로 db 객체가 바뀌어도 입력 중인 폼은 건드리지 않는다.
@@ -93,6 +95,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
 
   useEffect(() => {
     discount.resetEdited();
+    noAutoPaymentRef.current = false;
     if (editingTx) {
       discount.keepStored();
       skipSubResetRef.current = editingTx.budget_category || null;
@@ -185,13 +188,15 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
   const set = (key, value) => {
     if (key === 'payment_method') {
       discount.recalc();
+      noAutoPaymentRef.current = false; // 사용자가 결제수단을 골랐다
     }
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
-  // 세부카테고리 선택 시 자동 결제수단 선택
+  // 세부카테고리 선택 시 자동 결제수단 선택 — AI 입력에서 말한 결제수단을 못 맞춰 비워 둔 것은 다른 카드로 채우지 않는다
   useEffect(() => {
     if (!form.sub_category || form.payment_method) return;
+    if (noAutoPaymentRef.current) return;
     const suggested = getAutoPaymentMethod(db, form.sub_category);
     if (suggested) {
       discount.recalc();
@@ -320,6 +325,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
   const resetForNext = () => {
     discount.recalc();
     discount.resetEdited();
+    noAutoPaymentRef.current = false;
     setForm(prev => ({
       ...EMPTY_FORM,
       date: prev.date,
@@ -340,14 +346,17 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
     discount.resetEdited();
     resetSplit();
     setForm(prev => {
+      // 결제수단을 말했는데 맞추지 못했으면(paymentSaid) 비워 두고 묻는다 — 앞서 고른 것이나 자동 결제수단으로 채우지 않는다
+      const saidButUnmatched = !s.payment_method && (!!s.paymentMentioned || !!s.paymentSaid);
       const next = {
         ...prev,
         date: s.date || prev.date,
         detail: s.detail || prev.detail,
-        payment_method: s.payment_method || prev.payment_method,
+        payment_method: s.payment_method || (saidButUnmatched ? '' : prev.payment_method),
         budget_category: s.budget_category || prev.budget_category,
         sub_category: s.budget_category ? s.sub_category : prev.sub_category,
       };
+      noAutoPaymentRef.current = saidButUnmatched;
       if (s.event_id) {
         next.event_id = String(s.event_id);
         next.foreign_amounts = s.foreignAmount !== null ? { [s.currency]: String(s.foreignAmount) } : {};
@@ -365,6 +374,7 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
 
   const applyFavorite = (fav) => {
     favs.recordUse(fav);
+    noAutoPaymentRef.current = false;
     setForm(prev => ({
       ...prev,
       payment_method: fav.payment_method,

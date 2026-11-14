@@ -75,6 +75,22 @@ describe('목록에서 고른 값 남기기', () => {
     expect(items[0].s.payment_method).toBe('카카오페이');
   });
 
+  test('B-096: 결제수단을 새로 말했으면 못 맞춰 비었어도 앞서 고른 값을 다시 얹지 않는다', () => {
+    const warn = "말한 결제수단 '신한'에 맞는 것이 여럿이에요 — 골라 주세요";
+    const old = [picked(full({ payment_method: '' }), { payment_method: '하나카드' })];
+    // '신한이었어' — 신한카드·신한체크 중 몰라 비웠다
+    const again = full({ payment_method: '', paymentSaid: '신한', warnings: [warn] });
+    const { items } = carryChoices(old, [again]);
+    expect(items[0].s.payment_method).toBe('');
+    expect(items[0].s.warnings).toEqual([warn]);
+    expect(items[0].checked).toBe(false);
+    // 말한 표현이 그대로면(다른 것을 덧붙였다) 고른 값을 다시 얹고 알림도 지운다
+    const oldSaid = [picked(full({ payment_method: '', paymentSaid: '신한', warnings: [warn] }), { payment_method: '신한체크' })];
+    const { items: kept } = carryChoices(oldSaid, [full({ payment_method: '', paymentSaid: '신한카드', warnings: [warn] })]);
+    expect(kept[0].s.payment_method).toBe('신한체크');
+    expect(kept[0].s.warnings).toEqual([]);
+  });
+
   test('같은 칸을 여러 번 바꿔도 처음 값과 비교하고, 카테고리도 남긴다', () => {
     const s = full({ budget_category: '', sub_category: '' });
     const first = { s, checked: false, picks: recordPick({ s }, { budget_category: '식비', sub_category: '커피' }) };

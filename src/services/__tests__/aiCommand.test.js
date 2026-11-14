@@ -301,6 +301,23 @@ describe('계획', () => {
     expect(all(db).map(r => r.detail)).toEqual(['스타벅스']);
   });
 
+  test('B-096: 새 거래의 결제수단은 말한 것을 따르고, 글에 없는 표현(AI가 습관의 카드로 적음)은 믿지 않는다', () => {
+    const db = makeDb();
+    tx(db, {});
+    tx(db, { date: '2026-11-02' });
+    const entry = {
+      date: '', merchant: '스타벅스', detail: '스타벅스', amount: 4000, currency: 'KRW', krw_amount: 0,
+      payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드', category: '식비 > 커피',
+    };
+    const plan = (text, e = entry) => buildPlan(db, { actions: [act('tx_delete', { target: { keyword: '이디야' } })], entries: [e], reply: '', text }, TODAY);
+    // 사용자는 현금이라고 했는데 AI가 말한 결제수단을 늘 쓰던 신한카드로 적었다 — 비워서 막는다
+    const step = plan('이디야 지우고 스타벅스 4천원 현금').steps[1];
+    expect(step.ok).toBe(false);
+    expect(step.warnings[0]).toContain('말한 결제수단');
+    // 글에 있으면 그대로
+    expect(plan('이디야 지우고 스타벅스 4천원 신한카드').steps[1]).toMatchObject({ ok: true, data: { row: { payment_method: '신한카드' } } });
+  });
+
   test('되돌리기 쉬운 것만 있으면 바로 한다', () => {
     const db = makeDb();
     const plan = buildPlan(db, { actions: [act('feature', { setting: { key: 'taxSummary', value: 'on' } }), act('goal', { changes: { amount: 2000000 } })], entries: [] });

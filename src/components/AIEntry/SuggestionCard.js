@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SOURCE_LABEL, categoryPaths } from '../../services/receiptAssistant';
+import { SOURCE_LABEL, categoryPaths, normalizeName } from '../../services/receiptAssistant';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './AIEntry.css';
 
@@ -31,6 +31,12 @@ export function amountText(s) {
     return `${fmtForeign(s.foreignAmount)} ${s.currency}` + (s.amount !== null ? ` ≈ ${formatAmount(s.amount)}원` : '');
   }
   return s.amount !== null ? `${formatAmount(s.amount)}원` : '읽지 못함';
+}
+
+/** 말로 입력에서 말한 결제수단 표현이 고른 이름과 다를 때 보인다 — '현대카드'라고 했는데 목록 표기가 '현대카드M'이거나 못 맞췄을 때 */
+function saidPaymentHint(s) {
+  const said = String(s.paymentSaid || '').trim();
+  return said && normalizeName(said) !== normalizeName(s.payment_method) ? `말한 것: ${said}` : '';
 }
 
 export function categoryText(s) {
@@ -69,7 +75,7 @@ export default function SuggestionDetails({ suggestion: s, amountSource = 'recei
           value={s.payment_method || '직접 선택'}
           missing={!s.payment_method}
           source={sources.payment_method}
-          hint={s.paymentHint ? `영수증: ${s.paymentHint}` : ''}
+          hint={s.paymentHint ? `영수증: ${s.paymentHint}` : saidPaymentHint(s)}
         />
         <Row label="카테고리" value={categoryText(s) || '직접 선택'} missing={!s.budget_category} source={sources.category} />
       </div>

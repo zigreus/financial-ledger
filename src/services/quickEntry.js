@@ -8,9 +8,11 @@
  *    확인할 거리(경고·중복·외화·취소·앞날짜)가 없는 것. 나머지는 지금처럼 확인받는다.
  *    바로 넣은 것도 되돌릴 수 있다(App의 알림·확인 화면의 버튼 → removeAddedTransactions).
  */
-import { isSuggestionComplete, normalizeName, suggestionName } from './receiptAssistant';
+import {
+  isSuggestionComplete, normalizeName, paymentMatch, suggestionName,
+} from './receiptAssistant';
 import { findExistingTransaction } from './cardSms';
-import { getDetailPatterns } from './dbManager';
+import { getDetailPatterns, getPaymentMethods } from './dbManager';
 import { todayStr } from './dateUtils';
 
 export const FAMILIAR_MIN_COUNT = 2;
@@ -90,28 +92,83 @@ function samePlace(s, said) {
   return mentionsName(said, past);
 }
 
-/** 글에 결제수단이 적혀 있는지 — '신한카드'는 '신한'만 말해도, '카카오페이'는 '카카오'만 말해도 된다 */
-function mentionsPayment(said, method) {
-  const words = normalizeName(said);
+// 결제수단 이름 끝말과 그 갈래 — '현대카드'라고 했으면 '현대체크'를 말한 것이 아니다
+const PAY_SUFFIX_RE = /(체크카드|신용카드|카드|체크|페이|pay)$/;
+const PAY_TAIL_RE = /^(체크카드|신용카드|카드|체크|페이|pay)/;
+const payKind = (w) => {
+  if (!w) return '';
+  if (w.startsWith('체크')) return 'check';
+  return /^(페이|pay)/.test(w) ? 'pay' : 'card';
+};
+
+/**
+ * 글 조각(parts)에 그 결제수단이 있는지 — 이름 그대로, 또는 줄인 이름('신한카드' → '신한') 뒤에 다른 갈래의 끝말이 붙지 않을 때.
+ * '신한으로'는 신한카드를, '신한체크'는 신한카드가 아닌 것을 말한다
+ */
+function mentionsPayment(parts, method) {
   const name = normalizeName(method);
   if (!name) return false;
-  if (words.includes(name)) return true;
-  const core = name.replace(/(카드|체크|페이|pay)$/, '');
-  return core.length >= 2 && words.includes(core);
+  const suffix = (PAY_SUFFIX_RE.exec(name) || [''])[0];
+  const core = name.slice(0, name.length - suffix.length);
+  return parts.some((p) => {
+    if (p.includes(name)) return true;
+    if (core.length < 2) return false;
+    for (let i = p.indexOf(core); i >= 0; i = p.indexOf(core, i + 1)) {
+      const tail = PAY_TAIL_RE.exec(p.slice(i + core.length));
+      if (!tail || payKind(tail[1]) === payKind(suffix)) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * 말로 입력의 글에서 결제수단을 찾을 조각들 — 이 건의 이름(가게·세부내역·습관)과 others(다른 건의 이름)를 지운 나머지.
+ * '롯데마트'의 '롯데'를 롯데카드로, '교통카드 충전'을 결제수단 이야기로 보지 않게 (B-096)
+ */
+function paymentParts(said, s, others = []) {
+  const names = [s.merchant, s.detail, s.historyDetail, ...others]
+    .flatMap(n => [n, ...String(n || '').split(/\s+/)])
+    .map(normalizeName)
+    .filter(n => n.length >= 2)
+    .sort((a, b) => b.length - a.length);
+  return names.reduce((parts, n) => parts.flatMap(p => p.split(n)), [normalizeName(said)]).filter(Boolean);
+}
+
+/**
+ * 글이 이 결제수단을 말하는지 — 이름이 글에 있거나, AI가 짚은 말한 표현(paymentSaid)이 글에 있고
+ * 그 표현과 이 결제수단이 통째로 맞을 때 ('현대카드'라고 말했고 목록 표기가 '현대카드M'). 줄인 이름만 겹치면 아니다
+ */
+function namesPayment(parts, s) {
+  if (mentionsPayment(parts, s.payment_method)) return true;
+  const phrase = normalizeName(s.paymentSaid);
+  return !!phrase && parts.some(p => p.includes(phrase)) && paymentMatch(s.paymentSaid, s.payment_method) >= 2;
+}
+
+// 결제수단을 말한 것 같은 낱말
+const PAYMENT_WORD_RE = /카드|체크|페이|pay|현금|계좌|이체|송금|상품권/i;
+
+/** 글에 결제수단 이야기가 있는지 — AI가 짚은 말한 표현, 결제수단 같은 낱말, 목록의 이름 */
+function talksPayment(db, parts, s) {
+  return !!String(s.paymentSaid || '').trim() || parts.some(p => PAYMENT_WORD_RE.test(p))
+    || getPaymentMethods(db).some(m => mentionsPayment(parts, m));
 }
 
 /**
  * 결제수단이 분명한지.
  *  - 카드 문자: 그 카드로 기억해 둔 결제수단이거나 카드사로 고른 것만 (습관으로 짐작한 것은 다른 카드일 수 있다)
  *  - 글·영수증에 적힌 결제수단을 그대로 맞춘 것 (말로 입력은 사용자가 쓴 글에 그 결제수단이 있어야 한다 — AI의 말만 믿지 않음)
- *  - 예전 습관: 이 가게를 늘 같은 결제수단으로 넣었을 때만 (영수증에 카드가 찍혔는데 맞추지 못했으면 아님)
+ *  - 예전 습관: 이 가게를 늘 같은 결제수단으로 넣었을 때만 (영수증에 카드가 찍혔는데 맞추지 못했으면 아님,
+ *    말로 입력은 글에 결제수단 이야기가 없거나 그 결제수단을 말했을 때만 — '현대카드 병원'을 늘 쓰던 하나카드로 넣지 않게, B-096)
+ * others: 말로 입력에서 다른 건의 이름 (paymentParts)
  */
-function surePayment(db, s, kind, said) {
+function surePayment(db, s, kind, said, others) {
   const source = s.sources?.payment_method;
   if (kind === 'sms') return source === 'sms';
-  if (source === kind) return kind !== 'text' || mentionsPayment(said, s.payment_method); // 'text' | 'receipt'
+  const parts = kind === 'text' ? paymentParts(said, s, others) : [];
+  if (source === kind) return kind !== 'text' || namesPayment(parts, s); // 'text' | 'receipt'
   if (source !== 'history') return false;
   if (kind === 'receipt' && String(s.paymentHint || '').trim()) return false;
+  if (kind === 'text' && talksPayment(db, parts, s) && !namesPayment(parts, s)) return false;
   const used = new Set(getDetailPatterns(db).filter(p => p.detail === s.historyDetail).map(p => p.payment_method));
   return used.size === 1 && used.has(s.payment_method);
 }
@@ -120,7 +177,7 @@ function surePayment(db, s, kind, said) {
  * 바로 넣어도 되는지 — { familiar, reason }. 아니면 reason에 확인이 필요한 이유(화면에 보인다).
  * kind: 'receipt' | 'sms' | 'text'. said: 말로 입력이면 사용자가 쓴 글
  */
-export function familiarity(db, s, kind, { said } = {}) {
+export function familiarity(db, s, kind, { said, others } = {}) {
   const no = reason => ({ familiar: false, reason });
   if (!s || s.kind === 'cancel') return no('승인 취소는 지울 거래를 확인해야 해요');
   if (!isSuggestionComplete(s)) return no('빈 칸이 있어요');
@@ -135,7 +192,7 @@ export function familiarity(db, s, kind, { said } = {}) {
   if ((Number(s.historyCount) || 0) < FAMILIAR_MIN_COUNT) return no('아직 자주 넣던 곳이 아니에요');
   const spoken = kind === 'text' ? String(said || '') : undefined;
   if (!samePlace(s, spoken)) return no(`예전의 '${s.historyDetail}'와 같은 곳인지 확인해 주세요`);
-  if (!surePayment(db, s, kind, spoken)) return no('결제수단을 확인해 주세요');
+  if (!surePayment(db, s, kind, spoken, others)) return no('결제수단을 확인해 주세요');
   if (findExistingTransaction(db, s)) return no('같은 날 같은 금액 거래가 이미 있어요');
   return { familiar: true, reason: '' };
 }
@@ -155,13 +212,16 @@ export function splitFamiliar(db, suggestions, kind, opts) {
   };
   const sameTx = tally(batchKey);
   const samePast = tally(s => (kind === 'text' ? normalizeName(s.historyDetail) : ''));
+  // 말로 입력: 다른 건의 이름 속 글자('하나로마트')는 결제수단 이야기가 아니다. 다른 건에 붙은 결제수단 말은 지우지 않는다 —
+  // '현대카드로 병원 9천원, 약국 5천원'처럼 한 번 말한 카드가 뒤의 건에도 걸릴 수 있다 (B-096)
+  const othersOf = s => (kind !== 'text' ? [] : suggestions.filter(o => o !== s).flatMap(o => [o.merchant, o.detail, o.historyDetail]));
   const familiar = [];
   const review = [];
   suggestions.forEach(s => {
     let f;
     if (sameTx(s) > 1) f = { familiar: false, reason: '같은 거래가 두 번 있어요 — 한 번만 넣을지 확인해 주세요' };
     else if (samePast(s) > 1) f = { familiar: false, reason: `'${s.historyDetail}' 거래가 여럿이에요 — 각각 맞는지 확인해 주세요` };
-    else f = familiarity(db, s, kind, opts);
+    else f = familiarity(db, s, kind, { ...opts, others: othersOf(s) });
     if (f.familiar) familiar.push(s);
     else review.push({ s, reason: f.reason });
   });

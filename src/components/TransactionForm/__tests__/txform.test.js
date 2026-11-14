@@ -152,3 +152,45 @@ test('분할 통화가 바뀌면 숫자를 다른 통화로 해석하지 않음'
   setValue(byPh(container, 'JPY 금액 (예: 1200+800)'), '5000');
   expect(reasons(container).some(r => r.startsWith('분할 통화가 JPY'))).toBe(true);
 });
+
+test('B-096: AI 입력이 말한 결제수단을 못 맞춰 비워 두면 자동 결제수단(세부카테고리 습관)으로 채우지 않는다', async () => {
+  const db = makeDb();
+  for (let i = 0; i < 10; i++) {
+    M.addTransaction(db, { payment_method: '신한', date: '2026-10-01', budget_category: '식비', sub_category: '외식', amount: 10000 + i });
+  }
+  expect(M.getAutoPaymentMethod(db, '외식')).toBe('신한');
+  db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('식비','배달',2)");
+  for (let i = 0; i < 10; i++) {
+    M.addTransaction(db, { payment_method: '현금', date: '2026-10-02', budget_category: '식비', sub_category: '배달', amount: 5000 + i });
+  }
+  const suggestion = {
+    date: '2026-10-05', detail: '김밥천국', amount: 9000, currency: 'KRW', foreignAmount: null, event_id: null,
+    payment_method: '', budget_category: '식비', sub_category: '외식',
+  };
+  const said = await render({ db, aiStart: { apply: { ...suggestion, paymentSaid: '현대카드' } } });
+  expect(selectByLabel(said.container, '결제수단').value).toBe('');
+  expect(reasons(said.container)).toContain('결제수단을 선택하세요');
+  // 세부카테고리를 바꿔도 사용자가 결제수단을 고르기 전에는 채우지 않는다
+  setValue(selectByLabel(said.container, '세부카테고리'), '배달');
+  expect(selectByLabel(said.container, '결제수단').value).toBe('');
+  act(() => said.root.unmount());
+
+  // AI가 세부카테고리를 모르고 넘겼어도 — 나중에 세부카테고리를 골라도 채우지 않는다
+  const noSub = await render({ db, aiStart: { apply: { ...suggestion, sub_category: '', paymentSaid: '현대카드' } } });
+  setValue(selectByLabel(noSub.container, '세부카테고리'), '외식');
+  expect(selectByLabel(noSub.container, '결제수단').value).toBe('');
+  // 사용자가 결제수단을 고르면 그대로, 폼의 다른 동작은 그대로다
+  setValue(selectByLabel(noSub.container, '결제수단'), '현금');
+  expect(selectByLabel(noSub.container, '결제수단').value).toBe('현금');
+  act(() => noSub.root.unmount());
+
+  // 말했다는데 무엇인지 몰라(표현 없이) 비운 것도 채우지 않는다
+  const unknown = await render({ db, aiStart: { apply: { ...suggestion, paymentSaid: '', paymentMentioned: true } } });
+  expect(selectByLabel(unknown.container, '결제수단').value).toBe('');
+  act(() => unknown.root.unmount());
+
+  // 결제수단을 말하지 않았으면 예전처럼 자동으로 채운다
+  const plain = await render({ db, aiStart: { apply: suggestion } });
+  expect(selectByLabel(plain.container, '결제수단').value).toBe('신한');
+  act(() => plain.root.unmount());
+});

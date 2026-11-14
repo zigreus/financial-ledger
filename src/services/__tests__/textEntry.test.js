@@ -3,6 +3,9 @@ import initSqlJs from 'sql.js';
 import { createDatabase, addCalendarEvent, addEventCountry } from '../dbManager';
 import { analyzeWithAI, AIError } from '../aiClient';
 import { parseTextEntry, buildTextPrompt, cleanFollowUps, UNCLEAR } from '../textEntry';
+import { isSpokenPaymentWarning, paymentMatch, PAYMENT_SAID_RULE } from '../receiptAssistant';
+import { splitFamiliar } from '../quickEntry';
+import { addDays } from '../dateUtils';
 
 vi.mock('../aiClient', async (importOriginal) => ({ ...(await importOriginal()), analyzeWithAI: vi.fn() }));
 
@@ -235,5 +238,203 @@ describe('세부내역은 꼭 채우지 않는다 (I-056)', () => {
     expect(p).toContain('[세부내역 — 꼭 채우지 않아도 됩니다]');
     expect(p).toContain('식비 > 저녁 (5/5)');
     expect(p).not.toContain('식비 > 커피 (');
+  });
+});
+
+describe('말한 결제수단이 예전 습관보다 먼저 (B-096)', () => {
+  // 김밥천국은 늘 하나카드로 넣었다 — 바로 넣기 대상
+  const withHabit = (methods = ['하나카드', '현대카드M']) => {
+    const db = makeDb();
+    methods.forEach(m => db.run('INSERT INTO payment_methods (name) VALUES (?)', [m]));
+    for (let i = 1; i <= 3; i++) {
+      db.run(
+        "INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '하나카드', '식비', '점심', '김밥천국', 8000)",
+        [addDays(TODAY, -i)],
+      );
+    }
+    return db;
+  };
+  const kimbap = o => entry({ merchant: '김밥천국', detail: '김밥천국', amount: 9000, category: '식비 > 점심', ...o });
+  const said = o => kimbap({ payment_mentioned: true, ...o });
+  const one = async (db, e, text = '현대카드 김밥천국 9000원') => {
+    analyzeWithAI.mockResolvedValueOnce({ entries: [e], question: '' });
+    return (await parse(db, text))[0];
+  };
+  const autoAdded = (db, list, text) => splitFamiliar(db, list, 'text', { said: text }).familiar.map(s => s.payment_method);
+
+  test('지시문이 말한 표현을 payment_said로 돌려받고 습관으로 바꾸지 말라고 한다', () => {
+    const p = buildTextPrompt(makeDb(), '현대카드 김밥 9000원', TODAY);
+    expect(p).toContain(PAYMENT_SAID_RULE);
+    expect(p).toContain('말한 결제수단을 입력 습관의 결제수단으로 바꾸지 않고');
+  });
+
+  test('말한 표현과 결제수단 이름이 맞는 정도 (paymentMatch)', () => {
+    expect(paymentMatch('현대카드', '현대카드')).toBe(3);
+    expect(paymentMatch('현대카드', '현대카드M')).toBe(2);
+    expect(paymentMatch('신한', '신한카드')).toBe(2);
+    expect(paymentMatch('아내 신한카드', '신한카드(아내)')).toBe(2.5); // 낱말이 다 맞으면 통째로 품는 것보다 낫다
+    expect(paymentMatch('아내 신한카드', '신한카드')).toBe(2);
+    // '카드' 같은 종류 말은 낱말로 세지 않는다 — 띄어 쓴 '신한 카드'가 '신한체크카드'를 이기지 않게
+    expect(paymentMatch('신한 카드', '신한체크카드')).toBe(1);
+    expect(paymentMatch('신한 카드', '신한')).toBe(2);
+    expect(paymentMatch('국민 카드', '국민행복카드')).toBe(1);
+    expect(paymentMatch('신한체크카드', '신한 카드')).toBe(1);
+    expect(paymentMatch('신한체크카드', '신한체크')).toBe(2);
+    expect(paymentMatch('국민카드', '국민행복카드')).toBe(1);
+    expect(paymentMatch('현대카드', '현대M')).toBe(1);
+    expect(paymentMatch('국민카드', 'KB카드')).toBe(0);
+    // 간편결제는 그 카드사의 카드가 아니다, '카드'뿐인 이름은 어느 카드든 품지 않는다
+    expect(paymentMatch('삼성페이', '삼성카드')).toBe(0);
+    expect(paymentMatch('카카오페이', '카카오뱅크')).toBe(0);
+    expect(paymentMatch('현대카드', '카드')).toBe(0);
+  });
+
+  test("목록 표기가 달라도('현대카드M') 말한 카드로 — 습관의 하나카드로 채우지 않고, 바로 넣어도 말한 카드로", async () => {
+    const db = withHabit();
+    const s = await one(db, said({ payment_said: '현대카드', payment_method: '현대카드' }));
+    expect(s).toMatchObject({ payment_method: '현대카드M', paymentSaid: '현대카드', historyDetail: '김밥천국', warnings: [] });
+    expect(s.sources.payment_method).toBe('text');
+    expect(autoAdded(db, [s], '현대카드 김밥천국 9000원')).toEqual(['현대카드M']);
+    // payment_said 없이 AI가 목록에 없는 이름만 돌려줘도 같다
+    expect((await one(db, said({ payment_method: '현대카드' }))).payment_method).toBe('현대카드M');
+  });
+
+  test('AI가 늘 쓰던 카드를 골라도 말한 표현을 따른다', async () => {
+    const s = await one(withHabit(), said({ payment_said: '현대카드', payment_method: '하나카드' }));
+    expect(s.payment_method).toBe('현대카드M');
+  });
+
+  test("목록 이름이 상품명('제로카드')이라 못 맞추고 AI가 늘 쓰던 카드를 골랐으면 비우고 알린다", async () => {
+    const s = await one(withHabit(['하나카드', '제로카드']), said({ payment_said: '현대카드', payment_method: '하나카드' }));
+    expect(s.payment_method).toBe('');
+    expect(s.warnings).toEqual(["말한 결제수단 '현대카드'에 맞는 것이 목록에 없어요 — 골라 주세요"]);
+    expect(isSpokenPaymentWarning(s.warnings[0])).toBe(true);
+  });
+
+  test('말했다는데 무엇인지 모르거나, AI가 짚은 표현이 글에 없으면 비우고 알린다', async () => {
+    const db = withHabit(['하나카드']);
+    const unknown = await one(db, said({ payment_method: '모름' }));
+    expect(unknown).toMatchObject({ payment_method: '', warnings: ['말한 결제수단을 알아듣지 못했어요 — 골라 주세요'] });
+    // 사용자는 현대카드라고 했는데 AI가 말한 것을 하나카드라고 적었다
+    const invented = await one(db, said({ payment_said: '하나카드', payment_method: '하나카드' }));
+    expect(invented).toMatchObject({ payment_method: '', paymentSaid: '', paymentMentioned: true });
+    // 글에 있으면 띄어 쓰거나 줄여 말해도 된다
+    expect((await one(db, said({ payment_said: '하나카드', payment_method: '하나카드' }), '하나 카드 김밥천국 9000원')).payment_method).toBe('하나카드');
+    expect((await one(db, said({ payment_said: '하나카드', payment_method: '하나카드' }), '하나로 김밥천국 9000원')).payment_method).toBe('');
+  });
+
+  test("줄인 이름만 겹치거나 이름이 달라 못 맞추면 AI가 고른 것을 '확인해 주세요'와 함께 — 바로 넣지 않는다", async () => {
+    const db = withHabit(['KB카드', '국민행복카드', 'NH체크']);
+    // '국민카드'는 국민행복카드와 줄인 이름만 겹친다 — AI는 KB카드를 골랐다
+    const kb = await one(db, said({ payment_said: '국민카드', payment_method: 'KB카드' }), '국민카드 김밥천국 9000원');
+    expect(kb).toMatchObject({ payment_method: 'KB카드', warnings: ["말한 결제수단 '국민카드'에 맞는지 확인해 주세요"] });
+    expect(kb.sources.payment_method).toBe('ai');
+    // 맞는 이름이 없다 — '농협'은 NH체크일 수 있다
+    const nh = await one(db, said({ payment_said: '농협', payment_method: 'NH체크' }), '농협 김밥천국 9000원');
+    expect(nh).toMatchObject({ payment_method: 'NH체크', warnings: ["말한 결제수단 '농협'에 맞는지 확인해 주세요"] });
+    // AI가 모르면 줄인 이름이 겹치는 하나 — 고르되 바로 넣지는 않는다
+    const loose = await one(db, said({ payment_said: '국민카드', payment_method: '모름' }), '국민카드 김밥천국 9000원');
+    expect(loose).toMatchObject({ payment_method: '국민행복카드', warnings: ["말한 결제수단 '국민카드'에 맞는지 확인해 주세요"] });
+    expect(autoAdded(db, [loose], '국민카드 김밥천국 9000원')).toEqual([]);
+  });
+
+  test("'아내 신한카드'는 낱말이 다 맞는 '신한카드(아내)' — AI가 늘 쓰던 신한카드를 골라도, '삼성페이'는 삼성카드·삼성으로 보지 않는다", async () => {
+    const db = withHabit(['신한카드(아내)', '삼성카드', '삼성']); // 신한카드는 makeDb에 있다
+    const text = '아내 신한카드 김밥천국 9000원';
+    const wife = await one(db, said({ payment_said: '아내 신한카드', payment_method: '신한카드(아내)' }), text);
+    expect(wife.payment_method).toBe('신한카드(아내)');
+    db.run("UPDATE transactions SET payment_method = '신한카드'");
+    const habitPick = await one(db, said({ payment_said: '아내 신한카드', payment_method: '신한카드' }), text);
+    expect(habitPick.payment_method).toBe('신한카드(아내)');
+    expect(autoAdded(db, [habitPick], text)).toEqual(['신한카드(아내)']);
+    const pay = await one(db, said({ payment_said: '삼성페이', payment_method: '모름' }), '삼성페이 김밥천국 9000원');
+    expect(pay.payment_method).toBe('');
+    expect(pay.warnings[0]).toContain("'삼성페이'에 맞는 것이 목록에 없어요");
+    expect(paymentMatch('삼성페이', '삼성')).toBe(0);
+    expect(paymentMatch('네이버페이 포인트', '네이버페이')).toBe(2);
+  });
+
+  test("말한 것에 맞는 것이 여럿이면('신한' → 신한카드·신한체크) AI가 고른 것 > 늘 쓰던 것 > 비우고 묻기", async () => {
+    const db = withHabit(['신한체크']);
+    const sh = o => said({ payment_said: '신한', ...o });
+    const text = '신한 김밥천국 9000원';
+    expect((await one(db, sh({ payment_method: '신한체크' }), text)).payment_method).toBe('신한체크');
+    const asked = await one(db, sh({ payment_method: '모름' }), text);
+    expect(asked.payment_method).toBe('');
+    expect(asked.warnings[0]).toContain("'신한'에 맞는 것이 여럿이에요");
+    db.run("UPDATE transactions SET payment_method = '신한체크'");
+    const habit = await one(db, sh({ payment_method: '모름' }), text);
+    expect(habit.payment_method).toBe('신한체크');
+    expect(habit.sources.payment_method).toBe('history');
+  });
+
+  test("'카드'처럼 어느 것인지 말하지 않았으면 AI가 고른 카드는 확인받는다", async () => {
+    const s = await one(withHabit(), said({ payment_said: '카드', payment_method: '하나카드' }), '김밥천국 9000원 카드');
+    expect(s.payment_method).toBe('하나카드');
+    expect(s.sources.payment_method).toBe('ai');
+  });
+
+  test('한 건인데 AI가 말한 결제수단을 통째로 놓쳐도, 글에 결제수단 낱말이 또렷하면 앱이 찾는다 — 확인받고, 보통 말·가게 이름 속 글자는 아니다', async () => {
+    const db = withHabit();
+    const text = '현대카드 김밥천국 9000원';
+    const s = await one(db, kimbap(), text);
+    expect(s).toMatchObject({ payment_method: '현대카드M', paymentSaid: '현대카드' });
+    expect(s.sources.payment_method).toBe('ai');
+    expect(autoAdded(db, [s], text)).toEqual([]);
+    // '우리 아이'·'하나'·'엄마'는 결제수단 이름과 겹쳐도 결제수단 낱말이 아니다 — '엄마 카드로'는 맞다
+    const family = withHabit(['하나카드', '우리카드', '엄마카드']);
+    for (const t of ['우리 아이 김밥천국 9000원', '김밥천국 김밥 하나 9000원', '엄마 김밥천국 9000원']) {
+      expect((await one(family, kimbap(), t)).paymentSaid).toBe('');
+    }
+    expect((await one(family, kimbap(), '엄마 카드로 김밥천국 9000원')).payment_method).toBe('엄마카드');
+    // '현대백화점'의 '현대'는 결제수단 '현대'가 아니다
+    const store = await one(withHabit(['하나카드', '현대']), kimbap({ merchant: '현대백화점', detail: '현대백화점' }), '현대백화점 9000원');
+    expect(store.paymentSaid).toBe('');
+  });
+
+  test('결제수단을 말하지 않았으면 예전처럼 습관으로 채운다', async () => {
+    const s = await one(withHabit(), kimbap(), '김밥천국 9000원');
+    expect(s).toMatchObject({ payment_method: '하나카드', paymentSaid: '' });
+    expect(s.sources.payment_method).toBe('history');
+  });
+
+  test('바로 넣기: AI가 말한 카드를 못 짚어 습관 카드로 채웠으면 확인받는다 — 가게 이름 속 글자는 결제수단이 아니다', async () => {
+    const db = withHabit(['하나카드', '롯데카드']);
+    const text = '현대카드 김밥천국 9000원';
+    const missed = await one(db, kimbap(), text);
+    expect(missed.payment_method).toBe('하나카드');
+    const { familiar, review } = splitFamiliar(db, [missed], 'text', { said: text });
+    expect(familiar).toEqual([]);
+    expect(review[0].reason).toBe('결제수단을 확인해 주세요');
+    // 비워 둔 것도 바로 넣지 않는다
+    expect(autoAdded(db, [await one(db, said({ payment_method: '모름' }), text)], text)).toEqual([]);
+    // 늘 롯데카드로 넣던 롯데마트 — 가게 이름 속 '롯데'가 말한 현대카드를 덮지 못한다
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('식비','장보기')");
+    for (let i = 1; i <= 3; i++) {
+      db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '롯데카드', '식비', '장보기', '롯데마트', 50000)", [addDays(TODAY, -i)]);
+    }
+    const martEntry = entry({ merchant: '롯데마트', detail: '롯데마트', amount: 30000, category: '식비 > 장보기' });
+    const mart = await one(db, martEntry, '롯데마트 3만원 현대카드');
+    expect(mart.payment_method).toBe('롯데카드');
+    expect(autoAdded(db, [mart], '롯데마트 3만원 현대카드')).toEqual([]);
+    // 결제수단 이야기가 없으면 습관대로 바로 넣는다 — 이름 속 '롯데'는 결제수단 이야기가 아니다
+    expect(autoAdded(db, [mart], '롯데마트 3만원')).toEqual(['롯데카드']);
+  });
+
+  test('바로 넣기: 한 번 말한 카드가 뒤의 건에도 걸릴 수 있어, 글에 결제수단 말이 있으면 습관 카드로 바로 넣지 않는다', async () => {
+    const db = withHabit();
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('식비','간식')");
+    const text = '현대카드로 김밥천국 9000원, 붕어빵 3000원';
+    // AI가 현대카드를 첫 건에만 붙였다 — 붕어빵은 습관(하나카드)으로 채워지지만 바로 넣지 않는다
+    for (let i = 1; i <= 2; i++) {
+      db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '하나카드', '식비', '간식', '붕어빵', 3000)", [addDays(TODAY, -i)]);
+    }
+    analyzeWithAI.mockResolvedValueOnce({
+      entries: [said({ payment_said: '현대카드', payment_method: '현대카드' }), entry({ detail: '붕어빵', amount: 3000, category: '식비 > 간식' })],
+      question: '',
+    });
+    const list = await parse(db, text);
+    expect(list.map(s => s.payment_method)).toEqual(['현대카드M', '하나카드']);
+    expect(autoAdded(db, list, text)).toEqual(['현대카드M']);
   });
 });

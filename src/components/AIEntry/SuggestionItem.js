@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { isSuggestionComplete } from '../../services/receiptAssistant';
+import { isSuggestionComplete, isSpokenPaymentWarning } from '../../services/receiptAssistant';
 import { evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import { isValidDateStr } from '../../services/dateUtils';
 import AmountInput from '../common/AmountInput';
@@ -15,6 +15,8 @@ import './AIEntry.css';
 export function patchListItem(it, patch) {
   const s = { ...it.s, ...patch, sources: { ...it.s.sources } };
   if ('payment_method' in patch) delete s.sources.payment_method;
+  // 말한 결제수단을 못 맞췄다는 알림은 결제수단을 고르면 지운다
+  if (patch.payment_method && s.warnings) s.warnings = s.warnings.filter(w => !isSpokenPaymentWarning(w));
   if ('budget_category' in patch) delete s.sources.category;
   if ('date' in patch) delete s.sources.date;
   if ('detail' in patch) delete s.sources.detail;

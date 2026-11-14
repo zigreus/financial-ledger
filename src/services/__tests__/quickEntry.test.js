@@ -116,6 +116,51 @@ describe('바로 넣어도 되는지 (familiarity)', () => {
     expect(familiarity(db, byHistory('text'), 'text', { said: '스타벅스 5천원' }).reason).toBe('결제수단을 확인해 주세요');
   });
 
+  test('B-096 말로 입력: 다른 결제수단을 말했으면 늘 쓰던 결제수단(습관)으로 바로 넣지 않는다', () => {
+    const db = makeDb();                         // 스타벅스는 늘 신한카드
+    const byHistory = over => familiarSuggestion({ sources: { date: 'text', category: 'history', payment_method: 'history' }, ...over });
+    // AI가 말한 카드를 못 짚어 습관(신한카드)으로 골랐다 — 글에 다른 카드가 있다
+    expect(familiarity(db, byHistory(), 'text', { said: '현대카드 스타벅스 5천원' }).reason).toBe('결제수단을 확인해 주세요');
+    expect(familiarity(db, byHistory(), 'text', { said: '스타벅스 5천원 KB국민' }).reason).toBe('결제수단을 확인해 주세요');
+    expect(familiarity(db, byHistory({ paymentSaid: '현대' }), 'text', { said: '현대 스타벅스 5천원' }).reason).toBe('결제수단을 확인해 주세요');
+    // 말한 것이 습관과 같거나, 결제수단 얘기가 없으면 습관대로
+    expect(familiarity(db, byHistory({ paymentSaid: '신한' }), 'text', { said: '신한 스타벅스 5천원' }).familiar).toBe(true);
+    expect(familiarity(db, byHistory(), 'text', { said: '스타벅스 5천원' }).familiar).toBe(true);
+  });
+
+  test('B-096 말로 입력: 가게 이름 속 글자나 다른 갈래의 카드는 그 결제수단 이야기가 아니다', () => {
+    const db = makeDb();
+    db.run("INSERT INTO payment_methods (name, sort_order) VALUES ('하나카드', 9)");
+    const habitTx = detail => addTransaction(db, { payment_method: '신한카드', date: addDays(TODAY, -3), budget_category: '식비', sub_category: '외식', detail, amount: 30000 });
+    const byHistory = name => familiarSuggestion({
+      merchant: name, detail: name, historyDetail: name, sub_category: '외식',
+      sources: { date: 'text', category: 'history', payment_method: 'history' },
+    });
+    // 늘 신한카드로 넣던 하나로마트 — '하나'는 가게 이름이지 하나카드가 아니다
+    habitTx('하나로마트'); habitTx('하나로마트');
+    expect(familiarity(db, byHistory('하나로마트'), 'text', { said: '하나로마트 3만원' }).familiar).toBe(true);
+    // '교통카드 충전'의 '카드'는 이름의 일부
+    habitTx('교통카드 충전'); habitTx('교통카드 충전');
+    expect(familiarity(db, byHistory('교통카드 충전'), 'text', { said: '교통카드 충전 5만원' }).familiar).toBe(true);
+    expect(familiarity(db, byHistory('교통카드 충전'), 'text', { said: '교통카드 충전 5만원 하나카드' }).reason).toBe('결제수단을 확인해 주세요');
+    // '신한체크'라고 했으면 신한카드를 말한 것이 아니다 — '신한카드로'·'신한으로'는 맞다
+    const spoken = familiarSuggestion({ sources: { date: 'text', category: 'history', payment_method: 'text' } });
+    expect(familiarity(db, spoken, 'text', { said: '스타벅스 5천원 신한체크' }).reason).toBe('결제수단을 확인해 주세요');
+    expect(familiarity(db, spoken, 'text', { said: '스타벅스 5천원 신한카드로' }).familiar).toBe(true);
+    expect(familiarity(db, spoken, 'text', { said: '스타벅스 5천원 신한으로' }).familiar).toBe(true);
+  });
+
+  test("B-096 말로 입력: 말한 표현('현대카드')이 목록 표기('현대카드M')를 가리키면 그 결제수단으로 바로 넣는다", () => {
+    const db = makeDb();
+    db.run("INSERT INTO payment_methods (name, sort_order) VALUES ('현대카드M', 9)");
+    const s = familiarSuggestion({ payment_method: '현대카드M', paymentSaid: '현대카드', sources: { date: 'text', category: 'history', payment_method: 'text' } });
+    expect(familiarity(db, s, 'text', { said: '현대카드 스타벅스 5천원' }).familiar).toBe(true);
+    // AI가 짚은 표현이 글에 없으면 믿지 않는다
+    expect(familiarity(db, s, 'text', { said: '스타벅스 5천원' }).reason).toBe('결제수단을 확인해 주세요');
+    // 표현이 다른 결제수단을 가리키면 아니다
+    expect(familiarity(db, { ...s, paymentSaid: '신한카드' }, 'text', { said: '신한카드 스타벅스 5천원' }).reason).toBe('결제수단을 확인해 주세요');
+  });
+
   test('앞날짜 거래와, 한 번에 온 목록 안의 같은 거래는 확인받는다', () => {
     const db = makeDb();
     expect(familiarity(db, familiarSuggestion({ date: addDays(TODAY, 1) }), 'sms').reason).toBe('앞날짜 거래예요');

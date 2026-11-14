@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-096, I-061
+다음 번호: B-097, I-061
 
 ## 요약표
 
@@ -111,6 +111,7 @@
 | B-093 | ✅ | 중간 | 거래내역 | 앱을 열면 목록이 이번 달로 내려가 맨 위의 알림(잔액 위험·예산·리포트)이 화면 밖으로 밀려 보이지 않음 |
 | B-094 | ✅ | 높음 | 저장·동기화 | 휴대폰(LTE)에서 가계부 받기가 한 번 멈추면 앱을 다시 열 때까지 '오프라인'에서 풀리지 않음 |
 | B-095 | ✅ | 높음 | 저장·동기화 | 통신이 되는데도(와이파이·PC 포함) '연결이 없어 새로 받지 못했습니다'로 실패하고 🔄이 안 먹는 것처럼 보임 — 원인은 Microsoft 365 장애 |
+| B-096 | ✅ | 높음 | AI 입력 | AI 입력에 '현대카드 병원 9000원'이라고 썼는데 늘 쓰던 하나카드로 바로 들어감 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -1029,6 +1030,15 @@
 - 원인: 2026-11-13 Microsoft 365 대규모 장애(셰어포인트·아웃룩·팀즈, OneDrive 포함 — 실제 브라우저 재현으로 앱은 정상 응답에 제대로 연결됨을 확인)인데, 저장소가 실패한 요청을 모두 OfflineError로 바꾸며 원래 오류를 버려 원인을 알 수 없었고, 조용한 다시 시도에 합류한 🔄은 아무 반응을 보이지 않았다.
 - 해결: (1단계) 실패한 단계·서버·원래 오류를 OfflineError.detail에 담고 받기·저장 실패 때 문제 알리기 기록에 남긴다(가장 최근 하나) — 기록을 받아 원인을 고친다. 함께: 조용한 다시 시도 중에 누른 🔄은 그 시도에 합류해 ⏳와 실패 안내를 보이고(전에는 아무 반응 없음), 먼저 저장하다 실패해도 조용히 끝내지 않으며, 뒤에서 맞추는 동안(오프라인이어도)은 글자 대신 🔄이 돈다(사용자 요청). 검증(실제 OneDrive 저장소+동기화 재현 14가지)에서 찾은 것도 고침: 단계마다 멈춤 시계를 새로 재고(토큰 20초+파일 정보 20초가 합쳐 끊기던 것) 멈춘 단계·시간을 기록하며, MSAL 시간 초과와 바로 실패를 구별하고, 맞추는 중 되돌리기가 실패해도 이어 맞춘다.
 - 파일: src/services/storage/provider.js(offlineFrom), storage/oneDrive.js·googleDrive.js·stall.js, src/hooks/useLedgerSync.js(noteConnectionFailure·visibleLoadRef·syncing), src/components/Header/Header.js·Header.css, App.js, 테스트(storage·useLedgerSync.offline·Header.sync)
+
+### B-096 AI 입력에 '현대카드 병원 9000원'이라고 썼는데 늘 쓰던 하나카드로 바로 들어감
+- 상태: ✅ 해결 (2026-11-14)
+- 심각도: 높음
+- 영역: AI 입력
+- 문제: 말로 입력에서 결제수단을 직접 말해도 그 가게에 늘 쓰던 결제수단으로 바뀌어, '자주 넣던 거래 바로 넣기'(I-022)로 확인 없이 들어간다(사용자 제보).
+- 원인: AI가 돌려준 결제수단이 목록 표기와 글자 그대로 같지 않거나('현대카드' ↔ '현대카드M') '모름'이면 예전 습관으로 채웠고, 습관이 늘 같은 결제수단이라 바로 넣기 기준을 통과했다(입력 창으로 채울 때도 비운 결제수단을 세부카테고리 자동 결제수단이 다시 채웠다).
+- 해결: AI가 말한 표현을 그대로(payment_said) 돌려주게 하고 앱이 그 말이 글에 있는지 본 뒤 목록과 맞는 정도(같음·통째로 품음·줄인 이름만 겹침)로 맞춰 말한 것을 습관보다 먼저 쓰며, 못 맞추거나 AI가 습관 카드로 바꿨으면 비워 묻고(입력 창 자동 결제수단도 채우지 않음), 바로 넣기는 말한 것과 통째로 맞을 때나 글(가게 이름을 뺀)에 결제수단 이야기가 없을 때만 한다.
+- 파일: src/services/receiptAssistant.js(paymentMatch·pickSpokenPayment·saidInText), textEntry.js(paymentWordIn), aiCommand.js, quickEntry.js(paymentParts·surePayment), src/components/TransactionForm/TransactionForm.js, AIEntry/SuggestionCard.js·SuggestionItem.js·TextFollowUp.js, 테스트(textEntry·quickEntry·aiCommand·txform·TextFollowUp)
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)

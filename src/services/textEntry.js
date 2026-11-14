@@ -8,7 +8,11 @@
  * - 덧붙인 말(followUps)은 처음 말과 합쳐 처음부터 다시 정리한다. 앱이 물은 것도 함께 보내 "9천원" 같은 짧은 답도 알아듣게 한다.
  */
 import { analyzeWithAI, AIError } from './aiClient';
-import { buildDataContext, classify, pickPaymentMethod, resolveAmount, resolveDate } from './receiptAssistant';
+import {
+  buildDataContext, classify, normalizeName, paymentMatch, pickPaymentMethod, pickSpokenPayment, resolveAmount, resolveDate,
+  saidInText, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+} from './receiptAssistant';
+import { getPaymentMethods } from './dbManager';
 import { today as todayStr } from './formulaEvaluator';
 
 const SCHEMA = {
@@ -28,9 +32,10 @@ const SCHEMA = {
           krw_amount: { type: 'number', description: '외화 결제인데 원화로 얼마였는지도 말했으면 그 원화 금액, 아니면 0' },
           payment_method: { type: 'string', description: '결제수단 목록 중 하나, 판단 어려우면 "모름"' },
           payment_mentioned: { type: 'boolean', description: '사용자가 결제수단을 직접 말했으면 true' },
+          payment_said: { type: 'string', description: PAYMENT_SAID_DESCRIPTION },
           category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단 어려우면 "모름"' },
         },
-        required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'category'],
+        required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'payment_said', 'category'],
       },
     },
     question: {
@@ -76,7 +81,8 @@ export function buildTextPrompt(db, text, today = todayStr(), followUps = []) {
     '- 금액: 9천원=9000, 1만2천원=12000, 만오천=15000, 4.5만=45000.',
     '- 금액을 말하지 않은 건도 빼지 말고 amount=0으로 넣는다. 빠진 정보는 앱이 사용자에게 다시 묻는다.',
     '- 외화 결제에 원화 금액도 말하면(덧붙인 말 포함) amount·currency는 외화 그대로 두고 krw_amount에 원화 금액을 넣는다.',
-    '- 결제수단을 말하지 않았으면 입력 습관으로 추정하되 payment_mentioned=false.',
+    PAYMENT_SAID_RULE,
+    '- 결제수단을 말하지 않았으면 입력 습관으로 추정하되 payment_mentioned=false, payment_said는 빈 문자열.',
     '- 결제수단·카테고리는 위 목록의 표기 그대로, 애매하면 "모름".',
     '- 결제 건을 하나도 정리할 수 없을 때만 entries를 비우고, question에 무엇이 부족한지 한 문장으로 되묻는다.',
     '- 되물을 때도 글로만 답하지 말고 정해진 형식(entries·question)으로 답한다.',
@@ -143,7 +149,36 @@ export async function parseTextEntry({ db, ai, text, followUps = [], signal, onP
     const question = typeof raw?.question === 'string' ? raw.question.trim() : '';
     throw new AIError(question || DEFAULT_QUESTION, UNCLEAR);
   }
-  return entries.slice(0, 20).map(e => buildTextSuggestion(db, e, today));
+  const spokenText = [trimmed, ...cleanFollowUps(followUps).map(f => f.said)].join('\n');
+  const list = entries.slice(0, 20);
+  // 한 건인데 AI가 결제수단을 말하지 않았다고 보면 — 글에 목록의 결제수단이 또렷이 있는지 앱이 한 번 더 본다 (B-096)
+  const lone = list.length === 1 && !list[0].payment_mentioned && !String(list[0].payment_said || '').trim();
+  const foundPayment = lone ? paymentWordIn(db, spokenText, list[0]) : '';
+  return list.map(e => buildTextSuggestion(db, e, today, { spokenText, foundPayment }));
+}
+
+// 결제수단 낱말 끝에 붙는 말 — '현대카드로', '현금으로', '신한카드 결제'
+const PAYMENT_PARTICLE_RE = /(으로|로|결제|계산|이요|요|이랑|랑|하고)$/;
+
+/**
+ * 글에서 결제수단 낱말을 찾는다 — 카드·체크·페이로 끝나는 이름('현대카드', '엄마 카드')이나 '현금'이고 목록의 결제수단과
+ * 통째로 맞는(paymentMatch 2 이상) 것만. '우리 아이'·'하나'·'엄마' 같은 보통 말과 가게·세부내역 이름 속 글자('현대백화점')는 보지 않는다.
+ * 짧은 낱말부터 보고, 없으면 ''
+ */
+function paymentWordIn(db, text, e) {
+  const methods = getPaymentMethods(db);
+  const names = [e.merchant, e.detail].map(normalizeName).filter(Boolean);
+  const words = String(text || '').split(/[^0-9a-zA-Z가-힣]+/).map(normalizeName).filter(Boolean);
+  for (let size = 1; size <= 2; size += 1) {
+    for (let i = 0; i + size <= words.length; i += 1) {
+      const w = words.slice(i, i + size).join('').replace(PAYMENT_PARTICLE_RE, '');
+      const core = w.replace(/(체크카드|신용카드|카드|체크|페이|pay)$/, '');
+      const payWord = (core !== w && core.length >= 2) || w === '현금';
+      if (!payWord || names.some(n => n.includes(w) || w.includes(n))) continue;
+      if (methods.some(m => paymentMatch(w, m) >= 2)) return w;
+    }
+  }
+  return '';
 }
 
 /**
@@ -163,17 +198,37 @@ function withSpokenKrw(money, krwAmount) {
   };
 }
 
-/** AI가 나눈 한 건을 이 가계부 데이터에 맞춘 추천으로 */
-export function buildTextSuggestion(db, e, today = todayStr()) {
+/**
+ * 사용자가 말한 결제수단 표현 — 말하지 않았으면 null.
+ * payment_said가 비었어도 말했다고 하면(payment_mentioned) AI가 고른 이름을 말한 것으로 본다.
+ * 말했다는데 무엇인지 모르거나, 사용자가 쓴 글(spokenText)에 그 표현이 없으면(AI가 습관의 카드로 바꿔 적었을 수 있다)
+ * 빈 문자열 — 습관으로 채우지 않고 묻는다 (B-096)
+ */
+function spokenPayment(e, spokenText) {
+  const mentioned = String(e.payment_said || '').trim()
+    || (e.payment_mentioned ? String(e.payment_method || '').trim().replace(/^모름$/, '') : '');
+  if (!mentioned) return e.payment_mentioned || String(e.payment_said || '').trim() ? '' : null;
+  return spokenText === undefined || saidInText(spokenText, mentioned) ? mentioned : '';
+}
+
+/**
+ * AI가 나눈 한 건을 이 가계부 데이터에 맞춘 추천으로.
+ * spokenText: 사용자가 쓴 글(덧붙인 말 포함) — 있으면 AI가 짚은 결제수단 표현이 정말 글에 있는지 본다
+ * foundPayment: AI는 결제수단을 말하지 않았다고 했는데 앱이 글에서 찾은 결제수단 낱말 — 그것으로 고르되 바로 넣지는 않는다(확인받는다)
+ */
+export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, foundPayment = '' } = {}) {
   const { date, source: dateSource } = resolveDate(e.date, today, 'text');
   const money = withSpokenKrw(resolveAmount(db, { total: e.amount, currency: e.currency, date }), e.krw_amount);
   const cls = classify(db, {
     merchant: e.merchant, detail: e.detail, aiCategory: e.category, eventId: money.event_id, readSource: 'text',
   });
-  const pay = pickPaymentMethod(db, {
-    aiMethod: e.payment_method, evident: !!e.payment_mentioned, history: cls.history,
-    sub: cls.sub_category, readSource: 'text',
-  });
+  const said = foundPayment || spokenPayment(e, spokenText);
+  let pay = said === null
+    ? pickPaymentMethod(db, {
+      aiMethod: e.payment_method, evident: false, history: cls.history, sub: cls.sub_category, readSource: 'text',
+    })
+    : pickSpokenPayment(db, { said, aiMethod: e.payment_method, history: cls.history, sub: cls.sub_category });
+  if (foundPayment && pay.source && pay.source !== 'ai') pay = { ...pay, source: 'ai' };
 
   const sources = { date: dateSource, ...cls.sources };
   if (money.event_id) sources.event = 'trip';
@@ -181,6 +236,7 @@ export function buildTextSuggestion(db, e, today = todayStr()) {
 
   // 말한 날짜를 쓸 수 없으면(앞날짜·없는 날짜) 오늘로 넣되 알린다 — 예약·예정을 오늘 거래로 조용히 넣지 않게 (I-022)
   const warnings = [...money.warnings];
+  if (pay.warning) warnings.push(pay.warning);
   const spokenDate = String(e.date || '').trim();
   if (spokenDate && dateSource === 'today' && spokenDate !== date) {
     warnings.push(`말한 날짜(${spokenDate})를 쓸 수 없어 오늘로 넣었습니다`);
@@ -198,6 +254,8 @@ export function buildTextSuggestion(db, e, today = todayStr()) {
     eventTitle: money.eventTitle,
     payment_method: pay.payment_method,
     paymentHint: '',
+    paymentSaid: said || '',
+    paymentMentioned: said !== null, // 결제수단을 말했다 — 못 맞춰 비웠으면 입력 창도 습관으로 채우지 않는다
     budget_category: cls.budget_category,
     sub_category: cls.sub_category,
     items: [],

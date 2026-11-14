@@ -15,7 +15,9 @@
  * 새 거래만 말했으면 이 모듈은 아무것도 하지 않고 기존 말로 입력(textEntry·quickEntry)에 넘긴다.
  */
 import { analyzeWithAI, AIError } from './aiClient';
-import { buildDataContext, isSuggestionComplete, normalizeName, suggestionToTransaction } from './receiptAssistant';
+import {
+  buildDataContext, isSuggestionComplete, normalizeName, suggestionToTransaction, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+} from './receiptAssistant';
 import { buildTextSuggestion } from './textEntry';
 import { OPTIONAL_FEATURES } from './optionalFeatures';
 import {
@@ -86,9 +88,10 @@ const ENTRY_SCHEMA = {
     krw_amount: num('외화 결제의 원화 금액을 말했으면 그 값, 아니면 0'),
     payment_method: str('결제수단 목록 중 하나, 모르면 "모름"'),
     payment_mentioned: { type: 'boolean', description: '사용자가 결제수단을 직접 말했으면 true' },
+    payment_said: str(PAYMENT_SAID_DESCRIPTION),
     category: str('"카테고리 > 세부카테고리" 목록 중 하나, 모르면 "모름"'),
   },
-  required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'category'],
+  required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'payment_said', 'category'],
 };
 
 const SCHEMA = {
@@ -204,6 +207,7 @@ export function buildCommandPrompt(db, text, today = todayStr()) {
     '',
     '[규칙]',
     '- 새 지출을 기록하라는 말은 actions가 아니라 entries에 넣는다 (금액·결제수단을 몰라도 넣는다).',
+    PAYMENT_SAID_RULE,
     '- 날짜는 오늘 기준으로 계산한다: 어제, 지난주 금요일, 이번 달(1일~오늘), 지난달(그 달 1일~말일).',
     '- "방금 넣은 것"은 which=last_added, "가장 최근 스타벅스"는 which=latest, 여러 건이면 all.',
     '- 금액: 9천원=9000, 1만2천원=12000, 50만원=500000.',
@@ -230,7 +234,8 @@ export async function parseCommand({ db, ai, text, signal, onProgress, today = t
   const entries = (Array.isArray(raw?.entries) ? raw.entries : []).filter(e => e && typeof e === 'object').slice(0, 20);
   let reply = typeof raw?.reply === 'string' ? raw.reply.trim().slice(0, 300) : '';
   if (!actions.length && !entries.length && !reply) reply = '무엇을 할지 알아듣지 못했어요 — 조금 더 자세히 말해 주세요';
-  return { actions, entries, reply };
+  // text: 새 거래에 AI가 짚은 결제수단 표현이 정말 글에 있는지 볼 때 쓴다 (buildPlan, B-096)
+  return { actions, entries, reply, text: trimmed };
 }
 
 // ── 계획: 할 일마다 검증하고 화면에 보일 글을 만든다 (DB에 쓰지 않음) ─────────
@@ -686,8 +691,8 @@ export function planAction(db, a) {
 }
 
 /** 새 거래(entries) 하나 → 추가 단계 — 빈 칸이 있으면 막는다(그런 건은 말로 입력에서 되묻는다) */
-function planEntry(db, e, today) {
-  const sug = buildTextSuggestion(db, e, today);
+function planEntry(db, e, today, spokenText) {
+  const sug = buildTextSuggestion(db, e, today, { spokenText });
   const step = {
     kind: 'tx_add', summary: '', title: `거래 넣기 — ${sug.detail || sug.merchant || '새 거래'} ${sug.amount ? won(sug.amount) : ''}`.trim(),
     lines: [`${sug.date} · ${pathText(sug.budget_category, sug.sub_category) || '분류 모름'} · ${sug.payment_method || '결제수단 모름'}`],
@@ -715,7 +720,7 @@ export function buildPlan(db, parsed, today = todayStr()) {
       steps[i] = { ...st, error: `${st.error} — 먼저 만든 뒤 다시 말해 주세요` };
     }
   });
-  entries.forEach(e => steps.push(planEntry(db, e, today)));
+  entries.forEach(e => steps.push(planEntry(db, e, today, typeof parsed?.text === 'string' ? parsed.text : undefined)));
   const auto = steps.length > 0 && steps.every(x => x.ok && x.auto);
   return { steps, reply: parsed?.reply || '', addOnly: false, auto };
 }

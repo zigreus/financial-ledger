@@ -228,6 +228,119 @@ export function pickPaymentMethod(db, { aiMethod, evident, history, sub, readSou
   return { payment_method: '', source: null };
 }
 
+// 결제수단 이름 끝의 흔한 말 — '현대카드'를 '현대'로 줄여 목록의 '현대M'과도 맞춰 본다
+const PAYMENT_SUFFIX_RE = /(체크카드|신용카드|카드|체크|페이|pay)$/;
+// 간편결제(삼성페이·카카오페이)는 어느 카드로도 낼 수 있어 줄여 맞추지 않는다 — '삼성페이'를 삼성카드로 보지 않게
+const PAY_APP_RE = /(페이|pay)$/;
+const paymentWords = name => String(name || '').split(/[^0-9a-zA-Z가-힣]+/).map(normalizeName).filter(Boolean);
+// 이름을 가르는 낱말 — '카드'·'체크' 같은 종류 말과 한 글자는 빼고 센다 ('신한 카드'는 낱말 하나 '신한')
+const GENERIC_WORD_RE = /^(체크카드|신용카드|카드|체크|페이|pay)$/;
+const nameWords = name => paymentWords(name).filter(w => w.length >= 2 && !GENERIC_WORD_RE.test(w));
+
+/**
+ * 말한 표현과 결제수단 이름이 얼마나 맞는지 (B-096)
+ *  3: 같음 / 2.5: 낱말이 여럿인 이름의 낱말이 모두 말에 있음('아내 신한카드' ↔ '신한카드(아내)', 순서는 상관없음 —
+ *     '카드' 같은 종류 말은 낱말로 세지 않는다: '신한 카드'는 '신한체크카드'와 낱말이 다 맞는 것이 아니다)
+ *  2: 한쪽이 다른 쪽을 통째로 품음('현대카드' ↔ '현대카드M', '신한' ↔ '신한카드')
+ *  1: 줄인 이름(두 글자 이상)만 겹침('국민카드' ↔ '국민행복카드', '현대카드' ↔ '현대M') / 0: 아님
+ * '카드'처럼 이름 없이 종류만 있는 결제수단은 말한 표현에 들어 있어도 맞는다고 보지 않는다.
+ * 간편결제('삼성페이')는 간편결제 이름만 품는다 — 목록의 '삼성'·'삼성카드'가 아니다.
+ */
+export function paymentMatch(said, method) {
+  const s = normalizeName(said);
+  const m = normalizeName(method);
+  if (!s || !m) return 0;
+  if (s === m) return 3;
+  const sw = nameWords(said);
+  const mw = nameWords(method);
+  if ((mw.length > 1 && mw.every(w => s.includes(w))) || (sw.length > 1 && sw.every(w => m.includes(w)))) return 2.5;
+  const sCore = s.replace(PAYMENT_SUFFIX_RE, '');
+  const mCore = m.replace(PAYMENT_SUFFIX_RE, '');
+  const payApp = PAY_APP_RE.test(s);
+  if ((sCore && m.includes(s)) || (mCore && s.includes(m) && (!payApp || PAY_APP_RE.test(m)))) return 2;
+  if (payApp) return 0;
+  return (sCore.length >= 2 && m.includes(sCore)) || (mCore.length >= 2 && s.includes(mCore)) ? 1 : 0;
+}
+
+/** 글에 그 결제수단 표현이 있는지 — 낱말(붙여 쓴 것 포함)이 그 표현과 2 이상 맞을 때. AI가 지어낸 표현을 믿지 않게 */
+export function saidInText(text, phrase) {
+  const p = normalizeName(phrase);
+  if (!p) return false;
+  if (normalizeName(text).includes(p)) return true;
+  const words = paymentWords(text);
+  for (let i = 0; i < words.length; i += 1) {
+    let joined = '';
+    for (let j = i; j < words.length && j < i + 3; j += 1) {
+      joined += words[j];
+      if (joined.replace(PAYMENT_SUFFIX_RE, '').length >= 2 && paymentMatch(joined, phrase) >= 2) return true;
+    }
+  }
+  return false;
+}
+
+/** 말한 결제수단 표현 칸(payment_said) — 앱이 목록과 직접 맞춘다 (말로 입력·AI 명령의 새 거래) */
+export const PAYMENT_SAID_DESCRIPTION = '사용자가 결제수단을 말했으면 말한 그대로 (예: "현대카드", "신한", "현금"). 말하지 않았으면 빈 문자열';
+/** 지시문의 결제수단 규칙 (말로 입력·AI 명령) */
+export const PAYMENT_SAID_RULE = '- 결제수단을 말했으면 payment_said에 말한 그대로 적고, payment_method는 그 말에 맞는 목록 표기를 고른다. 말한 결제수단을 입력 습관의 결제수단으로 바꾸지 않고, 맞는 것이 없으면 "모름".';
+
+// 말한 결제수단에 대한 알림 머리말 (isSpokenPaymentWarning)
+const SPOKEN_PAYMENT_WARNING = '말한 결제수단';
+
+/**
+ * 사용자가 결제수단을 말했을 때(말로 입력) — 말한 것이 예전 습관보다 먼저다 (B-096).
+ * 말한 표현(said)을 앱이 목록과 직접 맞추고(paymentMatch), AI가 고른 것·습관은 그 말과 맞을 때만 쓴다
+ * — AI가 습관의 카드를 골랐거나 목록 표기와 달라 못 맞췄어도 다른 카드로 채우지 않게.
+ *  - AI가 고른 것이 가장 잘 맞거나, 같은 이름이 따로 없고 늘 쓰던 것도 아니면: 그것 (여럿 중에서는 AI가 글의 앞뒤를 보고 고른다)
+ *  - 가장 잘 맞는 이름이 하나면 그것. 줄인 이름만 겹치는데 AI가 다른 것을 골랐으면 AI가 고른 것('국민카드' → KB카드일 수 있다)
+ *  - 여럿('신한' → 신한카드·신한체크): 통째로 맞는 것 중 늘 쓰던 것 > 비우고 묻는다
+ *  - 맞는 이름이 없으면: AI가 고른 것은 이름이 달라도 그것일 수 있어('농협' → NH체크) 그것, 늘 쓰던 것이면 비운다
+ *  - 고른 것이 말과 통째로 맞지 않으면(위의 짐작들) 'ai'와 '확인해 주세요' 알림을 붙인다
+ *  - '카드'처럼 어느 것인지 말하지 않았으면 그런 이름 중에서 짐작하고(AI > 습관) 확인받는다
+ * 바로 넣기는 말한 표현과 통째로 맞는(2 이상) 결제수단만 한다 — quickEntry.
+ * 반환: { payment_method, source, warning? }
+ */
+export function pickSpokenPayment(db, { said, aiMethod, history, sub }) {
+  const methods = getPaymentMethods(db);
+  const label = String(said || '').trim();
+  const word = normalizeName(label);
+  const blank = why => ({ payment_method: '', source: null, warning: `${SPOKEN_PAYMENT_WARNING}${label ? ` '${label}'` : ''}${why} — 골라 주세요` });
+  const unsure = method => ({ payment_method: method, source: 'ai', warning: `${SPOKEN_PAYMENT_WARNING} '${label}'에 맞는지 확인해 주세요` });
+  if (!word) return blank('을 알아듣지 못했어요');
+  const aiPick = methods.includes(aiMethod) ? aiMethod : '';
+  const habits = [history?.payment_method, sub ? getAutoPaymentMethod(db, sub) : null].filter(m => m && methods.includes(m));
+
+  if (!word.replace(PAYMENT_SUFFIX_RE, '') && !methods.some(m => normalizeName(m) === word)) {
+    const pool = methods.filter(m => normalizeName(m).includes(word));
+    if (pool.includes(aiPick)) return { payment_method: aiPick, source: 'ai' };
+    const habit = habits.find(h => pool.includes(h));
+    if (habit) return { payment_method: habit, source: 'history' };
+    if (pool.length === 1) return { payment_method: pool[0], source: 'ai' };
+    return blank(pool.length ? '에 맞는 것이 여럿이에요' : '에 맞는 것이 목록에 없어요');
+  }
+
+  const score = new Map(methods.map(m => [m, paymentMatch(label, m)]));
+  const best = Math.max(0, ...score.values());
+  const top = best ? methods.filter(m => score.get(m) === best) : [];
+  const aiScore = aiPick ? score.get(aiPick) : 0;
+  const aiIsHabit = habits.includes(aiPick);
+  let pick;
+  if (aiScore && (aiIsHabit ? aiScore === best && best >= 2 : aiScore === best || best < 3)) pick = aiPick;
+  else if (top.length === 1) pick = best < 2 && aiPick && !aiIsHabit ? aiPick : top[0];
+  else if (top.length > 1) {
+    const habit = best >= 2 && habits.find(h => top.includes(h));
+    return habit ? { payment_method: habit, source: 'history' } : blank('에 맞는 것이 여럿이에요');
+  } else if (aiPick && !aiIsHabit) pick = aiPick;
+  else return blank('에 맞는 것이 목록에 없어요');
+  // 통째로 맞지 않으면(줄인 이름만 겹치거나 AI가 다른 이름으로 고름) 그 말을 가리키는지 확실하지 않다 — 확인받는다
+  return score.get(pick) >= 2 ? { payment_method: pick, source: 'text' } : unsure(pick);
+}
+
+/** 말한 결제수단에 대한 알림인지 — 목록에서 결제수단을 고르면 지운다 */
+export const isSpokenPaymentWarning = w => String(w || '').startsWith(SPOKEN_PAYMENT_WARNING);
+
+/** 같은 결제수단 표현인지 — '신한'과 '신한카드'처럼 끝말만 다르면 같다 (덧붙여 다시 정리할 때 말이 바뀌었는지 본다) */
+export const samePaymentPhrase = (a, b) => normalizeName(a).replace(PAYMENT_SUFFIX_RE, '') === normalizeName(b).replace(PAYMENT_SUFFIX_RE, '');
+
 /**
  * 금액·통화 → 원화 금액, 외화면 여행 일정·환율까지.
  * 반환: { amount, currency, foreignAmount, rate, event_id, eventTitle, warnings }
