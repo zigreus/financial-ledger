@@ -104,27 +104,45 @@ export const suggestionName = s => String(s?.detail || s?.merchant || s?.sub_cat
 // 정확히 같은 이름으로 찾은 습관의 점수 바닥 (matchHistory)
 const EXACT_SCORE = 1e9;
 
+// 이름의 낱말 구분 — normalizeName이 지우는 글자(공백·기호)
+const NAME_SEPARATOR_RE = /[^0-9a-zA-Z가-힣ぁ-んァ-ン一-龥]+/;
+
+/** 정규화한 이름과 그 안에서 낱말이 시작하는 자리 — '(주)이마트 성수점' → '주이마트성수점', {0, 1, 4} */
+function nameWithStarts(raw) {
+  const starts = new Set();
+  let key = '';
+  String(raw || '').split(NAME_SEPARATOR_RE).map(normalizeName).filter(Boolean).forEach((w) => {
+    starts.add(key.length);
+    key += w;
+  });
+  return { key, starts };
+}
+
 // 가맹점명과 세부내역이 얼마나 구체적으로 맞는지 — 정확히 같으면 가장 높고,
-// 한쪽이 다른 쪽을 포함하면 겹치는 글자 수(= 짧은 쪽 길이)가 길수록 높다. 맞지 않으면 0.
-function nameMatchLength(key, detail) {
-  if (key === detail) return Infinity;
-  if (key.includes(detail) || detail.includes(key)) return Math.min(key.length, detail.length);
+// 짧은 쪽이 긴 쪽의 낱말 첫머리부터 들어 있으면 겹치는 글자 수(= 짧은 쪽 길이)가 길수록 높다. 맞지 않으면 0.
+// 낱말 가운데부터 겹치는 것은 다른 이름이다 — '오메가3'의 '메가', '이마트'의 '마트' (B-097)
+function nameMatchLength(a, b) {
+  if (a.key === b.key) return Infinity;
+  const [long, short] = a.key.length >= b.key.length ? [a, b] : [b, a];
+  for (let i = long.key.indexOf(short.key); i >= 0; i = long.key.indexOf(short.key, i + 1)) {
+    if (long.starts.has(i)) return short.key.length;
+  }
   return 0;
 }
 
 /**
  * 가맹점명으로 예전에 적어 둔 세부내역을 찾는다.
  * 더 구체적으로 맞는 것(정확히 같음 > 겹치는 글자가 긴 것)이 먼저이고, 횟수는 같은 수준끼리만 비교한다.
- * 예) "이마트 성수점" → 자주 쓴 "마트"(2자)보다 "이마트"(3자)
+ * 예) "이마트 성수점" → "이마트", "(주)이마트" → "이마트" / "오메가3" → "메가"는 아니다 (낱말 가운데)
  * 반환: 패턴 행 + score (없으면 null)
  */
 export function matchHistory(db, ...names) {
-  const keys = names.map(normalizeName).filter(k => k.length >= 2);
+  const keys = names.map(nameWithStarts).filter(k => k.key.length >= 2);
   if (!keys.length) return null;
   let best = null;
   getDetailPatterns(db).forEach(p => {
-    const d = normalizeName(p.detail);
-    if (d.length < 2) return;
+    const d = nameWithStarts(p.detail);
+    if (d.key.length < 2) return;
     const match = Math.max(...keys.map(k => nameMatchLength(k, d)));
     if (!match) return;
     // 구체성(정확 일치 1순위, 겹친 길이 2순위)을 먼저, 같은 수준이면 많이 쓴 순

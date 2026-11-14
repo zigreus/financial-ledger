@@ -241,6 +241,41 @@ describe('세부내역은 꼭 채우지 않는다 (I-056)', () => {
   });
 });
 
+describe('예전 세부내역은 낱말 첫머리부터 맞을 때만 찾는다 (B-097)', () => {
+  const withShops = () => {
+    const db = makeDb();
+    db.run("INSERT INTO budget_categories (name) VALUES ('건강'),('생활')");
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('건강','영양제'),('생활','장보기'),('생활','가전')");
+    const add = (detail, cat, sub, n) => {
+      for (let i = 0; i < n; i++) {
+        db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '현금', ?, ?, ?, 10000)", [TODAY, cat, sub, detail]);
+      }
+    };
+    add('메가', '식비', '커피', 3);
+    add('이마트', '생활', '장보기', 2);
+    return db;
+  };
+  const one = async (db, o) => {
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ amount: 33800, ...o })], question: '' });
+    return (await parse(db, '말한 내용'))[0];
+  };
+
+  test("'오메가3'은 예전의 '메가'(커피)가 아니다 — 말한 이름과 AI가 고른 카테고리 그대로", async () => {
+    const s = await one(withShops(), { detail: '오메가3', category: '건강 > 영양제' });
+    expect(s).toMatchObject({ detail: '오메가3', budget_category: '건강', sub_category: '영양제', historyDetail: '' });
+    expect(s.sources).toMatchObject({ detail: 'text', category: 'ai' });
+  });
+
+  test("'하이마트'는 '이마트'가 아니고, 낱말 첫머리부터 맞으면('이마트 성수점', '(주)이마트', '메가커피') 예전 습관", async () => {
+    const db = withShops();
+    expect((await one(db, { merchant: '하이마트', detail: '청소기', category: '생활 > 가전' })).historyDetail).toBe('');
+    for (const merchant of ['이마트 성수점', '(주)이마트']) {
+      expect(await one(db, { merchant, category: '식비 > 점심' })).toMatchObject({ historyDetail: '이마트', sub_category: '장보기' });
+    }
+    expect(await one(db, { merchant: '메가커피', category: '모름' })).toMatchObject({ historyDetail: '메가', sub_category: '커피' });
+  });
+});
+
 describe('말한 결제수단이 예전 습관보다 먼저 (B-096)', () => {
   // 김밥천국은 늘 하나카드로 넣었다 — 바로 넣기 대상
   const withHabit = (methods = ['하나카드', '현대카드M']) => {
