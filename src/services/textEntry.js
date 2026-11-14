@@ -1,6 +1,6 @@
 /**
  * 말로 입력 — "어제 점심 김치찌개 9천원 현금, 스타벅스 4500 카카오페이" 같은 문장을
- * 거래 추천 목록으로 바꾼다. 분류는 영수증과 같은 규칙(예전 습관 > AI 추천)으로 다시 맞춘다.
+ * 거래 추천 목록으로 바꾼다. 분류는 영수증과 같은 규칙(말한 것 > 예전 기록, classify)으로 다시 맞춘다.
  *
  * 정보가 모자라면 되묻고 덧붙여 말하게 한다 (I-017).
  * - 결제 건을 하나도 못 찾으면 kind 'unclear' 오류로 AI의 질문을 돌려준다. 화면은 이것을 실패가 아니라 되묻기로 보여 준다.
@@ -10,7 +10,7 @@
 import { analyzeWithAI, AIError } from './aiClient';
 import {
   buildDataContext, classify, normalizeName, paymentMatch, pickPaymentMethod, pickSpokenPayment, resolveAmount, resolveDate,
-  saidInText, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+  saidInText, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
 } from './receiptAssistant';
 import { getPaymentMethods } from './dbManager';
 import { today as todayStr } from './formulaEvaluator';
@@ -26,7 +26,7 @@ const SCHEMA = {
         properties: {
           date: { type: 'string', description: 'YYYY-MM-DD. 날짜 말이 없으면 빈 문자열' },
           merchant: { type: 'string', description: '가게·장소 이름. 없으면 빈 문자열' },
-          detail: { type: 'string', description: '가계부 세부내역 (입력 습관의 표기 우선, 없으면 짧게). 카테고리 이름을 되풀이할 뿐이면 빈 문자열' },
+          detail: { type: 'string', description: DETAIL_SAID_DESCRIPTION },
           amount: { type: 'number', description: '금액 숫자. "9천원"=9000, "1만2천"=12000. 모르면 0' },
           currency: { type: 'string', description: 'ISO 통화 코드. 원화면 KRW, "엔"이면 JPY, "달러"면 USD' },
           krw_amount: { type: 'number', description: '외화 결제인데 원화로 얼마였는지도 말했으면 그 원화 금액, 아니면 0' },
@@ -34,8 +34,9 @@ const SCHEMA = {
           payment_mentioned: { type: 'boolean', description: '사용자가 결제수단을 직접 말했으면 true' },
           payment_said: { type: 'string', description: PAYMENT_SAID_DESCRIPTION },
           category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단 어려우면 "모름"' },
+          category_alt: { type: 'string', description: CATEGORY_ALT_DESCRIPTION },
         },
-        required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'payment_said', 'category'],
+        required: ['date', 'merchant', 'detail', 'amount', 'currency', 'krw_amount', 'payment_method', 'payment_mentioned', 'payment_said', 'category', 'category_alt'],
       },
     },
     question: {
@@ -49,7 +50,7 @@ const SCHEMA = {
 const SYSTEM = [
   '당신은 한국 가계부 앱의 입력 도우미입니다.',
   '사용자가 말로 적은 지출을 거래 기록으로 정리합니다.',
-  '말에 없는 사실(금액·가게)은 지어내지 않고, 분류는 주어진 목록 안에서 사용자의 입력 습관을 우선해 고릅니다.',
+  '말에 없는 사실(금액·가게)은 지어내지 않고, 분류는 주어진 목록 안에서 고르되 사용자가 말한 물건·용도가 먼저이고 입력 습관은 판단 근거로 씁니다.',
 ].join(' ');
 
 // 결제 건을 하나도 못 찾았을 때 — 화면은 이 kind를 실패가 아니라 되묻기로 보여 준다
@@ -70,10 +71,15 @@ export function cleanFollowUps(followUps) {
   return turns.length > MAX_FOLLOW_UPS ? [turns[0], ...turns.slice(-(MAX_FOLLOW_UPS - 1))] : turns;
 }
 
+/** 사용자가 쓴 글 전체 — 처음 말과 덧붙인 말 (지시문의 '글에 나온 이름의 예전 기록'과 결제수단 확인이 함께 쓴다) */
+export function spokenTextOf(text, followUps = []) {
+  return [String(text || '').trim(), ...cleanFollowUps(followUps).map(f => f.said)].join('\n');
+}
+
 export function buildTextPrompt(db, text, today = todayStr(), followUps = []) {
   const turns = cleanFollowUps(followUps);
   const lines = [
-    buildDataContext(db, today).text,
+    buildDataContext(db, today, { text: spokenTextOf(text, followUps) }).text,
     '',
     '[규칙]',
     '- 한 문장에 여러 건이 있으면 각각 나눈다. "둘 다 현금"처럼 묶어 말한 건 각 건에 적용한다.',
@@ -84,6 +90,7 @@ export function buildTextPrompt(db, text, today = todayStr(), followUps = []) {
     PAYMENT_SAID_RULE,
     '- 결제수단을 말하지 않았으면 입력 습관으로 추정하되 payment_mentioned=false, payment_said는 빈 문자열.',
     '- 결제수단·카테고리는 위 목록의 표기 그대로, 애매하면 "모름".',
+    CATEGORY_ALT_RULE,
     '- 결제 건을 하나도 정리할 수 없을 때만 entries를 비우고, question에 무엇이 부족한지 한 문장으로 되묻는다.',
     '- 되물을 때도 글로만 답하지 말고 정해진 형식(entries·question)으로 답한다.',
   ];
@@ -149,7 +156,7 @@ export async function parseTextEntry({ db, ai, text, followUps = [], signal, onP
     const question = typeof raw?.question === 'string' ? raw.question.trim() : '';
     throw new AIError(question || DEFAULT_QUESTION, UNCLEAR);
   }
-  const spokenText = [trimmed, ...cleanFollowUps(followUps).map(f => f.said)].join('\n');
+  const spokenText = spokenTextOf(trimmed, followUps);
   const list = entries.slice(0, 20);
   // 한 건인데 AI가 결제수단을 말하지 않았다고 보면 — 글에 목록의 결제수단이 또렷이 있는지 앱이 한 번 더 본다 (B-096)
   const lone = list.length === 1 && !list[0].payment_mentioned && !String(list[0].payment_said || '').trim();
@@ -229,7 +236,8 @@ export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, fou
   const { date, source: dateSource } = resolveDate(e.date, today, 'text');
   const money = withSpokenKrw(resolveAmount(db, { total: e.amount, currency: e.currency, date }), e.krw_amount);
   const cls = classify(db, {
-    merchant: e.merchant, detail: e.detail, aiCategory: e.category, eventId: money.event_id, readSource: 'text',
+    merchant: e.merchant, detail: e.detail, aiCategory: e.category, aiAltCategory: e.category_alt, eventId: money.event_id,
+    readSource: 'text', promptText: spokenText,
   });
   const said = foundPayment || spokenPayment(e, spokenText);
   let pay = said === null
@@ -280,6 +288,8 @@ export function buildTextSuggestion(db, e, today = todayStr(), { spokenText, fou
     items: [],
     historyDetail: cls.history?.detail || '',
     historyCount: cls.history?.cnt || 0,
+    alternatives: cls.alternatives,
+    categoryGuess: cls.categoryGuess,
     confidence: 'high',
     warnings,
     sources,

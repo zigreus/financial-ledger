@@ -3,7 +3,7 @@
  *
  *  - 사진 몇 장이든 한 번의 AI 요청으로 보내고, 결제마다 한 건(entries)으로 받는다.
  *    영수증 한 장 = 한 건, 결제 내역 목록 한 장 = 보이는 결제 수만큼.
- *  - 한 건씩 기존 영수증 추천(buildSuggestion)으로 이 가계부에 맞춘다(입력 습관 > AI 추천, 목록에 없는 값은 버림).
+ *  - 한 건씩 기존 영수증 추천(buildSuggestion)으로 이 가계부에 맞춘다(사진에 보이는 것 > 예전 기록, 목록에 없는 값은 버림).
  *  - 여러 건이면 확인 목록에서 고른다. 미리 체크하지 않는 것:
  *      · 가계부에 같은 날 같은 금액 거래가 이미 있음(내역을 계속 받아 겹치는 경우) — duplicateOf
  *      · 같은 사진 묶음에 같은 결제가 앞에 또 있음(겹쳐 찍음) — batchDuplicate
@@ -14,7 +14,9 @@
  *  - 사용자가 목록에서 날짜·금액·내용을 고치면 markDuplicates로 다시 대조한다.
  */
 import { analyzeWithAI, AIError } from './aiClient';
-import { buildDataContext, buildSuggestion, normalizeName, resolveDate } from './receiptAssistant';
+import {
+  buildDataContext, buildSuggestion, normalizeName, resolveDate, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE,
+} from './receiptAssistant';
 import { getTransactions } from './dbManager';
 import { namesMatch } from './cardSms';
 import { todayStr } from './dateUtils';
@@ -30,6 +32,7 @@ const ENTRY = {
     payment_hint: { type: 'string', description: '이 결제에 보이는 카드·결제 수단 그대로 (예: 현대카드 EV, 신한카드 1234, 현금). 없으면 빈 문자열' },
     payment_method: { type: 'string', description: '결제수단 목록 중 하나, 판단이 어려우면 "모름"' },
     category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단이 어려우면 "모름"' },
+    category_alt: { type: 'string', description: CATEGORY_ALT_DESCRIPTION },
     detail: { type: 'string', description: '가계부 세부내역에 쓸 짧은 이름. 입력 습관에 같은 가게가 있으면 그 표기 그대로' },
     items: {
       type: 'array',
@@ -51,7 +54,7 @@ const ENTRY = {
     },
   },
   required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'payment_hint', 'payment_method',
-    'category', 'detail', 'items', 'confidence', 'note', 'needs_fix'],
+    'category', 'category_alt', 'detail', 'items', 'confidence', 'note', 'needs_fix'],
 };
 
 const SCHEMA = {
@@ -68,7 +71,7 @@ const SCHEMA = {
 const SYSTEM = [
   '당신은 한국 가계부 앱의 사진 입력 도우미입니다.',
   '영수증·카드 결제 내역 사진에서 실제로 보이는 결제만 빠짐없이, 중복 없이 옮기고, 보이지 않는 값은 지어내지 않습니다.',
-  '분류(결제수단·카테고리)는 반드시 주어진 목록 안에서 고르고, 사용자의 기존 입력 습관을 우선합니다.',
+  '분류(결제수단·카테고리)는 반드시 주어진 목록 안에서 고르고, 사진에 보이는 것(품목·가게)이 먼저이며 기존 입력 습관은 판단 근거로 씁니다.',
 ].join(' ');
 
 /** 사진 AI 지시문 (테스트·디버깅용으로 노출) */
@@ -92,6 +95,7 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr() } = {}) {
     '- 날짜가 안 보이면 빈 문자열. 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
     '- 목록 위에 카드 이름이 한 번만 보이면 그 카드를 모든 결제의 payment_hint로.',
     '- payment_method·category는 위 목록의 표기 그대로, 애매하면 "모름". 카드 이름이 결제수단 목록의 하나와 같은 카드로 보이면 그 결제수단.',
+    CATEGORY_ALT_RULE,
     '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명. 카테고리 이름을 되풀이할 뿐이면 빈 문자열.',
     '- 결제마다 note에 확실하지 않은 점을 한 줄로 — 짐작한 값이 있으면 무엇을 왜 짐작했는지. 확실하면 빈 문자열. 사진 전체에 해당하는 점은 맨 위 note에만.',
     '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
@@ -141,7 +145,8 @@ const FIX_ANY = ['date', 'detail', 'amount', 'budget_category', 'sub_category'];
 /**
  * 직접 고쳐야 할 점 — [{ text, fields }]. fields 중 하나를 고치면 그 점은 풀린다.
  *  - 간편결제·결제대행 이름뿐(규칙) → 세부내역·카테고리
- *  - AI가 알려 준 것 — 예전에 같은 가게를 넣은 습관으로 분류했으면 따르지 않는다(늘 넣던 대로면 고칠 것이 없다)
+ *  - AI가 알려 준 것 — AI도 예전에 같은 가게를 넣은 습관대로 분류했으면 따르지 않는다(늘 넣던 대로면 고칠 것이 없다).
+ *    AI가 분류를 못 해 예전 기록으로 채운 것(categoryGuess)은 알린다 (I-062)
  *  - 날짜를 읽지 못해 오늘로 둠·앞날짜 → 날짜
  */
 function fixesFor(e, s, today) {
@@ -152,7 +157,7 @@ function fixesFor(e, s, today) {
       text: `${String(e.merchant).trim()} 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요`,
       fields: ['detail', 'budget_category', 'sub_category'],
     });
-  } else if (!NO_FIX_RE.test(aiFix) && s.sources.category !== 'history') {
+  } else if (!NO_FIX_RE.test(aiFix) && (s.sources.category !== 'history' || s.categoryGuess)) {
     fixes.push({ text: aiFix, fields: FIX_ANY });
   }
   if (s.sources.date === 'today') {

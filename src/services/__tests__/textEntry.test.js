@@ -3,7 +3,9 @@ import initSqlJs from 'sql.js';
 import { createDatabase, addCalendarEvent, addEventCountry } from '../dbManager';
 import { analyzeWithAI, AIError } from '../aiClient';
 import { parseTextEntry, buildTextPrompt, cleanFollowUps, UNCLEAR } from '../textEntry';
-import { isSpokenPaymentWarning, paymentMatch, PAYMENT_SAID_RULE } from '../receiptAssistant';
+import {
+  applyAlternative, isSpokenPaymentWarning, otherAlternatives, paymentMatch, CATEGORY_ALT_RULE, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+} from '../receiptAssistant';
 import { splitFamiliar } from '../quickEntry';
 import { addDays } from '../dateUtils';
 
@@ -270,9 +272,146 @@ describe('예전 세부내역은 낱말 첫머리부터 맞을 때만 찾는다 
     const db = withShops();
     expect((await one(db, { merchant: '하이마트', detail: '청소기', category: '생활 > 가전' })).historyDetail).toBe('');
     for (const merchant of ['이마트 성수점', '(주)이마트']) {
-      expect(await one(db, { merchant, category: '식비 > 점심' })).toMatchObject({ historyDetail: '이마트', sub_category: '장보기' });
+      expect(await one(db, { merchant, category: '모름' })).toMatchObject({ detail: '이마트', historyDetail: '이마트', sub_category: '장보기' });
     }
     expect(await one(db, { merchant: '메가커피', category: '모름' })).toMatchObject({ historyDetail: '메가', sub_category: '커피' });
+  });
+});
+
+describe('원문(사진·쓴 글)이 말한 것이 예전 기록보다 먼저 (I-062)', () => {
+  const habitDb = () => {
+    const db = makeDb();
+    db.run("INSERT INTO budget_categories (name) VALUES ('쇼핑'),('경조사')");
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('쇼핑','생활용품'),('경조사','선물')");
+    return db;
+  };
+  const add = (db, detail, n, cat = '식비', sub = '커피') => {
+    for (let i = 0; i < n; i++) {
+      db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '신한카드', ?, ?, ?, 4500)", [TODAY, cat, sub, detail]);
+    }
+  };
+  const one = async (db, o, text = '말한 내용') => {
+    analyzeWithAI.mockResolvedValue({ entries: [entry({ amount: 30000, ...o })], question: '' });
+    return (await parse(db, text))[0];
+  };
+
+  test("'스타벅스 텀블러' — 가게는 예전 '스타벅스'(커피)지만 산 것을 말했으면 세부내역·카테고리는 말한 대로, 예전 기록은 쓰지 않는다", async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const said = '스타벅스 텀블러 3만원 신한카드';
+    const s = await one(db, {
+      merchant: '스타벅스', detail: '스타벅스 텀블러', category: '쇼핑 > 생활용품', payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드',
+    }, said);
+    expect(s).toMatchObject({ detail: '스타벅스 텀블러', budget_category: '쇼핑', sub_category: '생활용품', historyDetail: '', historyCount: 0 });
+    expect(s.sources).toMatchObject({ detail: 'text', category: 'ai' });
+    expect(splitFamiliar(db, [s], 'text', { said }).review[0].reason).toBe('예전 기록과 분류가 달라요');
+    // 예전 기록은 덮지 않고 후보로 보인다
+    expect(otherAlternatives(s).map(o => [o.kind, o.detail, o.sub_category, o.cnt])).toEqual([['past', '스타벅스', '커피', 5]]);
+  });
+
+  test('AI가 습관을 보고도 다른 카테고리를 골랐으면 말한 것 때문이다 — AI가 고른 것, 예전 기록을 고르면 처음 추천으로 되돌릴 수 있다', async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const s = await one(db, { merchant: '스타벅스', detail: '스타벅스', category: '경조사 > 선물' }, '스타벅스 3만원 선물');
+    expect(s).toMatchObject({ detail: '스타벅스', budget_category: '경조사', sub_category: '선물', historyDetail: '스타벅스' });
+    expect(s.sources.category).toBe('ai');
+    expect(splitFamiliar(db, [s], 'text', { said: '스타벅스 3만원 선물' }).familiar).toEqual([]);
+
+    const [past] = otherAlternatives(s);
+    const usedPast = applyAlternative(s, past);
+    expect(usedPast).toMatchObject({ sub_category: '커피', historyDetail: '스타벅스', historyCount: 5 });
+    expect(usedPast.sources).toMatchObject({ detail: 'history', category: 'history' });
+    const [back] = otherAlternatives(usedPast);
+    expect(back.kind).toBe('first');
+    expect(applyAlternative(usedPast, back)).toMatchObject({ budget_category: '경조사', sub_category: '선물', sources: { category: 'ai' } });
+  });
+
+  test("글에 나온 이름의 예전 기록은 많이 쓴 40개 밖이어도 AI에게 보낸다 — 낱말 가운데('오메가3'의 '메가')는 아니다", async () => {
+    const db = habitDb();
+    for (let i = 0; i < 40; i++) add(db, `가게${i}`, 3, '식비', '점심');
+    add(db, '스타벅스', 2);
+    add(db, '메가', 2);
+    expect(buildTextPrompt(db, '가게0 5천원', TODAY)).not.toContain('스타벅스 →');
+    const p = buildTextPrompt(db, '메가 커피 2잔, 스타벅스에서 4500', TODAY);
+    expect(p).toContain('[사용자가 쓴 글에 나온 이름의 예전 기록');
+    expect(p).toContain('스타벅스 → 식비 > 커피 / 신한카드 (2)');
+    expect(p).toContain('메가 → 식비 > 커피 / 신한카드 (2)');
+    expect(buildTextPrompt(db, '오메가3 33800', TODAY)).not.toContain('메가 →');
+    // AI가 보고도 달리 골랐으면 AI가 고른 것, 예전 기록은 후보로
+    const s = await one(db, { merchant: '스타벅스', detail: '스타벅스', category: '식비 > 점심' }, '스타벅스 4500');
+    expect(s).toMatchObject({ sub_category: '점심', historyDetail: '스타벅스', categoryGuess: false });
+    expect(otherAlternatives(s).map(o => o.kind)).toEqual(['past']);
+  });
+
+  test('AI가 카테고리를 못 고르면 예전 기록이 채운다 — 산 것을 말했으면 세부내역은 말한 대로, 바로 넣지는 않는다', async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const s = await one(db, { merchant: '스타벅스', detail: '텀블러', category: '모름' });
+    expect(s).toMatchObject({ detail: '텀블러', budget_category: '식비', sub_category: '커피', historyDetail: '', categoryGuess: true });
+    expect(s.sources).toMatchObject({ detail: 'text', category: 'history' });
+
+    const same = await one(db, { merchant: '스타벅스', detail: '스타벅스', category: '모름', payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드' }, '스타벅스 4500 신한카드');
+    expect(same).toMatchObject({ sub_category: '커피', historyDetail: '스타벅스', historyCount: 5, categoryGuess: true });
+    expect(splitFamiliar(db, [same], 'text', { said: '스타벅스 4500 신한카드' }).review[0].reason).toBe('분류를 예전 기록으로 채웠어요 — 맞는지 확인해 주세요');
+  });
+
+  test('AI가 헷갈려 준 2순위는 후보로 — 같은 분류는 한 번만, 목록에 없거나 1순위와 같으면 버린다', async () => {
+    const db = habitDb();
+    const s = await one(db, { detail: '케이크', category: '식비 > 점심', category_alt: '경조사 > 선물' });
+    expect(s).toMatchObject({ detail: '케이크', sub_category: '점심' });
+    expect(otherAlternatives(s).map(o => [o.kind, o.budget_category, o.sub_category, o.detail])).toEqual([['second', '경조사', '선물', '케이크']]);
+    expect(applyAlternative(s, otherAlternatives(s)[0])).toMatchObject({ budget_category: '경조사', sub_category: '선물', detail: '케이크' });
+    for (const category_alt of ['', '모름', '식비 > 점심', '없는 > 분류']) {
+      expect((await one(db, { detail: '케이크', category: '식비 > 점심', category_alt })).alternatives).toEqual([]);
+    }
+  });
+
+  test('지시문이 헷갈릴 때만 2순위를 달라고 하고, 입력 습관은 판단 근거라고 한다 — 습관을 우선하라고 하지 않는다', async () => {
+    expect(buildTextPrompt(makeDb(), '케이크 3만원', TODAY)).toContain(CATEGORY_ALT_RULE);
+    await one(makeDb(), { detail: '케이크', category: '식비 > 점심' });
+    const { system, schema } = analyzeWithAI.mock.calls[0][0];
+    expect(system).toContain('입력 습관은 판단 근거');
+    expect(system).not.toContain('습관을 우선');
+    expect(schema.properties.entries.items.properties.detail.description).toBe(DETAIL_SAID_DESCRIPTION);
+  });
+
+  test('AI가 습관과 같은 분류를 골랐어도 헷갈려 2순위를 줬으면 바로 넣지 않고 고르게 한다', async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const said = '스타벅스 3만원 선물 신한카드';
+    const s = await one(db, {
+      merchant: '스타벅스', detail: '스타벅스', category: '식비 > 커피', category_alt: '경조사 > 선물',
+      payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드',
+    }, said);
+    expect(s.sources.category).toBe('history');
+    expect(otherAlternatives(s).map(o => o.kind)).toEqual(['second']);
+    expect(splitFamiliar(db, [s], 'text', { said }).review[0].reason).toBe('AI가 분류를 헷갈렸어요 — 골라 주세요');
+  });
+
+  test("가게와 메뉴를 말했고('스타벅스 아메리카노') AI 분류가 그 가게의 예전 기록과 같으면 늘 가던 가게로 바로 넣는다 — 세부내역은 말한 대로", async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const said = '스타벅스 아메리카노 4500 신한카드';
+    const s = await one(db, {
+      merchant: '스타벅스', detail: '스타벅스 아메리카노', category: '식비 > 커피', payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드',
+    }, said);
+    expect(s).toMatchObject({ detail: '스타벅스 아메리카노', sub_category: '커피', historyDetail: '스타벅스', historyCount: 5 });
+    expect(s.sources).toMatchObject({ detail: 'text', category: 'history' });
+    expect(splitFamiliar(db, [s], 'text', { said }).familiar).toHaveLength(1);
+  });
+
+  test('세부내역 칸 설명은 산 것도 말했으면 가게와 함께 적게 한다 — 가계부에는 세부내역만 남는다', () => {
+    expect(DETAIL_SAID_DESCRIPTION).toContain('가게와 함께');
+  });
+
+  test('같은 이름이고 AI도 같은 카테고리면 예전 기록 그대로 — 바로 넣기도 된다', async () => {
+    const db = habitDb();
+    add(db, '스타벅스', 5);
+    const s = await one(db, { merchant: '스타벅스', detail: '스타벅스', category: '식비 > 커피', payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드' }, '스타벅스 4500 신한카드');
+    expect(s).toMatchObject({ detail: '스타벅스', sub_category: '커피', historyDetail: '스타벅스', historyCount: 5, categoryGuess: false });
+    expect(s.sources.category).toBe('history');
+    expect(s.alternatives).toEqual([]);
+    expect(splitFamiliar(db, [s], 'text', { said: '스타벅스 4500 신한카드' }).familiar).toHaveLength(1);
   });
 });
 

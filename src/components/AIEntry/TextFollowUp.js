@@ -99,6 +99,12 @@ export function recordPick(item, patch) {
       to: categoryOf({ budget_category: patch.budget_category, sub_category: patch.sub_category }),
     };
   }
+  // 세부내역 — 다른 후보 중 '예전 기록'을 고르면 그 표기로 바뀐다 (I-062). 처음 값으로 돌아왔으면 고른 것이 아니다
+  if ('detail' in patch) {
+    const from = picks.detail ? picks.detail.from : (item.s.detail || '');
+    if ((patch.detail || '') === from) delete picks.detail;
+    else picks.detail = { from, to: patch.detail || '' };
+  }
   return picks;
 }
 
@@ -125,10 +131,18 @@ function applyPicks(s, picks) {
     out.sub_category = sub;
     delete out.sources.category;
   }
+  const detail = picks.detail;
+  if (detail && (s.detail || '') === detail.from) {
+    out.detail = detail.to;
+    delete out.sources.detail;
+  }
   return out;
 }
 
 const nameOf = suggestionName;
+// 예전 줄의 이름들 — 지금 이름과, 다른 후보를 골라 세부내역이 바뀌었으면 바꾸기 전 이름(AI가 다시 정리하면 그 이름으로 온다)
+const oldNamesOf = it => [it.s, ...(it.picks && it.picks.detail ? [{ ...it.s, detail: it.picks.detail.from }] : [])]
+  .map(s => normalizeName(nameOf(s)));
 
 /**
  * 다시 정리한 결과를 목록으로 → { items, dropped }.
@@ -148,7 +162,7 @@ export function carryChoices(oldItems, suggestions) {
     suggestions.forEach((s, i) => {
       const name = normalizeName(nameOf(s));
       if (match[i] >= 0 || !name) return;
-      const k = oldItems.findIndex((it, j) => !used.has(j) && same(normalizeName(nameOf(it.s)), name));
+      const k = oldItems.findIndex((it, j) => !used.has(j) && oldNamesOf(it).some(oldName => same(oldName, name)));
       if (k >= 0) { match[i] = k; used.add(k); }
     });
   };

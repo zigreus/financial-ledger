@@ -36,6 +36,18 @@ const SAME_PLACE_MIN_OVERLAP = 3;
 // 말로 적은 글에 이런 말이 있으면 바로 넣지 않는다 — 취소·환불·거절·예약·할부는 넣을 거래인지, 얼마인지 확인이 필요하다
 const UNSURE_WORDS_RE = /취소|환불|거절|반품|예정|예약|할부/;
 
+// 분류 때문에 바로 넣지 않은 이유 — 사용자가 분류를 고르면(다른 후보·목록) 풀린다 (I-062)
+const CATEGORY_REASON = {
+  differs: '예전 기록과 분류가 달라요',
+  guess: '분류를 예전 기록으로 채웠어요 — 맞는지 확인해 주세요',
+  unsure: 'AI가 분류를 헷갈렸어요 — 골라 주세요',
+  notSame: '예전 기록과 같은 거래인지 확인해 주세요',
+};
+const CATEGORY_REASONS = new Set(Object.values(CATEGORY_REASON));
+
+/** 분류를 확인하라는 이유인지 — 분류를 고르면 화면에서 지운다 */
+export const isCategoryReason = reason => CATEGORY_REASONS.has(reason);
+
 /** 말로 적은 글로 바로 넣어도 되는지 (취소·예약 같은 말이 없을 때) */
 export function mayAutoAddText(text) {
   return !UNSURE_WORDS_RE.test(String(text || ''));
@@ -188,8 +200,16 @@ export function familiarity(db, s, kind, { said, others } = {}) {
   if (s.warnings && s.warnings.length) return no(s.warnings[0]);
   if (s.date > todayStr()) return no('앞날짜 거래예요');
   if (kind === 'receipt' && (s.confidence === 'low' || s.sources?.date !== 'receipt')) return no('영수증의 날짜·금액을 확인해 주세요');
-  if (s.sources?.category !== 'history') return no('처음 보는 곳이에요');
-  if ((Number(s.historyCount) || 0) < FAMILIAR_MIN_COUNT) return no('아직 자주 넣던 곳이 아니에요');
+  if (s.sources?.category !== 'history') {
+    return no((s.alternatives || []).some(o => o.kind === 'past') ? CATEGORY_REASON.differs : '처음 보는 곳이에요');
+  }
+  // AI가 판단한 분류가 아니라 예전 기록으로 채운 것 — AI와 예전 기록이 같을 때만 바로 넣는다 (I-062)
+  if (s.categoryGuess) return no(CATEGORY_REASON.guess);
+  // AI가 헷갈려 2순위를 줬으면 고르게 한다
+  if ((s.alternatives || []).some(o => o.kind === 'second')) return no(CATEGORY_REASON.unsure);
+  // 분류는 예전 기록과 같지만 산 것까지 말해 예전의 그 거래와 같은지 모른다 ('스타벅스 아메리카노' ↔ 예전 '스타벅스')
+  if (!(Number(s.historyCount) > 0)) return no(CATEGORY_REASON.notSame);
+  if (Number(s.historyCount) < FAMILIAR_MIN_COUNT) return no('아직 자주 넣던 곳이 아니에요');
   const spoken = kind === 'text' ? String(said || '') : undefined;
   if (!samePlace(s, spoken)) return no(`예전의 '${s.historyDetail}'와 같은 곳인지 확인해 주세요`);
   if (!surePayment(db, s, kind, spoken, others)) return no('결제수단을 확인해 주세요');

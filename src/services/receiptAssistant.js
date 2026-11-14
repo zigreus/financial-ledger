@@ -3,8 +3,8 @@
  *
  * 1) AI에게 이 가계부의 결제수단·카테고리 목록, 사용자의 입력 습관, 여행 일정을 함께 보낸다.
  * 2) AI가 읽은 사실(날짜·가맹점·금액·통화·결제 흔적)과 분류 추천을 받는다.
- * 3) 기존 데이터로 다시 맞춘다 — 분류는 "이 가게를 예전에 어떻게 적었나"를 AI 추천보다 우선하고,
- *    목록에 없는 값은 버린다. 외화면 해당 통화의 여행 일정과 환율로 원화를 계산한다.
+ * 3) 기존 데이터로 다시 맞춘다 — 원문(사진·글)이 말한 것이 먼저이고, 예전 기록("이 가게를 예전에 어떻게 적었나")은
+ *    원문이 말하지 않은 것만 채운다(classify, I-062). 목록에 없는 값은 버린다. 외화면 해당 통화의 여행 일정과 환율로 원화를 계산한다.
  * 각 항목에 근거(source)를 붙여 "이렇게 입력하시겠습니까?" 화면에서 보여준다.
  *
  * 영수증·말로 입력·카드 내역 대조가 아래 공통 함수(buildDataContext, classify,
@@ -52,14 +52,18 @@ export function categoryPaths(db) {
   return paths;
 }
 
+const habitLine = p => `${p.detail} → ${p.budget_category}${p.sub_category ? ` > ${p.sub_category}` : ''} / ${p.payment_method} (${p.cnt})`;
+
 /**
  * 사용자가 사전에 동의한 범위(목록·입력 습관·여행 일정)만 담은 지시문 앞부분.
  * 영수증·말로 입력·카드 내역 대조가 함께 쓴다.
+ * text(말로 입력·AI 명령의 글)를 주면 글에 나온 이름의 예전 기록도 함께 보낸다 — AI가 판단 근거로 쓰게 (relatedPatterns, I-062)
  */
-export function buildDataContext(db, today = todayStr()) {
+export function buildDataContext(db, today = todayStr(), { text = '' } = {}) {
   const methods = getPaymentMethods(db);
   const paths = categoryPaths(db);
   const patterns = getDetailPatterns(db).slice(0, PATTERN_LIMIT);
+  const related = text ? relatedPatterns(db, text) : [];
   const blankHabits = getBlankDetailHabits(db);
   const trips = tripEventsOf(db).slice(0, 10);
   const dow = WEEKDAYS[new Date(`${today}T00:00:00`).getDay()];
@@ -73,9 +77,13 @@ export function buildDataContext(db, today = todayStr()) {
     ...paths,
     '',
     '[이 사용자의 입력 습관 — 세부내역 → 카테고리 / 결제수단 (횟수)]',
-    ...(patterns.length
-      ? patterns.map(p => `${p.detail} → ${p.budget_category}${p.sub_category ? ` > ${p.sub_category}` : ''} / ${p.payment_method} (${p.cnt})`)
-      : ['(아직 없음)']),
+    ...(patterns.length ? patterns.map(habitLine) : ['(아직 없음)']),
+    ...(related.length
+      ? ['', '[사용자가 쓴 글에 나온 이름의 예전 기록 — 같은 형식, 위 목록에 없는 것]', ...related.map(habitLine)]
+      : []),
+    '',
+    '[예전 기록은 판단 근거입니다]',
+    '같은 가게·물건이면 예전 기록의 표기·분류를 따르되, 사용자가 쓴 글이나 사진에 보이는 것(산 물건·용도)이 다르면 그것을 따른다.',
     '',
     '[세부내역 — 꼭 채우지 않아도 됩니다]',
     '세부내역(detail)이 카테고리·세부카테고리 이름을 되풀이할 뿐이면 빈 문자열로 둔다 (예: 세부카테고리가 저녁인데 세부내역 "저녁"). 가게 이름·산 물건처럼 더 알려 주는 말이 있을 때만 적는다.',
@@ -130,6 +138,36 @@ function nameMatchLength(a, b) {
   return 0;
 }
 
+// 글에 나온 이름의 예전 기록을 AI에게 더 보낼 때의 최대 줄 수 (relatedPatterns)
+const RELATED_LIMIT = 20;
+
+/**
+ * 사용자가 쓴 글에 나온 이름과 맞는 예전 기록(입력 습관 행) — 지시문의 입력 습관(많이 쓴 PATTERN_LIMIT개)에 없는 것만.
+ * 글의 낱말과 이어 쓴 낱말 2~3개('메가 커피')를 matchHistory와 같은 규칙(같음·낱말 첫머리부터 포함)으로 맞춘다.
+ * AI가 드문 가게도 예전 기록을 보고 판단하게 한다 (I-062)
+ */
+export function relatedPatterns(db, text) {
+  return relatedIn(getDetailPatterns(db), text);
+}
+
+// relatedPatterns — 이미 읽은 입력 습관(patterns)에서
+function relatedIn(patterns, text) {
+  const words = String(text || '').split(NAME_SEPARATOR_RE).filter(Boolean);
+  const keys = [];
+  for (let i = 0; i < words.length; i += 1) {
+    for (let j = i; j < words.length && j < i + 3; j += 1) {
+      const k = nameWithStarts(words.slice(i, j + 1).join(' '));
+      if (k.key.length >= 2) keys.push(k);
+    }
+  }
+  if (!keys.length) return [];
+  const shown = new Set(patterns.slice(0, PATTERN_LIMIT).map(p => normalizeName(p.detail)));
+  return patterns.slice(PATTERN_LIMIT).filter((p) => {
+    const d = nameWithStarts(p.detail);
+    return d.key.length >= 2 && !shown.has(d.key) && keys.some(k => nameMatchLength(k, d) > 0);
+  }).slice(0, RELATED_LIMIT);
+}
+
 /**
  * 가맹점명으로 예전에 적어 둔 세부내역을 찾는다.
  * 더 구체적으로 맞는 것(정확히 같음 > 겹치는 글자가 긴 것)이 먼저이고, 횟수는 같은 수준끼리만 비교한다.
@@ -137,10 +175,15 @@ function nameMatchLength(a, b) {
  * 반환: 패턴 행 + score (없으면 null)
  */
 export function matchHistory(db, ...names) {
+  return matchIn(getDetailPatterns(db), names);
+}
+
+// matchHistory — 이미 읽은 입력 습관(patterns)에서 (classify가 한 번만 읽게)
+function matchIn(patterns, names) {
   const keys = names.map(nameWithStarts).filter(k => k.key.length >= 2);
   if (!keys.length) return null;
   let best = null;
-  getDetailPatterns(db).forEach(p => {
+  patterns.forEach(p => {
     const d = nameWithStarts(p.detail);
     if (d.key.length < 2) return;
     const match = Math.max(...keys.map(k => nameMatchLength(k, d)));
@@ -187,52 +230,169 @@ function splitPath(path, db) {
 }
 
 /**
- * 세부내역·카테고리 — 예전 습관 > AI 추천, 여행 일정이면 여행 카테고리 안에서.
- * 반환: { detail, budget_category, sub_category, history, sources: { detail, category } }
+ * AI가 지시문(buildDataContext)에서 이 세부내역의 예전 기록을 보았는지 — 많이 쓴 PATTERN_LIMIT개,
+ * 또는 promptText(말로 입력·AI 명령의 글)에 나온 이름이라 함께 보낸 것
  */
-export function classify(db, { merchant, detail, aiCategory, eventId, readSource = 'receipt' }) {
+function habitShownToAI(patterns, detail, promptText) {
+  const d = normalizeName(detail);
+  const seen = p => normalizeName(p.detail) === d;
+  return patterns.slice(0, PATTERN_LIMIT).some(seen) || (!!promptText && relatedIn(patterns, promptText).some(seen));
+}
+
+// 가게 이름만 주는 갈래 — 카드 문자(AI 없음)·카드 명세서 대조. 산 것을 알 수 없어 같은 가게의 예전 기록이 판단이다
+const NAMES_ONLY_SOURCES = new Set(['sms', 'statement']);
+
+/**
+ * 세부내역·카테고리 — 원문(사진·영수증·사용자가 쓴 글)이 말한 것이 예전 기록보다 먼저다 (사용자 결정, I-062).
+ * 예전 기록(입력 습관)은 원문이 말하지 않은 것만 채운다:
+ *  - 세부내역: 원문이 같은 이름을 말했거나 가게 이름만 말했을 때(사진·카드 문자·카드 내역의 세부내역은 가게 이름이다)
+ *    그 가게를 예전에 적은 표기로('(주)이마트 성수점' → '이마트'). 원문이 더 말했으면('스타벅스' + '텀블러') 원문 그대로
+ *  - 카테고리: AI가 원문을 읽고 고른 것이 먼저. 예전 기록은 AI가 못 골랐을 때, 또는 원문이 같은 곳을 말했는데
+ *    AI가 그 습관을 지시문에서 보지 못해 짐작했을 때만. AI가 습관을 보고도 달리 골랐으면 원문 때문이다('영양제', '선물')
+ *  - 가게 이름만 주는 갈래(카드 문자·카드 명세서 대조)는 산 것을 알 수 없어 같은 가게의 예전 기록이 판단이다
+ *  - 말로 입력에서 가게와 산 것을 함께 말했으면 산 것의 예전 기록을 먼저 찾는다('이마트 우유' → '우유')
+ * 여행 일정이면 여행 카테고리 안에서(예전 기록이 여행 카테고리 안이면 그 세부카테고리를 살린다).
+ * promptText: 말로 입력·AI 명령의 글 — 지시문에 글에 나온 이름의 예전 기록도 보냈다(relatedPatterns)
+ * aiAltCategory: AI가 헷갈릴 때 준 2순위 분류
+ * 반환: { detail, budget_category, sub_category, history, alternatives, categoryGuess, sources: { detail, category } }
+ *  - history: 원문과 같은 것을 가리키는 예전 기록일 때만 (결제수단 습관·바로 넣기·'예전에 N번' 안내가 쓴다)
+ *  - alternatives: 다른 후보 [{ kind: first|past|ai|second, detail, budget_category, sub_category, cnt?, ... }]
+ *    — 화면이 지금 분류와 다른 것을 '이걸로'와 함께 보인다(otherAlternatives). 후보가 고른 것 하나뿐이면 빈 배열
+ *  - categoryGuess: AI가 판단한 분류가 아니라 예전 기록으로 채웠다(AI가 못 골랐거나 습관을 못 봤음) — 바로 넣지 않는다
+ */
+export function classify(db, {
+  merchant, detail, aiCategory, aiAltCategory = '', eventId, readSource = 'receipt', promptText = '',
+}) {
+  const patterns = getDetailPatterns(db);
   // AI가 고른 카테고리 이름을 되풀이한 세부내역('저녁' → 식비 > 저녁)은 가게 이름이 아니다 —
   // 예전에 똑같이 적은 것만 습관으로 보고, 겹치는 글자로는 찾지 않는다('저녁'이 '저녁회식'에 걸리지 않게)
   const aiPath = splitPath(aiCategory, db);
   const generic = name => !!aiPath && repeatsCategory(name, aiPath.cat, aiPath.sub);
   const named = name => (generic(name) ? '' : name);
-  let history = matchHistory(db, named(merchant), named(detail));
-  if (!history) {
-    const exact = matchHistory(db, ...[merchant, detail].filter(generic));
-    if (exact && exact.score >= EXACT_SCORE) history = exact;
+  // 원문이 이 건을 부르는 이름 — 카테고리 이름을 되풀이한 말('스타벅스' + '커피')은 빼고 본다
+  const ownDetail = normalizeName(named(detail));
+  const ownMerchant = normalizeName(named(merchant));
+  // 말로 입력에서 가게와 산 것을 함께 말했으면 산 것의 예전 기록이 먼저다 ('이마트 우유' → 예전의 '우유').
+  // 산 것 자체이거나 그 안의 낱말인 기록만 — '커피'가 더 긴 다른 기록('커피 원두')을 잡아 가게의 기록을 밀어내지 않게
+  const itemNamed = readSource === 'text' && !!ownDetail && !!ownMerchant && ownDetail !== ownMerchant;
+  const byItem = itemNamed ? matchIn(patterns, [named(detail)]) : null;
+  const itemOk = !!byItem && normalizeName(byItem.detail).length <= ownDetail.length;
+  let found = (itemOk && byItem) || matchIn(patterns, [named(merchant), named(detail)]);
+  if (!found) {
+    const exact = matchIn(patterns, [merchant, detail].filter(generic));
+    if (exact && exact.score >= EXACT_SCORE) found = exact;
   }
   const sources = {};
 
-  let outDetail = (history?.detail || named(detail) || named(merchant) || '').trim();
-  sources.detail = history ? 'history' : readSource;
+  // 원문이 가게 이름만 말했는지 — 말로 입력은 세부내역이 없거나 가게 이름과 같을 때
+  const placeOnly = readSource !== 'text' || !ownDetail || ownDetail === ownMerchant;
+  // 찾은 예전 기록이 원문이 말한 것과 같은 것인지 — 같은 이름이거나, 원문이 가게 이름만 말했다
+  const same = !!found && (placeOnly || normalizeName(found.detail) === ownDetail);
 
-  let category = null;
-  if (history && getBudgetCategories(db).includes(history.budget_category)) {
-    const subs = getSubCategories(db, history.budget_category);
-    category = { cat: history.budget_category, sub: subs.includes(history.sub_category) ? history.sub_category : '' };
-    sources.category = 'history';
-  } else {
-    category = splitPath(aiCategory, db);
-    if (category) sources.category = 'ai';
-  }
+  let outDetail = ((same && found.detail) || named(detail) || named(merchant) || '').trim();
+  sources.detail = same ? 'history' : readSource;
+
+  const pastCategory = found && getBudgetCategories(db).includes(found.budget_category)
+    ? {
+      cat: found.budget_category,
+      sub: getSubCategories(db, found.budget_category).includes(found.sub_category) ? found.sub_category : '',
+    }
+    : null;
   const tripCategory = eventId ? getTripDefaultCategory(db) : '';
+  const agrees = !!pastCategory && !!aiPath && aiPath.cat === pastCategory.cat && (!aiPath.sub || aiPath.sub === pastCategory.sub);
+  const namesOnly = NAMES_ONLY_SOURCES.has(readSource);
+  // 여행 일정의 결제인데 AI는 여행 카테고리 밖을 골랐고 예전 기록은 여행 카테고리 안이면 — 그 세부카테고리를 살린다
+  const tripPast = !!tripCategory && pastCategory?.cat === tripCategory && aiPath?.cat !== tripCategory;
+  let category = null;
+  if (pastCategory && (!aiPath || agrees || namesOnly || tripPast || (same && !habitShownToAI(patterns, found.detail, promptText)))) {
+    category = pastCategory;
+    sources.category = 'history';
+  } else if (aiPath) {
+    category = aiPath;
+    sources.category = 'ai';
+  }
+  // 결제수단 습관·바로 넣기·'예전에 N번'이 쓰는 예전 기록 — 원문과 같은 것, 또는 원문이 그 가게 이름으로 시작하고
+  // AI가 고른 분류도 그 가게의 것과 같을 때('스타벅스 아메리카노' + 카페 ↔ 예전 '스타벅스' 카페). 세부내역은 말한 대로 둔다
+  const sameStore = !!found && agrees && [ownMerchant, ownDetail].some(n => !!n && n.startsWith(normalizeName(found.detail)));
+  const history = same || sameStore ? found : null;
   if (tripCategory && (!category || category.cat !== tripCategory)) {
     const subs = getSubCategories(db, tripCategory);
     category = { cat: tripCategory, sub: category && subs.includes(category.sub) ? category.sub : '' };
     sources.category = 'trip';
   }
 
+  const baseDetail = outDetail;
   // 세부내역은 꼭 채우지 않는다 — 고른 카테고리 이름을 되풀이할 뿐이면 비운다 (I-056)
   if (category && repeatsCategory(outDetail, category.cat, category.sub)) outDetail = '';
   if (!outDetail) delete sources.detail;
+
+  // 가게 이름만 주는 갈래(카드 문자·명세서)는 예전 기록이 곧 판단이다 — AI가 원문을 읽는 갈래에서만 짐작으로 본다
+  const categoryGuess = sources.category === 'history' && !agrees && !namesOnly;
+
+  // 다른 후보 — 처음 고른 것(되돌릴 수 있게), 예전 기록, AI의 1순위, AI가 헷갈릴 때 준 2순위. 분류가 같은 것은 앞의 것 하나만.
+  // 여행 일정의 결제는 여행 카테고리 안의 것만 (I-062)
+  const alternatives = [];
+  const add = (kind, path, d, extra) => {
+    if (!path || (tripCategory && path.cat !== tripCategory)) return;
+    if (alternatives.some(o => o.budget_category === path.cat && o.sub_category === path.sub)) return;
+    const shown = repeatsCategory(d, path.cat, path.sub) ? '' : d;
+    const o = {
+      kind, budget_category: path.cat, sub_category: path.sub, detail: shown,
+      historyDetail: history?.detail || '', historyCount: history?.cnt || 0, detailSource: same ? 'history' : readSource, ...extra,
+    };
+    if (!o.detail) o.detailSource = null;
+    alternatives.push(o);
+  };
+  if (category) add('first', category, outDetail, { categorySource: sources.category, detailSource: sources.detail || null });
+  if (pastCategory) {
+    add('past', pastCategory, found.detail, {
+      cnt: found.cnt, historyDetail: found.detail, historyCount: found.cnt, detailSource: 'history', categorySource: 'history',
+    });
+  }
+  add('ai', aiPath, baseDetail, { categorySource: 'ai' });
+  add('second', splitPath(aiAltCategory, db), baseDetail, { categorySource: 'ai' });
+  if (!alternatives.some(o => o.kind !== 'first')) alternatives.length = 0;
 
   return {
     detail: outDetail,
     budget_category: category?.cat || '',
     sub_category: category?.sub || '',
     history,
+    alternatives,
+    categoryGuess,
     sources,
   };
+}
+
+/** 다른 후보의 이름표 */
+export const ALTERNATIVE_LABEL = { first: '처음 추천', past: '예전 기록', ai: 'AI 추천', second: '2순위' };
+
+/** 지금 분류와 다른 후보만 — 화면에 보일 것 */
+export function otherAlternatives(s) {
+  return (s?.alternatives || []).filter(o => o.budget_category !== s.budget_category || o.sub_category !== s.sub_category);
+}
+
+/**
+ * 후보로 바꿀 값 (목록의 고치기와 같은 patch) — 후보 목록은 그대로 두어 다시 바꾸거나 되돌릴 수 있다.
+ * 세부내역은 사용자가 직접 고치지 않았을 때(지금 세부내역이 후보 중 하나의 것)만 그 후보의 것으로 바꾼다
+ */
+export function alternativePatch(s, o) {
+  const patch = { budget_category: o.budget_category, sub_category: o.sub_category, categoryGuess: false };
+  const untouched = (s.alternatives || []).some(a => (a.detail || '') === (s.detail || ''));
+  if (untouched) Object.assign(patch, { detail: o.detail, historyDetail: o.historyDetail, historyCount: o.historyCount });
+  return patch;
+}
+
+/** 한 건 추천을 후보로 바꾼다 — 근거 표시도 그 후보의 것으로 */
+export function applyAlternative(s, o) {
+  const patch = alternativePatch(s, o);
+  const sources = { ...s.sources, category: o.categorySource };
+  if (!sources.category) delete sources.category;
+  if ('detail' in patch) {
+    if (o.detailSource) sources.detail = o.detailSource;
+    else delete sources.detail;
+  }
+  return { ...s, ...patch, sources };
 }
 
 /** 결제수단 — 원문에 드러난 것 > 예전 습관 > 세부카테고리 패턴 */
@@ -296,6 +456,14 @@ export function saidInText(text, phrase) {
   }
   return false;
 }
+
+/** 말로 입력·AI 명령의 세부내역 칸 — 가게 이름만 말했을 때만 습관 표기, 산 물건·용도를 말했으면 그 말 (I-062) */
+export const DETAIL_SAID_DESCRIPTION = '가계부 세부내역 — 가게 이름만 말했으면 입력 습관의 표기로, 산 물건·용도도 말했으면 가게와 함께 짧게 (예: "스타벅스 텀블러"). 카테고리 이름을 되풀이할 뿐이면 빈 문자열';
+
+/** 2순위 카테고리 칸(category_alt) — 헷갈릴 때만. 앱이 화면에 '2순위'로 보여 고르게 한다 (말로 입력·사진, I-062) */
+export const CATEGORY_ALT_DESCRIPTION = '카테고리가 헷갈리면 두 번째로 맞을 만한 "카테고리 > 세부카테고리"(목록 표기 그대로, category와 다른 것). 확실하면 빈 문자열';
+/** 지시문의 2순위 규칙 */
+export const CATEGORY_ALT_RULE = '- category는 가장 맞는 것 하나. 두 가지 사이에서 헷갈리면 category_alt에 두 번째로 맞을 만한 것을 적고, 확실하면 빈 문자열.';
 
 /** 말한 결제수단 표현 칸(payment_said) — 앱이 목록과 직접 맞춘다 (말로 입력·AI 명령의 새 거래) */
 export const PAYMENT_SAID_DESCRIPTION = '사용자가 결제수단을 말했으면 말한 그대로 (예: "현대카드", "신한", "현금"). 말하지 않았으면 빈 문자열';
@@ -424,7 +592,7 @@ export function buildSuggestion(db, raw, { today = todayStr() } = {}) {
   const { date, source: dateSource } = resolveDate(raw.date, today, 'receipt');
   const money = resolveAmount(db, { total: raw.total, currency: raw.currency, date });
   const cls = classify(db, {
-    merchant: raw.merchant, detail: raw.detail, aiCategory: raw.category, eventId: money.event_id,
+    merchant: raw.merchant, detail: raw.detail, aiCategory: raw.category, aiAltCategory: raw.category_alt, eventId: money.event_id,
   });
   const pay = pickPaymentMethod(db, {
     aiMethod: raw.payment_method, evident: !!raw.payment_hint, history: cls.history, sub: cls.sub_category,
@@ -458,6 +626,8 @@ export function buildSuggestion(db, raw, { today = todayStr() } = {}) {
       : [],
     historyDetail: cls.history?.detail || '',
     historyCount: cls.history?.cnt || 0,
+    alternatives: cls.alternatives,
+    categoryGuess: cls.categoryGuess,
     confidence,
     warnings,
     sources,

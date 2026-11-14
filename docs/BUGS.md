@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-098, I-062
+다음 번호: B-098, I-063
 
 ## 요약표
 
@@ -174,6 +174,7 @@
 | I-059 | ✅ | - | 저장·동기화 | 앱을 켜면 이 기기에 사본이 있어도 OneDrive를 기다리느라 바로 쓸 수 없음 |
 | I-060 | ✅ | - | 화면 | 맞추는 중에 도는 🔄의 중심이 그림 중심과 어긋나 흔들려 보임 |
 | I-061 | ✅ | - | AI 입력 | 여러 건을 말하며 결제수단을 한 번만 말하면 나머지 건은 늘 쓰던 결제수단으로 채워짐 |
+| I-062 | ✅ | - | AI 입력 | 예전 기록이 있으면 사진·쓴 글보다 그 기록으로 덮어씀 → AI가 판단 근거로 쓰고, 다른 후보(예전 기록·2순위)는 '이걸로'로 |
 
 
 ## 상세
@@ -1548,3 +1549,11 @@
 - 원인: AI가 결제수단을 그 말이 붙은 건에만 달아, 나머지 건은 B-096 이후 습관으로 채우되 확인받기만 했다.
 - 해결: 말로 입력에서 결제수단을 말하지 않은 건은 다른 건에 말한 결제수단(앞 건 먼저, 없으면 뒤 건)을 '추천' 근거로 채우고 '말한 결제수단 '현대카드' 추천 — 이 건도 맞는지 확인해 주세요'를 보이며, 바로 넣지는 않는다(목록에서 체크된 채 확인).
 - 파일: src/services/textEntry.js(parseTextEntry·buildTextSuggestion carriedPayment), receiptAssistant.js(SOURCE_LABEL carried), src/components/AIEntry/AIEntry.css, 테스트(textEntry)
+
+### I-062 예전 기록이 있으면 사진·쓴 글보다 그 기록으로 덮어씀 → AI가 판단 근거로 쓰고, 다른 후보(예전 기록·2순위)는 '이걸로'로
+- 상태: ✅ 해결 (2026-11-14)
+- 영역: AI 입력
+- 문제: 사진·말로 입력에서 비슷한 이름의 예전 기록이 있으면 AI가 원문을 읽고 고른 세부내역·카테고리를 그 기록으로 덮었다('스타벅스 텀블러' → 커피, '선물'이라 해도 늘 쓰던 분류) — 사용자 결정: 원문이 먼저, 예전 기록은 AI의 판단 근거.
+- 원인: classify가 '예전 습관 > AI 추천' 순서라 찾은 기록의 표기·분류를 무조건 썼고, AI는 많이 쓴 40개 습관만 보아 드문 가게는 판단 근거가 없었다.
+- 해결: AI 지시문을 '말한·보이는 것이 먼저, 습관은 판단 근거'로 바꾸고 AI가 고른 분류를 먼저 쓰며(예전 기록은 AI가 못 골랐거나 못 봤을 때만 채우고 바로 넣지 않음, 가게 이름뿐인 카드 문자·명세서는 예전 기록이 판단), 말로 입력·AI 명령은 글에 나온 이름의 예전 기록도 보내고, 고르지 않은 후보(예전 기록·AI 추천·AI가 헷갈릴 때 준 2순위 — 2순위가 있으면 바로 넣지 않음)를 카드·목록에 '이걸로'로 보여 바꾸고 되돌릴 수 있게 했다.
+- 파일: src/services/receiptAssistant.js(classify·relatedPatterns·buildDataContext·alternatives), textEntry.js, photoEntry.js, aiCommand.js, quickEntry.js, src/components/AIEntry/SuggestionCard.js·SuggestionItem.js·TextPanel.js·TextFollowUp.js·ReceiptPanel.js·AIEntry.css, public/privacy.html, AGENTS.md, 테스트(classify·textEntry·photoEntry·TextPanel.followup·SuggestionCard·ReceiptPanel)

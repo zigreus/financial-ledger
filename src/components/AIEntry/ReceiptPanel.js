@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
-import { suggestionToTransaction, isSuggestionComplete } from '../../services/receiptAssistant';
+import { suggestionToTransaction, isSuggestionComplete, applyAlternative } from '../../services/receiptAssistant';
 import { analyzePhotos, markDuplicates } from '../../services/photoEntry';
-import { familiarity, splitFamiliar, QUICK_REASONS } from '../../services/quickEntry';
+import { familiarity, splitFamiliar, isCategoryReason, QUICK_REASONS } from '../../services/quickEntry';
 import { preparePhotos } from '../../services/imageUtils';
 import { getMemberNames, getPaymentMethods } from '../../services/dbManager';
 import SuggestionDetails, { amountText } from './SuggestionCard';
@@ -311,7 +311,15 @@ export default function ReceiptPanel({ db, files, onApply, onAutoAdd, onBulkAdd,
           </div>
         </div>
         {modelNote && <div className="rs-model-note">{modelNote}</div>}
-        <SuggestionDetails suggestion={s} amountSource="receipt" />
+        <SuggestionDetails
+          suggestion={s}
+          amountSource="receipt"
+          onUseAlternative={(o) => {
+            setSuggestion(cur => applyAlternative(cur, o));
+            // 분류를 골랐으면 '분류를 확인해 달라'던 이유는 풀렸다
+            if (isCategoryReason(reviewReason)) setReviewReason('');
+          }}
+        />
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
           <button type="button" className="rs-btn-secondary" onClick={onRepick}>다시 찍기</button>

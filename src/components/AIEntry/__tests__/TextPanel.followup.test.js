@@ -179,6 +179,54 @@ test('덧붙여 쓰던 말이 있으면 추가 버튼을 막고, 다시 쓰기�
   expect(firstText().value).toBe('점심 김치찌개\n9천원');
 });
 
+describe('다른 후보 — 예전 기록·2순위를 덮지 않고 보여 주고 고르게 (I-062)', () => {
+  const alt = (kind, sub, o = {}) => ({
+    kind, budget_category: '식비', sub_category: sub, detail: '메가', historyDetail: '', historyCount: 0,
+    detailSource: 'text', categorySource: kind === 'past' ? 'history' : 'ai', ...o,
+  });
+  const withAlts = () => full({
+    detail: '메가', sources: { detail: 'text', category: 'ai' },
+    alternatives: [
+      alt('first', '점심'),
+      alt('past', '커피', { detail: '메가커피', cnt: 3, historyDetail: '메가커피', historyCount: 3, detailSource: 'history' }),
+    ],
+  });
+  const row = label => [...container.querySelectorAll('.rs-row')].find(r => r.textContent.startsWith(label));
+
+  test('한 건: 예전 기록을 고르면 그 표기·분류·근거로 바뀌고 처음 추천으로 되돌릴 수 있으며, 덧붙여 다시 정리해도 고른 것이 남는다', async () => {
+    parseTextEntry.mockResolvedValueOnce([withAlts()]);
+    await say('메가 9천원 현금');
+    expect(container.querySelector('.rs-alts').textContent).toBe('예전 기록메가커피 · 식비 > 커피 (3번)이걸로');
+
+    await click('이걸로');
+    expect(row('카테고리').textContent).toBe('카테고리식비 > 커피기존 내역');
+    expect(row('세부내역').textContent).toContain('메가커피');
+    expect(container.querySelector('.rs-alts').textContent).toBe('처음 추천메가 · 식비 > 점심이걸로');
+    expect(container.textContent).toContain('예전에 3번 이렇게 적었어요');
+
+    parseTextEntry.mockResolvedValueOnce([withAlts()]);
+    await click('+ 말로 덧붙이거나 고치기');
+    await setValue(followText(), '현금이었어');
+    await click('덧붙여 정리하기');
+    expect(row('카테고리').textContent).toContain('식비 > 커피');
+    expect(row('세부내역').textContent).toContain('메가커피');
+
+    await click('이걸로');
+    expect(row('카테고리').textContent).toBe('카테고리식비 > 점심AI 추천');
+    expect(row('세부내역').textContent).toContain('메가');
+    expect(row('세부내역').textContent).not.toContain('메가커피');
+  });
+
+  test('여러 건: 줄의 이걸로가 그 줄의 분류를 바꾼다', async () => {
+    parseTextEntry.mockResolvedValueOnce([withAlts(), full({})]);
+    await say('메가 9천원, 김치찌개 9천원');
+    expect(container.querySelectorAll('.tp-item .rs-alts')).toHaveLength(1);
+    await click('이걸로');
+    expect(container.querySelectorAll('.tp-item select')[1].value).toBe('식비 > 커피');
+    expect(container.querySelector('.tp-item .rs-alts').textContent).toBe('처음 추천메가 · 식비 > 점심이걸로');
+  });
+});
+
 test('빠진 정보가 없어도 말로 덧붙이거나 고칠 수 있다', async () => {
   parseTextEntry.mockResolvedValueOnce([full({})]);
   await say('김치찌개 9천원 현금');

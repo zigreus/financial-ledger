@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import { parseTextEntry, UNCLEAR } from '../../services/textEntry';
-import { isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction } from '../../services/receiptAssistant';
+import {
+  alternativePatch, applyAlternative, isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction,
+} from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
-import { QUICK_REASONS, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
+import { QUICK_REASONS, isCategoryReason, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
 import { findExistingTransaction } from '../../services/cardSms';
 import SuggestionDetails from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
@@ -278,12 +280,31 @@ export default function TextPanel({
     setRestore(null);
   };
 
+  // 분류를 골랐으면 '분류를 확인해 달라'던 이유는 풀렸다
+  const withoutCategoryReason = (s, patch) => ('budget_category' in patch && isCategoryReason(s.reviewReason)
+    ? { ...s, reviewReason: '' }
+    : s);
+
   const updateItem = (idx, patch) => {
     setItems(list => list.map((it, i) => {
       if (i !== idx) return it;
       const next = patchListItem(it, patch);
       // 끈 체크(off)는 다 채워진 채로 꺼져 있을 때만 유지한다 — 비웠다가 다시 채워 자동으로 체크되면 지운다
-      return { ...next, picks: recordPick(it, patch), off: !next.checked && !!it.off && isSuggestionComplete(next.s) };
+      return {
+        ...next,
+        s: withoutCategoryReason(next.s, patch),
+        picks: recordPick(it, patch),
+        off: !next.checked && !!it.off && isSuggestionComplete(next.s),
+      };
+    }));
+  };
+
+  /** 한 건 화면에서 다른 후보(예전 기록·2순위 등)로 바꾼다 — 근거 표시도 그 후보의 것으로, 덧붙여 다시 정리해도 고른 분류를 이어받게 */
+  const pickAlternative = (o) => {
+    setItems(list => list.map((it, i) => {
+      if (i !== 0) return it;
+      const patch = alternativePatch(it.s, o);
+      return { ...it, s: withoutCategoryReason(applyAlternative(it.s, o), patch), picks: recordPick(it, patch) };
     }));
   };
 
@@ -412,7 +433,7 @@ export default function TextPanel({
         </div>
         {modelNote && <div className="rs-model-note">{modelNote}</div>}
         {restoreNote}
-        <SuggestionDetails suggestion={s} amountSource="text" />
+        <SuggestionDetails suggestion={s} amountSource="text" onUseAlternative={pickAlternative} />
         {followArea}
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>

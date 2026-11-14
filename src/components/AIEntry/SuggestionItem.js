@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { isSuggestionComplete, isSpokenPaymentWarning } from '../../services/receiptAssistant';
+import { isSuggestionComplete, isSpokenPaymentWarning, alternativePatch } from '../../services/receiptAssistant';
 import { evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import { isValidDateStr } from '../../services/dateUtils';
 import AmountInput from '../common/AmountInput';
 import {
-  SourceBadge, amountText, categoryText, CategoryPathSelect, splitCategoryPath,
+  SourceBadge, amountText, categoryText, CategoryPathSelect, splitCategoryPath, Alternatives,
 } from './SuggestionCard';
 import './AIEntry.css';
 
@@ -145,6 +145,8 @@ export default function SuggestionItem({
           </button>
         )}
       </div>
+
+      <Alternatives s={s} onUse={o => onPatch(alternativePatch(s, o))} />
 
       {needsFix && (
         <div className="tp-fix-note">

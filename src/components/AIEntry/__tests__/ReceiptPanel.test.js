@@ -18,13 +18,14 @@ vi.mock('../../../services/photoEntry', async (importOriginal) => ({
   realMarkDuplicates: (await importOriginal()).markDuplicates,
 }));
 vi.mock('../../../services/receiptAssistant', async (importOriginal) => ({
-  normalizeName: (await importOriginal()).normalizeName,
+  ...(await importOriginal()),
   suggestionToTransaction: (db, s) => ({ detail: s.detail || s.merchant, amount: s.amount, payment_method: s.payment_method }),
   isSuggestionComplete: s => !!s.payment_method && s.amount !== null && s.amount !== undefined,
 }));
 vi.mock('../../../services/quickEntry', () => ({
   familiarity: vi.fn(),
   splitFamiliar: vi.fn(),
+  isCategoryReason: () => false,
   QUICK_REASONS: { existing: '같은 날 같은 금액 거래가 이미 있어요', undone: '되돌린 거래예요' },
 }));
 vi.mock('../../../services/imageUtils', () => ({ preparePhotos: vi.fn() }));
@@ -42,6 +43,7 @@ vi.mock('../SuggestionCard', () => ({
   categoryText: () => '',
   CategoryPathSelect: () => null,
   splitCategoryPath: () => ({}),
+  Alternatives: () => null,
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;

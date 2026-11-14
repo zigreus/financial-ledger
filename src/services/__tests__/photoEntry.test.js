@@ -3,6 +3,7 @@ import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../dbManager';
 import { buildPhotoSuggestions, buildPhotoPrompt, markDuplicates, isPaymentGateway } from '../photoEntry';
 import { todayStr, addDays } from '../dateUtils';
+import { otherAlternatives, CATEGORY_ALT_RULE } from '../receiptAssistant';
 
 let SQL;
 beforeAll(async () => { SQL = await initSqlJs(); });
@@ -238,6 +239,58 @@ test('늘 넣던 대로 분류한 결제는 AI가 고치라고 해도 수정 필
   }).suggestions;
   expect(s.sources.category).toBe('history');
   expect(s.needsFix).toEqual([]);
+});
+
+test('사진에 보이는 것이 예전 기록보다 먼저 — 가게 표기는 예전대로, 분류는 AI가 사진(품목)을 보고 습관과 달리 골랐으면 그것 (I-062)', () => {
+  const db = makeDb();
+  db.run("INSERT INTO budget_categories (name, sort_order) VALUES ('생활', 2)");
+  db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('생활', '생활용품', 0)");
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '식비', sub_category: '외식', detail: '이마트', amount: 12000 });
+  addTransaction(db, { payment_method: '현대EV', date: D2, budget_category: '식비', sub_category: '외식', detail: '이마트', amount: 9000 });
+  const [byItems, unsure] = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'receipt', note: '',
+    entries: [
+      entry({ merchant: '(주)이마트 성수점', total: 25000, category: '생활 > 생활용품', items: [{ name: '세제', amount: 25000 }] }),
+      entry({ merchant: '(주)이마트 성수점', total: 7000, category: '모름' }),
+    ],
+  }).suggestions;
+  expect(byItems).toMatchObject({ detail: '이마트', historyDetail: '이마트', budget_category: '생활', sub_category: '생활용품' });
+  expect(byItems.sources).toMatchObject({ detail: 'history', category: 'ai' });
+  expect(otherAlternatives(byItems).map(o => [o.kind, o.sub_category, o.cnt])).toEqual([['past', '외식', 2]]);
+  expect(unsure).toMatchObject({ detail: '이마트', budget_category: '식비', sub_category: '외식', categoryGuess: true });
+  expect(unsure.sources.category).toBe('history');
+});
+
+test('AI가 지시문에서 못 본 습관(많이 쓴 40개 밖)이면 같은 가게의 예전 기록으로 — 바로 넣지 않고 AI가 고른 것은 후보로, AI의 수정 필요도 보인다 (I-062)', () => {
+  const db = makeDb();
+  db.run("INSERT INTO budget_categories (name, sort_order) VALUES ('생활', 2)");
+  db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('생활', '생활용품', 0)");
+  for (let i = 0; i < 40; i++) {
+    for (let k = 0; k < 3; k++) addTransaction(db, { payment_method: '현금', date: D1, budget_category: '식비', sub_category: '외식', detail: `가게${i}`, amount: 1000 });
+  }
+  addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 5000 });
+  addTransaction(db, { payment_method: '현대EV', date: D2, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 3000 });
+  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소 →');
+  const [s, other] = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'list', note: '',
+    entries: [
+      entry({ merchant: '다이소 성수점', total: 5000, category: '식비 > 외식', needs_fix: '무엇을 샀는지 모름' }),
+      entry({ merchant: '가게', total: 1000 }),
+    ],
+  }).suggestions;
+  expect(s).toMatchObject({ detail: '다이소', budget_category: '생활', sub_category: '생활용품', categoryGuess: true });
+  expect(otherAlternatives(s).map(o => [o.kind, o.budget_category, o.sub_category])).toEqual([['ai', '식비', '외식']]);
+  expect(s.needsFix.map(f => f.text)).toEqual(['무엇을 샀는지 모름']);
+  expect(other.alternatives).toEqual([]);
+});
+
+test('지시문이 헷갈릴 때만 2순위(category_alt)를 달라고 하고, 준 2순위는 후보로 (I-062)', () => {
+  const db = makeDb();
+  expect(buildPhotoPrompt(db, { today: TODAY })).toContain(CATEGORY_ALT_RULE);
+  const [s] = buildPhotoSuggestions(db, {
+    is_payment: true, kind: 'receipt', note: '', entries: [entry({ merchant: '주유소 편의점', category: '식비 > 외식', category_alt: '교통 > 충전' })],
+  }).suggestions;
+  expect(otherAlternatives(s).map(o => [o.kind, o.sub_category])).toEqual([['second', '충전']]);
 });
 
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {

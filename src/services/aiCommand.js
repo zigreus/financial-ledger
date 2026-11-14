@@ -16,7 +16,7 @@
  */
 import { analyzeWithAI, AIError } from './aiClient';
 import {
-  buildDataContext, isSuggestionComplete, normalizeName, suggestionToTransaction, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+  buildDataContext, isSuggestionComplete, normalizeName, suggestionToTransaction, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
 } from './receiptAssistant';
 import { buildTextSuggestion } from './textEntry';
 import { OPTIONAL_FEATURES } from './optionalFeatures';
@@ -82,7 +82,7 @@ const ENTRY_SCHEMA = {
   properties: {
     date: str('YYYY-MM-DD. 날짜 말이 없으면 빈 문자열'),
     merchant: str('가게·장소 이름. 없으면 빈 문자열'),
-    detail: str('가계부 세부내역 (입력 습관의 표기 우선)'),
+    detail: str(DETAIL_SAID_DESCRIPTION),
     amount: num('금액 숫자, 모르면 0'),
     currency: str('ISO 통화 코드, 원화면 KRW'),
     krw_amount: num('외화 결제의 원화 금액을 말했으면 그 값, 아니면 0'),
@@ -178,7 +178,7 @@ export function buildCommandPrompt(db, text, today = todayStr()) {
   const recurring = getRecurringTransactions(db);
   const members = getMemberNames(db);
   const lines = [
-    buildDataContext(db, today).text,
+    buildDataContext(db, today, { text }).text,
     '',
     '[정기지출 목록 — 번호: 내용]',
     ...(recurring.length ? recurring.map(r => `${r.id}: ${recurringLabel(r)}`) : ['(없음)']),
