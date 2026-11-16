@@ -189,6 +189,12 @@ test('B-096: AI 입력이 말한 결제수단을 못 맞춰 비워 두면 자동
   expect(selectByLabel(unknown.container, '결제수단').value).toBe('');
   act(() => unknown.root.unmount());
 
+  // 간편결제로 냈는데 카드가 사진에 없어 비운 것도 채우지 않는다 (B-099 — 네이버페이 주문 화면)
+  const unseen = await render({ db, aiStart: { apply: { ...suggestion, unseenCard: '네이버페이' } } });
+  expect(selectByLabel(unseen.container, '결제수단').value).toBe('');
+  expect(reasons(unseen.container)).toContain('결제수단을 선택하세요');
+  act(() => unseen.root.unmount());
+
   // 결제수단을 말하지 않았으면 예전처럼 자동으로 채운다
   const plain = await render({ db, aiStart: { apply: suggestion } });
   expect(selectByLabel(plain.container, '결제수단').value).toBe('신한');

@@ -346,8 +346,9 @@ function TransactionForm({ db, dataVersion = 0, editingTx, copyFromTx = null, de
     discount.resetEdited();
     resetSplit();
     setForm(prev => {
-      // 결제수단을 말했는데 맞추지 못했으면(paymentSaid) 비워 두고 묻는다 — 앞서 고른 것이나 자동 결제수단으로 채우지 않는다
-      const saidButUnmatched = !s.payment_method && (!!s.paymentMentioned || !!s.paymentSaid);
+      // 결제수단을 말했는데 맞추지 못했으면(paymentSaid), 간편결제로 냈는데 카드가 사진에 없으면(unseenCard, B-099)
+      // 비워 두고 묻는다 — 앞서 고른 것이나 자동 결제수단으로 채우지 않는다
+      const saidButUnmatched = !s.payment_method && (!!s.paymentMentioned || !!s.paymentSaid || !!s.unseenCard);
       const next = {
         ...prev,
         date: s.date || prev.date,

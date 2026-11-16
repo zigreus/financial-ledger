@@ -16,7 +16,7 @@ import { isValidDateStr } from '../../services/dateUtils';
 import { formatAmount } from '../../services/formulaEvaluator';
 import './AIEntry.css';
 
-const CONFIDENCE_LABEL = { high: '잘 읽힘', medium: '대체로 읽힘', low: '흐림 — 확인 필요' };
+const CONFIDENCE_LABEL = { high: '잘 읽힘', medium: '대체로 읽힘', low: '확실하지 않음 — 확인 필요' }; // low: 흐림·잘림, 화면에 없는 날짜를 짐작함 등
 const DEVICE_MEMBER = '\u0000device'; // '누가' 고르기의 기본값 — 정하지 않음(App이 이 기기 사용자로)
 
 // 사진 설명 덧붙이기 (I-063)
@@ -335,7 +335,7 @@ export default function ReceiptPanel({
       const candidates = suggestions.filter(s => !flagged.includes(s));
       const reasons = new Map();
       let familiar = [];
-      // 바로 넣지 않고 모두 확인받는 때: AI가 알릴 점(흐림·잘림)을 남겼거나, '누가'를 적는 가계부라 한 번에 정해야 할 때
+      // 바로 넣지 않고 모두 확인받는 때: AI가 알릴 점(흐림·잘림·짐작)을 남겼거나, '누가'를 적는 가계부라 한 번에 정해야 할 때
       // (가족 카드 내역 — 바로 넣으면 이 기기 사용자로 들어가 '누가'가 갈린다)
       const holdAll = !!aiNote || getMemberNames(cur).length > 0;
       if (autoAdd && !holdAll) {

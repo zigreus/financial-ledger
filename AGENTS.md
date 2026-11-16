@@ -30,7 +30,7 @@
 | `src/services/ledgerFile.js` | 가계부 파일로 바꾸기 전 살피기(이 앱의 가계부인지·더 새 버전인지, 거래 수·기간 등). 바꾸기는 useLedgerSync의 `replaceWithFile` (I-035) |
 | `src/services/offlineCache.js` + `public/sw.js` | 연결 없이 열기: 저장소와 맞춘 가계부 사본(IndexedDB, 가계부별 — `ledgerKey || accountKey`) / 서비스 워커(앱 화면 보관, 안드로이드 공유 받기 → `shareInbox.js`). 바로가기·공유 대상은 `public/manifest.json` |
 | `src/services/formulaEvaluator.js` + `components/common/AmountInput.js` | 금액 수식 입력 |
-| `src/services/aiClient.js` + receiptAssistant·photoEntry·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증 추천 공통·사진 입력(여러 장, 카드 이용내역 캡처의 여러 결제 — I-052, 사진 설명 덧붙여 다시 읽기 — I-063)·말로 입력·카드 대조 |
+| `src/services/aiClient.js` + receiptAssistant·photoEntry·textEntry·cardStatement | AI 호출(Gemini·Claude, 혼잡 시 재시도·모델 전환), 영수증 추천 공통·사진 입력(여러 장, 카드 이용내역 캡처의 여러 결제 — I-052, 사진 설명 덧붙여 다시 읽기 — I-063, 간편결제 주문 화면은 상품으로 — B-099)·말로 입력·카드 대조 |
 | `src/services/importHelpers.js` + csv·txValidator | 가져오기 공통(날짜·금액 정규화, 중복 표시, 여행 연결), CSV 파서·작성기, 미등록 카테고리 검사 |
 | `src/services/sheetFile.js` + sheetImport·importAI + `components/ImportModal/SheetMapper.js` | 아무 양식의 표 가져오기(I-034): 파일 읽기(CSV 인코딩·구분 문자, xlsx는 내장 압축 풀기, HTML 표 .xls) / 열·분류 맞추기(규칙 짐작·입력 습관·기기에 기억한 양식) → ImportModal의 기존 검사·가져오기 / AI는 맞추기 추천만(앞줄·이름 목록만 보냄) |
 | `src/services/cardSms.js` | 카드 승인 문자 → 거래 추천(AI 없이 규칙으로), 카드→결제수단 기억(기기별) |
@@ -171,12 +171,13 @@
   - 로그아웃 때 이 기기에서만 지우는 것(`clearAIKeys`)은 올리지 않아, 다시 로그인하면 OneDrive 값이 돌아옵니다.
 - AI가 고른 결제수단·카테고리는 DB 목록과 대조해 검증합니다. 목록에 없으면 버립니다.
 - **AI 입력의 분류는 원문(사진·사용자가 쓴 글)을 읽은 AI의 판단이 먼저입니다. 예전 기록이 있다고 앱이 덮어쓰지 않습니다.** (사용자 결정, I-062)
-  - 예전 기록(입력 습관)은 AI에게 판단 근거로 보냅니다 — 많이 쓴 것(`PATTERN_LIMIT`), 말로 입력·AI 명령·사진 설명은 글에 나온 이름의 기록도(`relatedPatterns`, 분류할 때 `promptText`로 같은 글을 넘김).
+  - 예전 기록(입력 습관)은 AI에게 판단 근거로 보냅니다 — 많이 쓴 것(`PATTERN_LIMIT`), 세부카테고리마다 자주 적은 것(`categoryExamples`, I-064), 말로 입력·AI 명령·사진 설명은 글에 나온 이름의 기록도(`relatedPatterns`, 분류할 때 `promptText`로 같은 글을 넘김). AI가 본 습관인지(`habitShownToAI`)는 이 셋을 모두 봅니다.
   - 사진에 사용자가 쓴 설명(AI 입력 상자의 글·덧붙인 설명, 공유받은 사진은 본문만 — 제목은 보내는 앱이 붙인 이름)은 사진과 같은 원문입니다. 설명은 금액·건수를 바꿀 수 있어(반반·일부만) 설명이 있으면 바로 넣지 않고, 사진 화면에서 다시 찍기·다른 사진·붙여넣기로 바꾼 사진은 설명을 이어받습니다. (I-063)
   - 앱이 예전 기록으로 정하는 것은 AI가 못 골랐거나 그 기록을 보지 못했을 때뿐이고(`categoryGuess` — 바로 넣지 않음), 고르지 않은 후보(예전 기록·AI 추천·AI가 헷갈릴 때 준 2순위)는 화면에 '이걸로'로 보입니다(`classify`의 `alternatives`). AI가 2순위를 줬으면 바로 넣지 않습니다.
   - 예외: 가게 이름만 주는 카드 문자·카드 명세서 대조는 산 것을 알 수 없어 같은 가게의 예전 기록이 판단입니다(`NAMES_ONLY_SOURCES`).
+  - 간편결제 이름(네이버페이 등, `isPaymentGateway`)은 가게가 아닙니다 — 그 이름으로 예전 기록을 찾지 않고, 글에 나온 그 이름으로 예전 기록을 더 보내거나 세부카테고리 예로 보내지 않습니다('네이버페이 taptap'은 다른 가게, 그 이름뿐이면 그 간편결제로 적은 기록만 — 같은 표기 먼저). 간편결제로 냈는데 카드가 사진에 없으면 결제수단을 짐작하지 않고 비워 묻습니다(`unseenCard` — 입력 창에 채울 때도 앞의 카드·자동 결제수단으로 채우지 않음). (B-099)
   - AI 지시문(SYSTEM·칸 설명)에 '입력 습관을 우선'하라고 쓰지 않습니다 — AI가 습관을 따르면 앱도 막을 수 없습니다.
-  - 세부내역은 원문이 가게 이름만 말했을 때만 예전 표기로 바꿉니다. 예전 세부내역 찾기는 낱말 첫머리부터 맞을 때만입니다('오메가3'의 '메가'는 아님, B-097).
+  - 세부내역은 원문이 가게 이름만 말했을 때만 예전 표기로 바꿉니다 — 사진에서 AI가 세부내역에 산 것을 적었으면(간편결제 주문 화면, 사용자 설명이 있고 품목 이름 안의 낱말) 그것이 원문입니다(B-099). 예전 세부내역 찾기는 낱말 첫머리부터 맞을 때만입니다('오메가3'의 '메가'는 아님, B-097).
 - **AI 호출 규칙 (aiClient.js):**
   - Claude 요청에는 `tool_choice: {type:'auto', disable_parallel_tool_use:true}`만 씁니다. 강제 도구 호출(`tool`/`any`)과 temperature·top_p는 보내지 않습니다. Sonnet·Opus 5.5는 400을 냅니다. (B-072)
   - AI 결과는 `usableResult`로 스키마 모양을 검사한 뒤에만 씁니다. (B-077)

@@ -3,7 +3,7 @@ import initSqlJs from 'sql.js';
 import { createDatabase, addTransaction } from '../dbManager';
 import { buildPhotoSuggestions, buildPhotoPrompt, cleanPhotoNotes, markDuplicates, isPaymentGateway } from '../photoEntry';
 import { todayStr, addDays } from '../dateUtils';
-import { otherAlternatives, CATEGORY_ALT_RULE } from '../receiptAssistant';
+import { otherAlternatives, CATEGORY_ALT_RULE, LOW_CONFIDENCE_WARNING } from '../receiptAssistant';
 
 let SQL;
 beforeAll(async () => { SQL = await initSqlJs(); });
@@ -19,6 +19,13 @@ function makeDb() {
   db.run("INSERT INTO budget_categories (name, sort_order) VALUES ('식비', 0), ('교통', 1)");
   db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('식비', '외식', 0), ('교통', '충전', 0)");
   return db;
+}
+
+// 세부카테고리마다의 예(많이 쓴 5개, I-064)에도 들지 않게 — 그 세부카테고리에 더 많이 쓴 세부내역 5개를 넣는다
+function crowdExamples(db, cat, sub) {
+  for (let i = 0; i < 5; i++) {
+    for (let k = 0; k < 3; k++) addTransaction(db, { payment_method: '현금', date: D1, budget_category: cat, sub_category: sub, detail: `${sub}${i}`, amount: 1000 });
+  }
 }
 
 const entry = (over = {}) => ({
@@ -270,7 +277,8 @@ test('AI가 지시문에서 못 본 습관(많이 쓴 40개 밖)이면 같은 �
   }
   addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 5000 });
   addTransaction(db, { payment_method: '현대EV', date: D2, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 3000 });
-  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소 →');
+  crowdExamples(db, '생활', '생활용품');
+  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소');
   const [s, other] = buildPhotoSuggestions(db, {
     is_payment: true, kind: 'list', note: '',
     entries: [
@@ -291,6 +299,97 @@ test('지시문이 헷갈릴 때만 2순위(category_alt)를 달라고 하고, �
     is_payment: true, kind: 'receipt', note: '', entries: [entry({ merchant: '주유소 편의점', category: '식비 > 외식', category_alt: '교통 > 충전' })],
   }).suggestions;
   expect(otherAlternatives(s).map(o => [o.kind, o.sub_category])).toEqual([['second', '충전']]);
+});
+
+// 간편결제 주문 화면 (B-099) — 영수증은 아니지만 상품이 보인다. 카드만 모른다
+describe('네이버페이 주문 완료 화면 (사용자 예시, B-099)', () => {
+  function naverDb() {
+    const db = makeDb();
+    db.run("INSERT INTO budget_categories (name, sort_order) VALUES ('정기결제', 2), ('주거/수리', 3), ('쇼핑', 4)");
+    db.run("INSERT INTO sub_categories (budget_category, name, sort_order) VALUES ('정기결제', '연회비', 0), ('주거/수리', '물품', 0), ('쇼핑', '가전', 0)");
+    // 네이버페이로 낸 다른 가게 — 이 주문과 상관없다
+    addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '정기결제', sub_category: '연회비', detail: '네이버페이 taptap', amount: 30000 });
+    return db;
+  }
+  const order = (over = {}) => ({
+    is_payment: true, kind: 'receipt', note: '',
+    entries: [entry({
+      date: TODAY, merchant: '네이버페이', total: 10900, payment_hint: '', payment_method: '현대EV',
+      category: '주거/수리 > 물품', category_alt: '쇼핑 > 가전', detail: '센서등',
+      items: [{ name: 'LED 무선 센서등 21CM 동작감지 현관 계단 센스등 붙이는 조명 주광색', amount: 10900 }],
+      confidence: 'low', note: '결제 날짜가 화면에 없어 상품주문번호로 짐작', ...over,
+    })],
+  });
+
+  test('상품으로 세부내역·분류, 네이버페이로 시작하는 다른 가게의 기록은 쓰지 않고, 카드는 짐작하지 않고 묻는다', () => {
+    const [s] = buildPhotoSuggestions(naverDb(), order(), { today: TODAY }).suggestions;
+    expect(s).toMatchObject({
+      detail: '센서등', budget_category: '주거/수리', sub_category: '물품', historyDetail: '', categoryGuess: false,
+      payment_method: '', unseenCard: '네이버페이',
+    });
+    expect(s.sources.category).toBe('ai');
+    expect(s.sources.payment_method).toBeUndefined();
+    expect(otherAlternatives(s).map(o => [o.kind, o.budget_category, o.sub_category])).toEqual([['second', '쇼핑', '가전']]);
+    const said = s.warnings.join(' / ');
+    expect(said).not.toContain('무엇을 샀는지 알 수 없어요');                 // 상품이 보인다
+    expect(said).toContain('네이버페이에 연결한 카드가 사진에 없어요 — 결제수단을 골라 주세요');
+    expect(said).toContain('상품주문번호로 짐작');
+    expect(s.warnings).toContain(LOW_CONFIDENCE_WARNING);
+    expect(said).not.toContain('흐림');
+  });
+
+  test('설명에 카드를 썼으면(AI가 payment_hint로) 그 카드, 간편결제 이름 그대로인 결제수단을 고르면 그것', () => {
+    const db = naverDb();
+    const [card] = buildPhotoSuggestions(db, order({ payment_hint: '현대카드' }), { today: TODAY }).suggestions;
+    expect(card).toMatchObject({ payment_method: '현대EV', unseenCard: '' });
+    expect(card.warnings.join(' ')).not.toContain('연결한 카드');
+    db.run("INSERT INTO payment_methods (name, sort_order) VALUES ('네이버페이', 9)");
+    const [pay] = buildPhotoSuggestions(db, order({ payment_hint: 'N pay', payment_method: '네이버페이' }), { today: TODAY }).suggestions;
+    expect(pay).toMatchObject({ payment_method: '네이버페이', unseenCard: '' });
+    // 간편결제 이름만 보이는데 다른 카드를 골랐으면 짐작이다
+    const [guess] = buildPhotoSuggestions(db, order({ payment_hint: '네이버페이', payment_method: '신한카드' }), { today: TODAY }).suggestions;
+    expect(guess).toMatchObject({ payment_method: '', unseenCard: '네이버페이' });
+  });
+
+  test('여러 건(페이 앱 결제 내역)이면 줄마다 — 상품이 보인 줄은 결제수단만, 아무것도 없는 줄은 세부내역·카테고리도', () => {
+    const fixesOf = s => (s.needsFix || []).map(f => [f.text, f.fields]);
+    const { suggestions } = buildPhotoSuggestions(naverDb(), {
+      is_payment: true, kind: 'list', note: '',
+      entries: [
+        entry({ merchant: '네이버페이', detail: '수건', payment_hint: '', category: '주거/수리 > 물품', total: 15900 }),
+        entry({ merchant: '네이버페이', detail: '', payment_hint: '', category: '모름', total: 8000 }),
+      ],
+    }, { today: TODAY });
+    const card = ['네이버페이에 연결한 카드가 사진에 없어요 — 결제수단을 골라 주세요', ['payment_method']];
+    expect(suggestions.map(fixesOf)).toEqual([
+      [card],
+      [['네이버페이 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요', ['detail', 'budget_category', 'sub_category']], card],
+    ]);
+    expect(suggestions.map(s => [s.detail, s.budget_category])).toEqual([['수건', '주거/수리'], ['네이버페이', '']]);
+  });
+
+  test('지시문 — 주문 화면은 영수증처럼 상품으로, 간편결제의 카드는 습관으로 짐작하지 않는다', () => {
+    const prompt = buildPhotoPrompt(naverDb(), { today: TODAY });
+    expect(prompt).toContain('주문·결제 완료 화면');
+    expect(prompt).toContain('detail은 무엇인지 알 수 있는 짧은 상품 이름');
+    expect(prompt).toContain('입력 습관으로 카드를 짐작하지 않는다');
+    expect(prompt).toContain('주문번호가 날짜로 시작하면');
+    expect(prompt).toContain('결제수단 목록에 그 간편결제 자체가 있으면 그것');
+  });
+
+  test('다른 간편결제를 고르면 짐작이다, AI가 예전 기록을 따라 세부내역을 적었으면 산 상품에 맞는지 확인받는다', () => {
+    const db = naverDb();
+    db.run("INSERT INTO payment_methods (name, sort_order) VALUES ('카카오페이', 9)");
+    const [kakao] = buildPhotoSuggestions(db, order({ payment_hint: '네이버페이', payment_method: '카카오페이' }), { today: TODAY }).suggestions;
+    expect(kakao).toMatchObject({ payment_method: '', unseenCard: '네이버페이' });
+    // 카드 이름이 붙은 결제수단('네이버페이 현대카드')은 간편결제 자체가 아니라 카드 짐작이다
+    db.run("INSERT INTO payment_methods (name, sort_order) VALUES ('네이버페이 현대카드', 10)");
+    const [cobrand] = buildPhotoSuggestions(db, order({ payment_hint: '네이버페이', payment_method: '네이버페이 현대카드' }), { today: TODAY }).suggestions;
+    expect(cobrand).toMatchObject({ payment_method: '', unseenCard: '네이버페이' });
+    const [echo] = buildPhotoSuggestions(db, order({ detail: '네이버페이 taptap' }), { today: TODAY }).suggestions;
+    expect(echo).toMatchObject({ historyDetail: '', budget_category: '주거/수리' });
+    expect(echo.warnings.join(' ')).toContain('네이버페이 결제예요 — 세부내역·카테고리가 산 상품에 맞는지 확인해 주세요');
+  });
 });
 
 test('결제 칸이 없는 응답은 0건이 아니라 오류', () => {
@@ -338,8 +437,9 @@ test('설명에 나온 가게의 예전 기록도 보내고, AI가 그 기록을
   }
   addTransaction(db, { payment_method: '현대EV', date: D1, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 5000 });
   addTransaction(db, { payment_method: '현대EV', date: D2, budget_category: '생활', sub_category: '생활용품', detail: '다이소', amount: 3000 });
+  crowdExamples(db, '생활', '생활용품');
   const note = '다이소에서 산 건 아이 학용품이에요';
-  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소 →');
+  expect(buildPhotoPrompt(db, { today: TODAY })).not.toContain('다이소');
   expect(buildPhotoPrompt(db, { today: TODAY, notes: [note] })).toContain('다이소 → 생활 > 생활용품');
 
   const raw = { is_payment: true, kind: 'receipt', note: '', entries: [entry({ merchant: '다이소 성수점', total: 5000, category: '교육 > 학용품' })] };

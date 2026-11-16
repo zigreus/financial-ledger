@@ -54,6 +54,93 @@ export function categoryPaths(db) {
 
 const habitLine = p => `${p.detail} → ${p.budget_category}${p.sub_category ? ` > ${p.sub_category}` : ''} / ${p.payment_method} (${p.cnt})`;
 
+// 간편결제·결제대행 이름 — 가게가 아니다. 이 이름만으로는 무엇을 샀는지·어느 카드인지 알 수 없다 (예: 네이버페이)
+// (카드 명세서 대조는 '네이버페이 무신사'의 앞말을 떼는 따로 된 목록을 쓴다 — 앞말 떼기에는 '토스'처럼 짧은 이름을 넣을 수 없다)
+// 같은 곳의 여러 표기는 한 묶음 — 첫 이름이 대표('N pay' → 네이버페이). '토스'(송금·토스 앱)는 결제대행 토스페이먼츠와 다른 묶음
+const GATEWAY_GROUPS = [
+  ['네이버페이', '네이버파이낸셜', 'naverpay', 'naverfinancial', 'npay', 'n페이'],
+  ['카카오페이', 'kakaopay'],
+  ['토스페이', 'tosspay'], ['토스페이먼츠', 'tosspayments'], ['토스', 'toss', '비바리퍼블리카'],
+  ['페이코', 'nhn페이코', 'payco'], ['스마일페이', 'smilepay'], ['ssg페이', 'ssgpay'], ['쿠팡페이', 'coupangpay'],
+  ['엘페이', 'lpay'], ['11페이', '11pay'], ['삼성페이', 'samsungpay'], ['애플페이', 'applepay'], ['구글페이', 'googlepay'],
+  ['페이팔', 'paypal'], ['제로페이', 'zeropay'],
+  ['이니시스', 'kg이니시스', '케이지이니시스', 'inicis'], ['한국사이버결제', 'kcp', 'nhnkcp'],
+  ['나이스페이', '나이스페이먼츠', 'nicepay', 'nicepayments', '나이스정보통신'], ['다날', 'danal'],
+  ['모빌리언스', 'kg모빌리언스'], ['페이레터'], ['헥토파이낸셜'], ['한국정보통신', 'kicc'], ['케이에스넷', 'ksnet'],
+  ['스마트로', 'smartro'], ['세틀뱅크', 'settlebank'], ['갤럭시아머니트리'],
+];
+const GATEWAY_OF = new Map(GATEWAY_GROUPS.flatMap(names => names.map(n => [n, names[0]])));
+
+/**
+ * 간편결제·결제대행 이름이면 { spelling, group }, 아니면 null — '(주)카카오페이', '네이버페이 결제'처럼 회사 표시·'결제'가 붙어도.
+ * spelling: 회사 표시·'결제'를 뗀 표기('네이버페이결제' → 네이버페이), group: 같은 곳의 대표 이름('N pay' → 네이버페이)
+ */
+function gatewayKey(name) {
+  const n = normalizeName(name);
+  if (!n) return null;
+  const core = n.replace(/(간편결제|결제)$/, '').replace(/^(주식회사|주)/, '').replace(/(주식회사|주)$/, '');
+  if (GATEWAY_OF.has(n)) return { spelling: n, group: GATEWAY_OF.get(n) };
+  if (GATEWAY_OF.has(core)) return { spelling: core, group: GATEWAY_OF.get(core) };
+  return null;
+}
+
+/** 간편결제·결제대행 이름이면 그 대표 이름, 아니면 '' */
+const gatewayOf = name => gatewayKey(name)?.group || '';
+
+/** 이름이 간편결제·결제대행 이름뿐인지 */
+export function isPaymentGateway(name) {
+  return !!gatewayOf(name);
+}
+
+/** 이름이 간편결제 이름으로 시작하는지 — '네이버페이 taptap', 'NAVER PAY 무신사' (첫 낱말 또는 첫 두 낱말) */
+function startsWithGateway(name) {
+  const words = String(name || '').split(/[^0-9a-zA-Z가-힣]+/).filter(Boolean);
+  return words.length > 0 && (isPaymentGateway(words[0]) || (words.length > 1 && isPaymentGateway(`${words[0]}${words[1]}`)));
+}
+
+// 세부카테고리마다 AI에게 보일 예 — 이 사용자가 어떤 물건·가게를 어디에 넣는지 (I-064)
+const CATEGORY_EXAMPLE_LIMIT = 5;
+const EXAMPLE_MAX_LENGTH = 20;
+
+/**
+ * 세부카테고리마다 자주 적은 세부내역 몇 개 — [{ path, details }] (카테고리 목록 순서)
+ * patterns: getDetailPatterns 결과(세부내역·분류·결제수단별 횟수) — 결제수단이 달라도 같은 세부내역은 합쳐 센다.
+ * 간편결제 이름뿐인 것·카테고리 이름을 되풀이할 뿐인 것·글자가 없는 것(이모지뿐)은 예가 아니다.
+ * skip: 이미 보낸 세부내역(정규화한 이름) — 지시문의 많이 쓴 입력 습관 줄에 분류와 함께 있어 되풀이하지 않는다
+ */
+export function categoryExamples(patterns, paths, { skip = new Set() } = {}) {
+  const known = new Set(paths);
+  const byPath = new Map();
+  patterns.forEach((p) => {
+    const path = p.sub_category ? `${p.budget_category} > ${p.sub_category}` : p.budget_category;
+    const detail = String(p.detail || '').trim();
+    if (!known.has(path) || !normalizeName(detail) || skip.has(normalizeName(detail))) return;
+    if (isPaymentGateway(detail) || repeatsCategory(detail, p.budget_category, p.sub_category)) return;
+    if (!byPath.has(path)) byPath.set(path, new Map());
+    const counts = byPath.get(path);
+    const key = normalizeName(detail);
+    const had = counts.get(key);
+    counts.set(key, { detail: had ? had.detail : detail, cnt: (had ? had.cnt : 0) + p.cnt });
+  });
+  return paths.filter(path => byPath.has(path)).map(path => ({
+    path,
+    details: [...byPath.get(path).values()].sort((a, b) => b.cnt - a.cnt).slice(0, CATEGORY_EXAMPLE_LIMIT).map(x => x.detail),
+  }));
+}
+
+// 예로 보일 표기 — 길면 줄인다(글자 단위, 이모지를 반으로 자르지 않게)
+const exampleText = (d) => {
+  const chars = Array.from(d);
+  return chars.length > EXAMPLE_MAX_LENGTH ? `${chars.slice(0, EXAMPLE_MAX_LENGTH).join('')}…` : d;
+};
+const exampleLine = ({ path, details }) => `${path}: ${details.map(exampleText).join(', ')}`;
+
+/** 지시문에 보내는 세부카테고리마다의 예 — 많이 쓴 입력 습관(PATTERN_LIMIT) 줄에 이미 있는 것은 빼고 */
+function examplesSent(allPatterns, paths) {
+  const skip = new Set(allPatterns.slice(0, PATTERN_LIMIT).map(p => normalizeName(p.detail)));
+  return categoryExamples(allPatterns, paths, { skip });
+}
+
 /**
  * 사용자가 사전에 동의한 범위(목록·입력 습관·여행 일정)만 담은 지시문 앞부분.
  * 영수증·말로 입력·카드 내역 대조가 함께 쓴다.
@@ -62,8 +149,10 @@ const habitLine = p => `${p.detail} → ${p.budget_category}${p.sub_category ? `
 export function buildDataContext(db, today = todayStr(), { text = '' } = {}) {
   const methods = getPaymentMethods(db);
   const paths = categoryPaths(db);
-  const patterns = getDetailPatterns(db).slice(0, PATTERN_LIMIT);
-  const related = text ? relatedPatterns(db, text) : [];
+  const allPatterns = getDetailPatterns(db);
+  const patterns = allPatterns.slice(0, PATTERN_LIMIT);
+  const related = text ? relatedIn(allPatterns, text) : [];
+  const examples = examplesSent(allPatterns, paths);
   const blankHabits = getBlankDetailHabits(db);
   const trips = tripEventsOf(db).slice(0, 10);
   const dow = WEEKDAYS[new Date(`${today}T00:00:00`).getDay()];
@@ -81,9 +170,13 @@ export function buildDataContext(db, today = todayStr(), { text = '' } = {}) {
     ...(related.length
       ? ['', '[사용자가 쓴 글에 나온 이름의 예전 기록 — 같은 형식, 위 목록에 없는 것]', ...related.map(habitLine)]
       : []),
+    ...(examples.length
+      ? ['', '[세부카테고리마다 이 사용자가 자주 적은 세부내역 — 어떤 물건·가게를 어디에 넣는지]', ...examples.map(exampleLine)]
+      : []),
     '',
     '[예전 기록은 판단 근거입니다]',
     '같은 가게·물건이면 예전 기록의 표기·분류를 따르되, 사용자가 쓴 글이나 사진에 보이는 것(산 물건·용도)이 다르면 그것을 따른다.',
+    ...(examples.length ? ['처음 보는 물건·가게는 세부카테고리마다의 예를 보고 이 사용자가 비슷한 것을 넣는 곳을 참고한다.'] : []),
     '',
     '[세부내역 — 꼭 채우지 않아도 됩니다]',
     '세부내역(detail)이 카테고리·세부카테고리 이름을 되풀이할 뿐이면 빈 문자열로 둔다 (예: 세부카테고리가 저녁인데 세부내역 "저녁"). 가게 이름·산 물건처럼 더 알려 주는 말이 있을 때만 적는다.',
@@ -156,15 +249,18 @@ function relatedIn(patterns, text) {
   const keys = [];
   for (let i = 0; i < words.length; i += 1) {
     for (let j = i; j < words.length && j < i + 3; j += 1) {
-      const k = nameWithStarts(words.slice(i, j + 1).join(' '));
-      if (k.key.length >= 2) keys.push(k);
+      const said = words.slice(i, j + 1).join(' ');
+      const k = nameWithStarts(said);
+      // 간편결제 이름('네이버페이')은 가게가 아니다 — 그것으로 시작하는 다른 가게의 기록을 보내지 않는다 (B-099)
+      if (k.key.length >= 2 && !isPaymentGateway(said)) keys.push(k);
     }
   }
   if (!keys.length) return [];
   const shown = new Set(patterns.slice(0, PATTERN_LIMIT).map(p => normalizeName(p.detail)));
   return patterns.slice(PATTERN_LIMIT).filter((p) => {
     const d = nameWithStarts(p.detail);
-    return d.key.length >= 2 && !shown.has(d.key) && keys.some(k => nameMatchLength(k, d) > 0);
+    // 간편결제 이름뿐인 기록('네이버페이')은 '네이버페이 수건'의 앞말에 걸려도 그 물건의 기록이 아니다
+    return d.key.length >= 2 && !shown.has(d.key) && !isPaymentGateway(p.detail) && keys.some(k => nameMatchLength(k, d) > 0);
   }).slice(0, RELATED_LIMIT);
 }
 
@@ -178,14 +274,15 @@ export function matchHistory(db, ...names) {
   return matchIn(getDetailPatterns(db), names);
 }
 
-// matchHistory — 이미 읽은 입력 습관(patterns)에서 (classify가 한 번만 읽게)
+// matchHistory — 이미 읽은 입력 습관(patterns)에서 (classify가 한 번만 읽게).
+// 간편결제 이름뿐인 기록('네이버페이')은 가게가 아니라 '네이버페이 무신사'의 앞말에 걸려도 찾지 않는다 (B-099 — classify가 따로 본다)
 function matchIn(patterns, names) {
   const keys = names.map(nameWithStarts).filter(k => k.key.length >= 2);
   if (!keys.length) return null;
   let best = null;
   patterns.forEach(p => {
     const d = nameWithStarts(p.detail);
-    if (d.key.length < 2) return;
+    if (d.key.length < 2 || isPaymentGateway(p.detail)) return;
     const match = Math.max(...keys.map(k => nameMatchLength(k, d)));
     if (!match) return;
     // 구체성(정확 일치 1순위, 겹친 길이 2순위)을 먼저, 같은 수준이면 많이 쓴 순
@@ -231,12 +328,29 @@ function splitPath(path, db) {
 
 /**
  * AI가 지시문(buildDataContext)에서 이 세부내역의 예전 기록을 보았는지 — 많이 쓴 PATTERN_LIMIT개,
- * 또는 promptText(말로 입력·AI 명령의 글)에 나온 이름이라 함께 보낸 것
+ * promptText(말로 입력·AI 명령의 글)에 나온 이름이라 함께 보낸 것, 또는 세부카테고리마다의 예(그 분류로)
  */
-function habitShownToAI(patterns, detail, promptText) {
-  const d = normalizeName(detail);
+function habitShownToAI(db, patterns, found, promptText) {
+  const d = normalizeName(found.detail);
   const seen = p => normalizeName(p.detail) === d;
-  return patterns.slice(0, PATTERN_LIMIT).some(seen) || (!!promptText && relatedIn(patterns, promptText).some(seen));
+  if (patterns.slice(0, PATTERN_LIMIT).some(seen) || (!!promptText && relatedIn(patterns, promptText).some(seen))) return true;
+  const path = found.sub_category ? `${found.budget_category} > ${found.sub_category}` : found.budget_category;
+  // 줄여 보낸 예(EXAMPLE_MAX_LENGTH 넘음)는 AI가 앞부분만 보았다 — 본 것으로 치지 않는다
+  return examplesSent(patterns, categoryPaths(db)).some(e => e.path === path
+    && e.details.some(x => normalizeName(x) === d && Array.from(x).length <= EXAMPLE_MAX_LENGTH));
+}
+
+/**
+ * 두 이름이 낱말 하나라도(두 글자 이상) 첫머리부터 겹치는지 — 어느 쪽이 길어도.
+ * inside: a의 낱말이 b 안에 들어 있을 때만('LED 센서등' → 'LED 무선 센서등 21CM'), b의 짧은 낱말이 a의 앞머리인 것('김밥천국' ← '김밥')은 아님
+ */
+function sharesWord(a, b, { inside = false } = {}) {
+  const target = nameWithStarts(b);
+  if (!target.key) return false;
+  return String(a || '').split(NAME_SEPARATOR_RE).some((w) => {
+    const k = nameWithStarts(w);
+    return k.key.length >= 2 && (!inside || k.key.length <= target.key.length) && nameMatchLength(k, target) > 0;
+  });
 }
 
 // 가게 이름만 주는 갈래 — 카드 문자(AI 없음)·카드 명세서 대조. 산 것을 알 수 없어 같은 가게의 예전 기록이 판단이다
@@ -245,8 +359,11 @@ const NAMES_ONLY_SOURCES = new Set(['sms', 'statement']);
 /**
  * 세부내역·카테고리 — 원문(사진·영수증·사용자가 쓴 글)이 말한 것이 예전 기록보다 먼저다 (사용자 결정, I-062).
  * 예전 기록(입력 습관)은 원문이 말하지 않은 것만 채운다:
- *  - 세부내역: 원문이 같은 이름을 말했거나 가게 이름만 말했을 때(사진·카드 문자·카드 내역의 세부내역은 가게 이름이다)
- *    그 가게를 예전에 적은 표기로('(주)이마트 성수점' → '이마트'). 원문이 더 말했으면('스타벅스' + '텀블러') 원문 그대로
+ *  - 세부내역: 원문이 같은 이름을 말했거나 가게 이름만 말했을 때(카드 문자·카드 내역, 보통의 사진은 세부내역이 가게 이름이다)
+ *    그 가게를 예전에 적은 표기로('(주)이마트 성수점' → '이마트'). 원문이 더 말했으면('스타벅스' + '텀블러') 원문 그대로.
+ *    사진에서 AI가 세부내역에 산 것을 적었으면(가게가 간편결제 이름뿐인 주문 화면, 품목 이름과 겹침) 그것도 원문이다 (B-099)
+ *  - 간편결제 이름('네이버페이')은 가게가 아니라 그 이름으로 예전 기록을 찾지 않는다 — '네이버페이 taptap'은 다른 가게다.
+ *    간편결제 이름 말고 아무것도 없으면(카드 문자 등) 예전에 그 이름 그대로 적은 기록만 본다 (B-099)
  *  - 카테고리: AI가 원문을 읽고 고른 것이 먼저. 예전 기록은 AI가 못 골랐을 때, 또는 원문이 같은 곳을 말했는데
  *    AI가 그 습관을 지시문에서 보지 못해 짐작했을 때만. AI가 습관을 보고도 달리 골랐으면 원문 때문이다('영양제', '선물')
  *  - 가게 이름만 주는 갈래(카드 문자·카드 명세서 대조)는 산 것을 알 수 없어 같은 가게의 예전 기록이 판단이다
@@ -254,6 +371,7 @@ const NAMES_ONLY_SOURCES = new Set(['sms', 'statement']);
  * 여행 일정이면 여행 카테고리 안에서(예전 기록이 여행 카테고리 안이면 그 세부카테고리를 살린다).
  * promptText: 말로 입력·AI 명령의 글, 사진과 함께 보낸 설명 — 지시문에 글에 나온 이름의 예전 기록도 보냈다(relatedPatterns)
  * aiAltCategory: AI가 헷갈릴 때 준 2순위 분류
+ * items: 사진에서 읽은 품목 이름들 — 세부내역이 산 것인지 가늠한다
  * 반환: { detail, budget_category, sub_category, history, alternatives, categoryGuess, sources: { detail, category } }
  *  - history: 원문과 같은 것을 가리키는 예전 기록일 때만 (결제수단 습관·바로 넣기·'예전에 N번' 안내가 쓴다)
  *  - alternatives: 다른 후보 [{ kind: first|past|ai|second, detail, budget_category, sub_category, cnt?, ... }]
@@ -261,20 +379,39 @@ const NAMES_ONLY_SOURCES = new Set(['sms', 'statement']);
  *  - categoryGuess: AI가 판단한 분류가 아니라 예전 기록으로 채웠다(AI가 못 골랐거나 습관을 못 봤음) — 바로 넣지 않는다
  */
 export function classify(db, {
-  merchant, detail, aiCategory, aiAltCategory = '', eventId, readSource = 'receipt', promptText = '',
+  merchant, detail, aiCategory, aiAltCategory = '', eventId, readSource = 'receipt', promptText = '', items = [],
 }) {
   const patterns = getDetailPatterns(db);
   // AI가 고른 카테고리 이름을 되풀이한 세부내역('저녁' → 식비 > 저녁)은 가게 이름이 아니다 —
   // 예전에 똑같이 적은 것만 습관으로 보고, 겹치는 글자로는 찾지 않는다('저녁'이 '저녁회식'에 걸리지 않게)
   const aiPath = splitPath(aiCategory, db);
   const generic = name => !!aiPath && repeatsCategory(name, aiPath.cat, aiPath.sub);
-  const named = name => (generic(name) ? '' : name);
-  // 원문이 이 건을 부르는 이름 — 카테고리 이름을 되풀이한 말('스타벅스' + '커피')은 빼고 본다
+  const notGeneric = name => (generic(name) ? '' : name);
+  // 가게가 간편결제 이름뿐인 결제(네이버페이 주문 화면·내역 줄)
+  const viaGateway = isPaymentGateway(merchant);
+  // 예전 기록을 찾는 이름 — 간편결제 이름('네이버페이')은 가게가 아니라 빼고 본다. 사진에서 가게가 간편결제 이름뿐인데
+  // 세부내역도 간편결제 이름으로 시작하면('네이버페이 taptap' — AI가 예전 기록을 따라 적은 것) 산 것을 말하지 않는다 (B-099).
+  // 말로 입력은 사용자가 쓴 말이라('카카오페이 멜론') 그대로 찾는다
+  const echoed = name => readSource === 'receipt' && viaGateway && startsWithGateway(name);
+  const named = name => (isPaymentGateway(name) || echoed(name) ? '' : notGeneric(name));
+  // 원문이 이 건을 부르는 이름 — 카테고리 이름을 되풀이한 말('스타벅스' + '커피')·간편결제 이름은 빼고 본다
   const ownDetail = normalizeName(named(detail));
   const ownMerchant = normalizeName(named(merchant));
-  // 말로 입력에서 가게와 산 것을 함께 말했으면 산 것의 예전 기록이 먼저다 ('이마트 우유' → 예전의 '우유').
+  const itemNames = (Array.isArray(items) ? items : []).map(String).filter(Boolean);
+  const inItems = name => itemNames.some(n => sharesWord(name, n, { inside: true }));
+  // 사진에서 AI가 세부내역에 가게 대신 산 것을 적었는지 — 가게가 간편결제 이름뿐인 주문 화면이거나(지시문이 그때 상품 이름을 적게 한다),
+  // 사용자 설명이 있고('세부내역에는 물품명') 세부내역이 가게 이름과 겹치지 않으며 그 낱말이 품목 이름 안에 있다.
+  // 설명이 없으면 지시문대로 상호다 — 'CU' + 품목 'CU 종량제봉투', '김밥천국' + 품목 '김밥'을 산 것으로 보지 않게
+  const itemDetail = readSource === 'receipt' && !!ownDetail && (viaGateway
+    || (!!String(promptText || '').trim() && !sharesWord(detail, merchant) && inItems(detail)));
+  // 간편결제 이름뿐인 결제에서 산 것을 아는지 (사진 화면의 '수정 필요') — known: 세부내역에 산 것을 적음,
+  // check: 품목은 보이는데 세부내역이 비었거나 간편결제 이름(으로 시작 — 예전 기록을 따라 적음)뿐, unknown: 아무것도 없음.
+  // 짧게 줄인 상품 이름('수건' ← '코튼순면호텔수건', '청소기' ← '무선청소기 V12')은 품목 이름과 글자가 맞지 않아도 산 것이다
+  let gatewayBought = '';
+  if (viaGateway) gatewayBought = ownDetail ? 'known' : (itemNames.length ? 'check' : 'unknown');
+  // 가게와 산 것을 함께 말했으면(말로 입력) 또는 사진의 세부내역이 산 것이면 산 것의 예전 기록이 먼저다 ('이마트 우유' → 예전의 '우유').
   // 산 것 자체이거나 그 안의 낱말인 기록만 — '커피'가 더 긴 다른 기록('커피 원두')을 잡아 가게의 기록을 밀어내지 않게
-  const itemNamed = readSource === 'text' && !!ownDetail && !!ownMerchant && ownDetail !== ownMerchant;
+  const itemNamed = !!ownDetail && ownDetail !== ownMerchant && (itemDetail || (readSource === 'text' && !!normalizeName(merchant)));
   const byItem = itemNamed ? matchIn(patterns, [named(detail)]) : null;
   const itemOk = !!byItem && normalizeName(byItem.detail).length <= ownDetail.length;
   let found = (itemOk && byItem) || matchIn(patterns, [named(merchant), named(detail)]);
@@ -282,14 +419,30 @@ export function classify(db, {
     const exact = matchIn(patterns, [merchant, detail].filter(generic));
     if (exact && exact.score >= EXACT_SCORE) found = exact;
   }
+  // 간편결제 이름 말고 아무것도 없는 건(카드 문자·상품 없는 내역 줄)은 예전에 그 간편결제 이름으로 적은 기록만 —
+  // 같은 표기('네이버페이결제' → 네이버페이)가 먼저, 없으면 같은 곳의 다른 표기('N pay').
+  // 이름으로 시작하는 다른 가게의 기록('네이버페이 taptap')은 아니다
+  const saysNothingElse = [merchant, detail].every(n => !normalizeName(n) || isPaymentGateway(n) || generic(n));
+  if (!found && saysNothingElse && !itemNames.length) {
+    const keys = [merchant, detail].map(gatewayKey).filter(Boolean);
+    const sameAs = (pick) => {
+      const k = gatewayKey(pick.detail);
+      return k && keys.some(x => x.spelling === k.spelling);
+    };
+    const sameGroup = (pick) => {
+      const k = gatewayKey(pick.detail);
+      return k && keys.some(x => x.group === k.group);
+    };
+    if (keys.length) found = patterns.find(sameAs) || patterns.find(sameGroup) || null;
+  }
   const sources = {};
 
-  // 원문이 가게 이름만 말했는지 — 말로 입력은 세부내역이 없거나 가게 이름과 같을 때
-  const placeOnly = readSource !== 'text' || !ownDetail || ownDetail === ownMerchant;
+  // 원문이 가게 이름만 말했는지 — 말로 입력은 세부내역이 없거나 가게 이름과 같을 때, 사진은 세부내역이 산 것이 아닐 때
+  const placeOnly = readSource === 'text' ? !ownDetail || ownDetail === ownMerchant : !itemDetail;
   // 찾은 예전 기록이 원문이 말한 것과 같은 것인지 — 같은 이름이거나, 원문이 가게 이름만 말했다
   const same = !!found && (placeOnly || normalizeName(found.detail) === ownDetail);
 
-  let outDetail = ((same && found.detail) || named(detail) || named(merchant) || '').trim();
+  let outDetail = ((same && found.detail) || notGeneric(detail) || notGeneric(merchant) || '').trim();
   sources.detail = same ? 'history' : readSource;
 
   const pastCategory = found && getBudgetCategories(db).includes(found.budget_category)
@@ -304,7 +457,7 @@ export function classify(db, {
   // 여행 일정의 결제인데 AI는 여행 카테고리 밖을 골랐고 예전 기록은 여행 카테고리 안이면 — 그 세부카테고리를 살린다
   const tripPast = !!tripCategory && pastCategory?.cat === tripCategory && aiPath?.cat !== tripCategory;
   let category = null;
-  if (pastCategory && (!aiPath || agrees || namesOnly || tripPast || (same && !habitShownToAI(patterns, found.detail, promptText)))) {
+  if (pastCategory && (!aiPath || agrees || namesOnly || tripPast || (same && !habitShownToAI(db, patterns, found, promptText)))) {
     category = pastCategory;
     sources.category = 'history';
   } else if (aiPath) {
@@ -360,6 +513,7 @@ export function classify(db, {
     history,
     alternatives,
     categoryGuess,
+    gatewayBought,
     sources,
   };
 }
@@ -584,21 +738,37 @@ export function suggestionToTransaction(db, s) {
 
 // ── 영수증 (사진 읽기는 services/photoEntry) ─────────────────────
 
+/** AI가 금액·날짜를 확실히 읽지 못했다고 할 때(confidence low)의 알림 */
+export const LOW_CONFIDENCE_WARNING = '확실히 읽지 못한 값이 있어요 — 금액과 날짜를 꼭 확인하세요';
+
 /**
  * 영수증 AI 응답을 이 가계부 데이터에 맞춘 입력 추천으로 바꾼다.
  * 반환값의 sources는 항목별 근거 (SOURCE_LABEL 키).
  * promptText: 사진과 함께 보낸 사용자 설명(I-063) — 지시문에 설명에 나온 이름의 예전 기록도 보냈다(classify 참고)
+ * 간편결제(네이버페이 등)로 낸 결제인데 연결한 카드가 사진에 없으면 결제수단을 짐작하지 않고 비워 둔다 —
+ * unseenCard(간편결제 이름)로 알려 사진 화면이 결제수단만 묻게 한다 (B-099)
  */
 export function buildSuggestion(db, raw, { today = todayStr(), promptText = '' } = {}) {
   const { date, source: dateSource } = resolveDate(raw.date, today, 'receipt');
   const money = resolveAmount(db, { total: raw.total, currency: raw.currency, date });
+  const items = Array.isArray(raw.items)
+    ? raw.items.filter(i => i && i.name).slice(0, 15).map(i => ({ name: String(i.name), amount: Number(i.amount) || 0 }))
+    : [];
   const cls = classify(db, {
     merchant: raw.merchant, detail: raw.detail, aiCategory: raw.category, aiAltCategory: raw.category_alt, eventId: money.event_id,
-    promptText,
+    promptText, items: items.map(i => i.name),
   });
-  const pay = pickPaymentMethod(db, {
-    aiMethod: raw.payment_method, evident: !!raw.payment_hint, history: cls.history, sub: cls.sub_category,
+  const hint = String(raw.payment_hint || '').trim();
+  let pay = pickPaymentMethod(db, {
+    aiMethod: raw.payment_method, evident: !!hint, history: cls.history, sub: cls.sub_category,
   });
+  // 보이는 결제 흔적이 간편결제 이름뿐이면(또는 아무것도 없는데 가게가 간편결제) 어느 카드인지 모른다 —
+  // AI가 그 간편결제 자체인 결제수단(목록의 '네이버페이' 등 — 'N pay'를 보고)을 고른 게 아니면 비운다.
+  // '네이버페이 현대카드'처럼 카드 이름이 붙은 결제수단은 간편결제 자체가 아니라 카드 짐작이다
+  const via = isPaymentGateway(hint) ? hint : (!hint && isPaymentGateway(raw.merchant) ? String(raw.merchant).trim() : '');
+  const payItself = !!via && !!pay.payment_method && gatewayOf(pay.payment_method) === gatewayOf(via);
+  const unseenCard = via && !payItself ? via : '';
+  if (unseenCard) pay = { payment_method: '', source: null };
 
   const sources = { date: dateSource, ...cls.sources };
   if (money.event_id) sources.event = 'trip';
@@ -606,7 +776,8 @@ export function buildSuggestion(db, raw, { today = todayStr(), promptText = '' }
 
   const warnings = [...money.warnings];
   const confidence = ['high', 'medium', 'low'].includes(raw.confidence) ? raw.confidence : 'medium';
-  if (confidence === 'low') warnings.push('사진이 잘 안 읽혔습니다 — 금액과 날짜를 꼭 확인하세요');
+  // AI가 확실히 읽지 못했다고 한 것 — 흐림·잘림만이 아니라 화면에 없는 날짜를 짐작한 때도 (B-099)
+  if (confidence === 'low') warnings.push(LOW_CONFIDENCE_WARNING);
   if (raw.note) warnings.push(String(raw.note));
 
   return {
@@ -620,12 +791,12 @@ export function buildSuggestion(db, raw, { today = todayStr(), promptText = '' }
     event_id: money.event_id,
     eventTitle: money.eventTitle,
     payment_method: pay.payment_method,
-    paymentHint: String(raw.payment_hint || '').trim(),
+    paymentHint: hint,
+    unseenCard,
+    gatewayBought: cls.gatewayBought,
     budget_category: cls.budget_category,
     sub_category: cls.sub_category,
-    items: Array.isArray(raw.items)
-      ? raw.items.filter(i => i && i.name).slice(0, 15).map(i => ({ name: String(i.name), amount: Number(i.amount) || 0 }))
-      : [],
+    items,
     historyDetail: cls.history?.detail || '',
     historyCount: cls.history?.cnt || 0,
     alternatives: cls.alternatives,

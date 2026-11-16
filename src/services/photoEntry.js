@@ -15,7 +15,7 @@
  */
 import { analyzeWithAI, AIError } from './aiClient';
 import {
-  buildDataContext, buildSuggestion, normalizeName, resolveDate, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE,
+  buildDataContext, buildSuggestion, isPaymentGateway, normalizeName, resolveDate, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE,
 } from './receiptAssistant';
 import { getTransactions } from './dbManager';
 import { namesMatch } from './cardSms';
@@ -25,19 +25,22 @@ import { todayStr } from './dateUtils';
 const ENTRY = {
   type: 'object',
   properties: {
-    date: { type: 'string', description: '결제일 YYYY-MM-DD. 보이지 않으면 빈 문자열' },
+    date: { type: 'string', description: '결제일 YYYY-MM-DD. 보이지 않으면 빈 문자열 (주문·결제 완료 화면의 주문번호가 날짜로 시작하면 그 날짜)' },
     merchant: { type: 'string', description: '가맹점(상호)명. 보이는 그대로' },
     total: { type: 'number', description: '이 결제의 최종 금액(할인 후, 부가세 포함). 사용자 설명이 다른 금액(내 몫 등)을 말하면 그 금액. 숫자만, 취소도 양수' },
     currency: { type: 'string', description: 'ISO 4217 통화 코드. 한국 원화는 KRW' },
     is_cancel: { type: 'boolean', description: '취소·환불 건이면 true' },
-    payment_hint: { type: 'string', description: '이 결제에 보이는 카드·결제 수단 그대로 (예: 현대카드 EV, 신한카드 1234, 현금). 없으면 빈 문자열' },
+    payment_hint: { type: 'string', description: '이 결제에 보이는 카드·결제 수단 그대로 (예: 현대카드 EV, 신한카드 1234, 현금, 카카오페이 신한카드 — 간편결제와 카드가 함께 보이면 둘 다). 없으면 빈 문자열' },
     payment_method: { type: 'string', description: '결제수단 목록 중 하나, 판단이 어려우면 "모름"' },
     category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단이 어려우면 "모름"' },
     category_alt: { type: 'string', description: CATEGORY_ALT_DESCRIPTION },
-    detail: { type: 'string', description: '가계부 세부내역에 쓸 짧은 이름. 입력 습관에 같은 가게가 있으면 그 표기 그대로' },
+    detail: {
+      type: 'string',
+      description: '가계부 세부내역에 쓸 짧은 이름 — 가게 이름(입력 습관에 같은 가게가 있으면 그 표기 그대로). 가게가 간편결제 이름뿐이고 산 상품이 보이면 무엇인지 알 수 있는 짧은 상품 이름',
+    },
     items: {
       type: 'array',
-      description: '영수증이면 주요 품목(최대 15개), 결제 내역 목록이면 빈 배열',
+      description: '영수증이나 주문·결제 완료 화면처럼 산 상품이 보이면 주요 품목(최대 15개), 결제 내역 목록이면 빈 배열',
       items: {
         type: 'object',
         properties: { name: { type: 'string' }, amount: { type: 'number' } },
@@ -51,7 +54,7 @@ const ENTRY = {
     },
     needs_fix: {
       type: 'string',
-      description: '가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 때만, 무엇을 고칠지 한 줄 (예: 결제대행 이름만 있음 — 세부내역·카테고리). 가게가 분명하면 빈 문자열',
+      description: '무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 때만, 무엇을 고칠지 한 줄 (예: 결제대행 이름만 있고 상품도 안 보임 — 세부내역·카테고리). 가게나 산 상품이 분명하면 빈 문자열',
     },
   },
   required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'payment_hint', 'payment_method',
@@ -62,7 +65,7 @@ const SCHEMA = {
   type: 'object',
   properties: {
     is_payment: { type: 'boolean', description: '영수증이나 결제(이용) 내역 사진이면 true' },
-    kind: { type: 'string', description: 'receipt(영수증) | list(카드·은행·페이 앱의 결제 내역 목록) | mixed' },
+    kind: { type: 'string', description: 'receipt(영수증·주문 한 건의 화면) | list(카드·은행·페이 앱의 결제 내역 목록) | mixed' },
     entries: { type: 'array', description: '결제 건 — 같은 결제는 한 번만', items: ENTRY },
     note: { type: 'string', description: '사용자에게 알릴 점(흐림, 잘린 화면, 합계 불확실 등). 없으면 빈 문자열' },
   },
@@ -105,17 +108,21 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr(), notes = [
     '- 목록은 날짜 머리글(예: "11. 8(일)") 아래에 그날 결제가 이어진다. 시각(20:26)·할부 표시는 날짜가 아니다.',
     '- 맨 위 결제들의 날짜 머리글이 스크롤로 잘려 안 보이면, 위쪽 달력에서 고른 날(동그라미 표시)의 날짜를 쓴다. 그것도 없으면 빈 문자열.',
     '- 가맹점이 "카카오페이 - 한살림서울협동조합"처럼 간편결제 이름과 함께 나오면 merchant는 실제 가게(한살림서울협동조합). "네이버페이"만 있으면 그대로.',
+    '- 간편결제·쇼핑 앱의 주문·결제 완료 화면(상품명·수량·결제 금액이 보임)은 영수증처럼 주문 한 건이 entries 한 건이고 상품을 items에 넣는다. 판매처(스토어 이름)가 보이면 merchant는 그 판매처, 없으면 간편결제 이름 그대로.',
+    '- 주문·결제 완료 화면에 결제 날짜가 없고 주문번호가 날짜로 시작하면(예: 20261116…) 그 날짜를 쓰고, note에 주문번호로 짐작했다고 적는다.',
     '- 취소·환불 건은 is_cancel=true, total은 취소 금액(양수).',
     '- total은 실제로 낸 최종 금액. 할부는 결제한 총액. 쉼표·통화 기호 없이 숫자만.',
     '- 해외결제는 원화 청구 금액이 보이면 그 금액을 KRW로, 현지 금액만 보이면 그 통화와 금액으로.',
-    '- 날짜가 안 보이면 빈 문자열. 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
+    '- 날짜가 안 보이면 빈 문자열(위의 주문번호 경우 말고 다른 숫자로 짐작하지 않는다). 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
     '- 목록 위에 카드 이름이 한 번만 보이면 그 카드를 모든 결제의 payment_hint로.',
     '- payment_method·category는 위 목록의 표기 그대로, 애매하면 "모름". 카드 이름이 결제수단 목록의 하나와 같은 카드로 보이면 그 결제수단.',
+    '- 간편결제로 낸 결제에 연결한 카드가 보이지 않으면 payment_hint는 보이는 간편결제 이름(없으면 빈 문자열), payment_method는 결제수단 목록에 그 간편결제 자체가 있으면 그것, 없으면 "모름" — 입력 습관으로 카드를 짐작하지 않는다.',
     CATEGORY_ALT_RULE,
     '- detail은 입력 습관에 같은 가게가 있으면 그 표기를 그대로, 없으면 짧은 상호명. 카테고리 이름을 되풀이할 뿐이면 빈 문자열.',
+    '- 가게가 간편결제 이름뿐이고 산 상품이 보이면 detail은 무엇인지 알 수 있는 짧은 상품 이름 (예: "코튼 순면 호텔 수건 40수 150g 10장 세트" → "수건", 상품이 여럿이면 "수건 외 2개"), category는 그 상품으로 고른다. 간편결제 이름으로 적힌 예전 기록은 다른 가게·다른 물건이라 따르지 않는다.',
     '- 결제마다 note에 확실하지 않은 점을 한 줄로 — 짐작한 값이 있으면 무엇을 왜 짐작했는지. 확실하면 빈 문자열. 사진 전체에 해당하는 점은 맨 위 note에만.',
-    '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low.',
-    '- 가게 이름만으로는 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 결제(간편결제·결제대행 이름뿐 등)만 needs_fix에 무엇을 고칠지 한 줄로. 쿠팡·편의점처럼 가게가 분명하면 빈 문자열.',
+    '- 날짜나 금액을 짐작했으면(잘림·가림·흐림) 그 결제의 confidence는 low. 주문번호로 날짜만 정했으면 medium(note에 적은 대로).',
+    '- 무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 결제(간편결제·결제대행 이름뿐이고 상품도 안 보임 등)만 needs_fix에 무엇을 고칠지 한 줄로. 쿠팡·편의점처럼 가게가 분명하거나 산 상품이 보이면 빈 문자열.',
     '- 영수증·결제 내역이 아니면 is_payment=false.',
   ];
   if (said.length) {
@@ -150,45 +157,38 @@ export async function analyzePhotos({ db, ai, parts, photos = 1, notes = [], sig
   return buildPhotoSuggestions(db, raw || {}, { today, promptText: cleanPhotoNotes(notes).join('\n') });
 }
 
-// 간편결제·결제대행 이름 — 이 이름만 있으면 무엇을 샀는지 알 수 없다 (예: 네이버페이)
-const GATEWAY_RE = new RegExp(`^(${[
-  '네이버페이', '네이버파이낸셜', 'naverpay', 'naverfinancial', 'npay', 'n페이',
-  '카카오페이', 'kakaopay', '토스페이', '토스페이먼츠', 'tosspay', 'tosspayments', '토스', 'toss', '비바리퍼블리카',
-  '페이코', 'nhn페이코', 'payco', '스마일페이', 'smilepay', 'ssg페이', 'ssgpay', '쿠팡페이', 'coupangpay',
-  '엘페이', 'lpay', '11페이', '11pay', '삼성페이', 'samsungpay', '애플페이', 'applepay', '구글페이', 'googlepay',
-  '페이팔', 'paypal', 'kg이니시스', '케이지이니시스', '이니시스', 'inicis', 'kcp', 'nhnkcp', '한국사이버결제',
-  '나이스페이', '나이스페이먼츠', 'nicepay', 'nicepayments', '나이스정보통신', '다날', 'danal',
-  'kg모빌리언스', '모빌리언스', '페이레터', '헥토파이낸셜',
-].join('|')})$`);
-
-/** 가게 이름이 간편결제·결제대행 이름뿐인지 — '(주)카카오페이', '네이버페이 결제'처럼 회사 표시·'결제'가 붙어도 */
-export function isPaymentGateway(merchant) {
-  const n = normalizeName(merchant);
-  const core = n.replace(/(간편결제|결제)$/, '').replace(/^(주식회사|주)/, '').replace(/(주식회사|주)$/, '');
-  return GATEWAY_RE.test(n) || GATEWAY_RE.test(core);
-}
+// 간편결제·결제대행 이름인지 — receiptAssistant에 있다 (분류도 같은 목록으로 거른다, B-099)
+export { isPaymentGateway };
 
 // AI가 '없음'처럼 빈 값 대신 쓴 말
 const NO_FIX_RE = /^(없음|해당\s*없음|없습니다|none|n\/a|-|—)?$/i;
 const FIX_ANY = ['date', 'detail', 'amount', 'budget_category', 'sub_category'];
+const GATEWAY_FIELDS = ['detail', 'budget_category', 'sub_category'];
 
 /**
  * 직접 고쳐야 할 점 — [{ text, fields }]. fields 중 하나를 고치면 그 점은 풀린다.
- *  - 간편결제·결제대행 이름뿐(규칙) → 세부내역·카테고리
+ *  - 간편결제·결제대행 이름뿐인 결제(classify의 gatewayBought, B-099) → 세부내역·카테고리
+ *      · unknown: 산 것이 보이지 않음 — 고쳐 주세요
+ *      · check: 상품은 보이는데 세부내역이 그 상품과 맞지 않음(비었거나 예전 기록을 따라 적음) — 확인해 주세요
+ *      · known: 주문 화면의 상품으로 적었다 — 고칠 것이 아니다
  *  - AI가 알려 준 것 — AI도 예전에 같은 가게를 넣은 습관대로 분류했으면 따르지 않는다(늘 넣던 대로면 고칠 것이 없다).
  *    AI가 분류를 못 해 예전 기록으로 채운 것(categoryGuess)은 알린다 (I-062)
+ *  - 간편결제로 냈는데 연결한 카드가 사진에 없음(unseenCard) → 결제수단만 (B-099)
  *  - 날짜를 읽지 못해 오늘로 둠·앞날짜 → 날짜
  */
 function fixesFor(e, s, today) {
   const fixes = [];
   const aiFix = String(e.needs_fix || '').trim();
-  if (isPaymentGateway(e.merchant)) {
-    fixes.push({
-      text: `${String(e.merchant).trim()} 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요`,
-      fields: ['detail', 'budget_category', 'sub_category'],
-    });
+  const pay = String(e.merchant || '').trim();
+  if (s.gatewayBought === 'unknown') {
+    fixes.push({ text: `${pay} 결제라 무엇을 샀는지 알 수 없어요 — 세부내역·카테고리를 고쳐 주세요`, fields: GATEWAY_FIELDS });
+  } else if (s.gatewayBought === 'check') {
+    fixes.push({ text: `${pay} 결제예요 — 세부내역·카테고리가 산 상품에 맞는지 확인해 주세요`, fields: GATEWAY_FIELDS });
   } else if (!NO_FIX_RE.test(aiFix) && (s.sources.category !== 'history' || s.categoryGuess)) {
     fixes.push({ text: aiFix, fields: FIX_ANY });
+  }
+  if (s.unseenCard) {
+    fixes.push({ text: `${s.unseenCard}에 연결한 카드가 사진에 없어요 — 결제수단을 골라 주세요`, fields: ['payment_method'] });
   }
   if (s.sources.date === 'today') {
     fixes.push({ text: '날짜를 읽지 못해 오늘 날짜로 두었어요 — 날짜를 골라 주세요', fields: ['date'] });
