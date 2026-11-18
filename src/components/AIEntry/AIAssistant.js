@@ -20,10 +20,12 @@ const TIPS = [
  * 새 거래는 말로 입력·카드 문자·영수증으로, 고치기·지우기·정기지출·설정·조회는 AI 명령으로 알아서 처리한다.
  * '이대로 채우기'(한 건)는 입력 창을 열어 채운다(App의 onApply).
  * 입력하던 글이 있을 수 있어 바깥을 누르거나 Esc로는 닫지 않는다(입력 창과 같다).
+ * 열자마자 입력 상자에 키보드가 뜨므로 창을 키보드 위 보이는 곳에 맞춘다(fitKeyboard, B-100) — 짧은 창이라
+ * 맞추지 않으면 브라우저가 가려진 상자를 보이려고 화면 전체를 끌어올려 창 머리와 상자가 화면 위로 밀린 채 남는다.
  */
 export default function AIAssistant({ db, onApply, onBulkAdd, onQuickAdd, onCommand, onClose }) {
   return (
-    <ModalOverlay className="modal-overlay" panelClassName="modal-content ai-assistant">
+    <ModalOverlay className="modal-overlay" panelClassName="modal-content ai-assistant" fitKeyboard>
       <div className="modal-header">
         <h2>✨ AI</h2>
         <button type="button" className="modal-close" onClick={onClose}>✕</button>

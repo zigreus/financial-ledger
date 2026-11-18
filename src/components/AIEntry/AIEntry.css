@@ -520,7 +520,8 @@
 .cmd-step-lines { margin: 4px 0 0; padding-left: 18px; font-size: calc(12px * var(--fs)); color: var(--text-muted); line-height: 1.5; }
 
 /* AI 창 (I-051) */
-.ai-assistant-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+/* 스크롤은 창(.modal-content)이 한다 — 여기에 overflow를 두면 금액 칸(AmountInput)이 키보드 위로 올릴 때 스크롤하지 않는 이 칸을 잡는다(B-100) */
+.ai-assistant-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
 .ai-assistant-tips { font-size: calc(12px * var(--fs)); color: var(--text-muted); line-height: 1.6; }
 .ai-assistant-tips-title { font-weight: 600; color: var(--text); margin-bottom: 2px; }
 .ai-assistant-tips ul { margin: 0 0 6px; padding-left: 18px; }

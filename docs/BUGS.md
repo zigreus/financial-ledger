@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-100, I-065
+다음 번호: B-101, I-065
 
 ## 요약표
 
@@ -115,6 +115,7 @@
 | B-097 | ✅ | 중간 | AI 입력 | '오메가3 구매'가 예전 세부내역 '메가'(커피)로 바뀌고 카테고리도 간식/카페로 추천됨 |
 | B-098 | ✅ | 중간 | AI 입력 | AI 입력 상자에 설명을 쓰고 📷 사진을 고르면 그 글이 조용히 버려짐(공유받은 사진의 글도 AI에 가지 않음) |
 | B-099 | ✅ | 중간 | AI 입력 | 네이버페이 주문 화면 사진이 다른 가게('네이버페이 taptap')의 세부내역·카테고리로 채워지고, 상품이 보여도 '무엇을 샀는지 알 수 없어요'라고 함 |
+| B-100 | ✅ | 중간 | 화면 | 휴대폰에서 ✨ AI 창을 열면 창이 화면 위로 크게 밀려 올라가 입력 칸이 잘 안 보일 때가 있음 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -1073,6 +1074,15 @@
 - 원인: 간편결제 이름('네이버페이')을 가게 이름으로 보고 그 이름으로 시작하는 다른 가게의 기록을 같은 가게로 맞췄고, 사진의 세부내역은 늘 가게 이름이라 보고 예전 표기로 바꿨으며, '무엇을 샀는지 모름'은 상품과 상관없이 붙였고, 화면에 없는 날짜를 짐작한 낮은 확신을 '흐림'으로 불렀다.
 - 해결: 간편결제 이름(표기가 달라도 같은 곳으로 묶음)으로는 예전 기록을 찾거나 AI에게 보내지 않고(그 이름뿐인 카드 문자·상품 없는 줄은 그 간편결제로 적은 기록만, '네이버페이 무신사'는 무신사로), 주문 화면의 세부내역(설명이 있으면 품목 안의 낱말인 세부내역도)은 원문으로 둔다. 지시문은 주문 화면을 영수증처럼 읽어 짧은 상품 이름·상품의 분류를 주고(주문번호로 날짜 짐작은 그 화면에서만, 그것만이면 '확실하지 않음'이 아님), '무엇을 샀는지 모름'은 상품이 안 보일 때만, 상품은 보이는데 세부내역이 비었거나 간편결제 이름뿐(예전 기록을 따라 적음)이면 확인을 받는다. 간편결제로 냈는데 카드가 안 보이면 결제수단을 짐작하지 않고 비워 묻고(unseenCard — 입력 창에 채울 때도 앞의 카드·자동 결제수단으로 채우지 않음), '흐림'은 '확실하지 않음'으로.
 - 파일: src/services/receiptAssistant.js(isPaymentGateway·gatewayOf·classify items·gatewayBought·matchIn·relatedIn·buildSuggestion unseenCard·LOW_CONFIDENCE_WARNING), photoEntry.js(지시문·fixesFor), src/components/AIEntry/ReceiptPanel.js(CONFIDENCE_LABEL), src/components/TransactionForm/TransactionForm.js(applyReceipt), AGENTS.md, 테스트(classify·photoEntry·txform)
+
+### B-100 휴대폰에서 ✨ AI 창을 열면 창이 화면 위로 크게 밀려 올라가 입력 칸이 잘 안 보일 때가 있음
+- 상태: ✅ 해결 (2026-11-18)
+- 심각도: 중간
+- 영역: 화면
+- 문제: 휴대폰에서 ✨ AI 버튼으로 창을 열면 키보드가 뜨면서 창 전체가 위로 크게 밀려 머리가 화면 밖으로 나가고 입력 상자가 위 끝에 걸리거나 잘 안 보일 때가 있었다.
+- 원인: 휴대폰 브라우저는 키보드가 화면 아래를 덮어도 고정 위치 창을 줄이지 않고 가려진 칸을 보이려고 화면 전체를 끌어올리는데, AI 창은 아래에 붙은 짧은 창이라 상자가 키보드 자리에 있고 열자마자(올라오는 애니메이션 중에) 상자에 키보드를 띄워 더 많이 끌어올렸으며, 창 높이가 vh라 키보드로 줄어든 화면에서는 창이 위로 넘쳤다.
+- 해결: ModalOverlay에 fitKeyboard를 두어 키보드가 열리면 바깥 판의 안쪽 여백으로 보이는 곳(visualViewport의 위치·높이를 판 자신의 사각형에 견줌, 확대는 제외) 바깥을 비워 창을 보이는 곳에 두고(뒤 화면은 늘 어둡게 덮음) 창 높이를 그 안에 견주며, 창이 작아져 입력 칸이 밀리면 창 안에서만 스크롤한다 — AI 창에 쓴다. 금액 칸(AmountInput)은 보이는 곳 아래 끝·키보드에 가린 높이를 끌어올린 만큼(offsetTop) 바로 계산하고, 스크롤 안 하는 칸을 잡지 않게 .ai-assistant-body의 overflow를 뺐다.
+- 파일: src/components/common/ModalOverlay.js(fitKeyboard·revealInPanel), AmountInput.js(scrollIntoVisibleArea·여백), src/components/TransactionForm/TransactionForm.css(.modal-fit-keyboard), src/components/AIEntry/AIAssistant.js, AIEntry.css, 테스트(ModalOverlay·AmountInput.keyboard)
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)

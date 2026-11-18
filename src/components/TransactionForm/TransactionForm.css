@@ -31,6 +31,17 @@
   }
 }
 
+/* 키보드 위 보이는 곳에 맞추는 창(ModalOverlay의 fitKeyboard, B-100) — 창 높이를 바깥 판의 보이는 곳(안쪽 여백을 뺀 높이)에 견준다.
+   vh는 키보드와 상관없이 화면 전체 높이라, 보이는 곳이 줄어도 창이 그대로 커서 위로 넘친다(아래에 붙은 창이라 머리·입력 칸이 화면 밖으로).
+   창 안 스크롤이 끝까지 가도 뒤 화면(보이는 곳)이 함께 밀리지 않게 한다. */
+.modal-fit-keyboard > .modal-content {
+  max-height: min(92vh, calc(100% - 12px));
+  overscroll-behavior: contain;
+}
+@media (min-width: 480px) {
+  .modal-fit-keyboard > .modal-content { max-height: min(85vh, calc(100% - 24px)); }
+}
+
 @keyframes slideUp {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }

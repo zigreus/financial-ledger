@@ -56,6 +56,9 @@ function releasePadding(el) {
   }
 }
 
+// 키보드가 열렸는지 — 보이는 곳이 레이아웃 뷰포트보다 작다(브라우저가 화면을 끌어올렸어도)
+const keyboardOpen = (vv) => window.innerHeight - vv.height > 1;
+
 // 키보드가 올라왔을 때 입력란을 끌어올릴 스크롤 컨테이너
 function findScrollParent(el) {
   let node = el ? el.parentElement : null;
@@ -109,9 +112,10 @@ export default function AmountInput({
     if (!vv || !container) return;
     const scrollable = findScrollParent(container);
     if (!scrollable) return;
-    // rect는 visual viewport 기준 — 툴바와 여백을 뺀 높이가 실제로 보이는 영역
+    // rect는 레이아웃 뷰포트 기준이다 — 브라우저가 화면을 끌어올렸으면(vv.offsetTop) 보이는 곳의 아래 끝도 그만큼 아래.
+    // 툴바와 여백을 뺀 곳까지가 실제로 보이는 영역 (B-100: 끌어올린 만큼 더 스크롤해 칸이 창 머리 밑에 숨었다)
     const rect = container.getBoundingClientRect();
-    const visibleBottom = vv.height - (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) - 8;
+    const visibleBottom = vv.offsetTop + vv.height - (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) - 8;
     if (rect.bottom > visibleBottom) {
       scrollable.scrollTop += rect.bottom - visibleBottom;
     }
@@ -129,7 +133,10 @@ export default function AmountInput({
       const kb = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
       setToolbarBottom(kb);
       if (scrollable) {
-        scrollable.style.paddingBottom = kb > 0 ? `${kb + (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) + 16}px` : originalPadding;
+        // 스크롤 칸 중 키보드에 가린 높이만큼 — 창을 키보드 위에 맞춘 창(ModalOverlay fitKeyboard)이면 가린 곳이 없어 툴바만큼.
+        // 브라우저가 키보드 높이만큼 다 끌어올렸으면 kb가 0이어도 키보드는 열려 있다(툴바 자리는 둔다)
+        const hidden = Math.max(0, scrollable.getBoundingClientRect().bottom - (vv.offsetTop + vv.height));
+        scrollable.style.paddingBottom = keyboardOpen(vv) ? `${hidden + (toolbarRef.current?.offsetHeight || TOOLBAR_HEIGHT) + 16}px` : originalPadding;
       }
       requestAnimationFrame(scrollIntoVisibleArea);
     };
@@ -148,7 +155,7 @@ export default function AmountInput({
   useEffect(() => {
     if (!focused || !isTouchDevice) return;
     const vv = window.visualViewport;
-    if (!vv || window.innerHeight - vv.offsetTop - vv.height <= 0) return;
+    if (!vv || !keyboardOpen(vv)) return;
     requestAnimationFrame(scrollIntoVisibleArea);
   }, [text, focused]);
 
