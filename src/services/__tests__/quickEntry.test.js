@@ -40,6 +40,13 @@ const familiarSuggestion = (over = {}) => ({
 });
 
 describe('바로 넣어도 되는지 (familiarity)', () => {
+  test('사진: 가계부에 금액·날짜를 다르게 적었거나 나눠 적은 같은 결제가 있으면 바로 넣지 않는다 (I-065)', () => {
+    const db = makeDb();
+    const near = kind => familiarSuggestion({ nearOf: { kind, txs: [{ id: 1 }], blocked: '', cautions: [] } });
+    expect(familiarity(db, near('amount'), 'sms')).toEqual({ familiar: false, reason: '가계부에 금액·날짜가 다르게 적힌 같은 결제가 있어요' });
+    expect(familiarity(db, near('split'), 'sms')).toEqual({ familiar: false, reason: '이미 넣은 거래 같아요' });
+  });
+
   test('같은 가게를 같은 분류로 2번 넣었고 결제수단·금액·날짜가 분명하면 바로 넣는다', () => {
     const db = makeDb();
     expect(familiarity(db, familiarSuggestion(), 'sms')).toEqual({ familiar: true, reason: '' });

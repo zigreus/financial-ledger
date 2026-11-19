@@ -31,7 +31,8 @@ const QUICK_EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금 / 방금 �
  *
  * 사진 선택창은 여기서 연다. 모바일 브라우저는 사용자가 누른 그 순간에만 선택창을 열어 주고,
  * 입력 요소가 다시 만들어지면 고른 사진이 사라지므로 항상 같은 자리에 둔다.
- * 폼을 채우기만 하거나(onApply), 확인한 여러 건을 한 번에 반영한다(onBulkAdd(rows, { deleteIds })).
+ * 폼을 채우기만 하거나(onApply), 확인한 여러 건을 한 번에 반영한다(onBulkAdd(rows, { deleteIds, updates }) —
+ * updates는 사진 목록의 '수정 권장'으로 금액·날짜를 고칠 거래, I-065).
  * 거래 추가가 아닌 말(지워·고쳐·정기지출·예산·설정·얼마 썼어 등)은 AI 명령으로 읽는다(I-051, CommandPanel → onCommand).
  * onExit가 있으면(AI 창) 사용자가 닫을 때 창도 닫는다.
  * resetKey가 바뀌면(연속 입력으로 다음 거래로 넘어가면) 처음 상태로 돌아간다.
@@ -499,7 +500,7 @@ export default function AIEntry({ db, start = null, onApply, onBulkAdd, onQuickA
         notesRef={panelNotesRef}
         onApply={s => apply(s, '사진 내용을 채웠습니다')}
         onAutoAdd={autoAdd}
-        onBulkAdd={rows => onBulkAdd(rows)}
+        onBulkAdd={(rows, opts) => (opts ? onBulkAdd(rows, opts) : onBulkAdd(rows))}
         onRepick={() => openPicker(panelNotesRef.current)}
         onClose={closePanel}
         onSetup={() => needSetup('receipt-panel')}

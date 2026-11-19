@@ -7,6 +7,8 @@
  *  - 여러 건이면 확인 목록에서 고른다. 미리 체크하지 않는 것:
  *      · 가계부에 같은 날 같은 금액 거래가 이미 있음(내역을 계속 받아 겹치는 경우) — duplicateOf
  *      · 같은 사진 묶음에 같은 결제가 앞에 또 있음(겹쳐 찍음) — batchDuplicate
+ *      · 가계부에 같은 가게 결제를 금액·날짜를 조금 다르게 적었거나 나눠·합쳐 적음 — nearOf. 금액·날짜가 다르면
+ *        '수정 권장'으로 그 기록을 사진대로 고치게 한다 (I-065)
  *    그 밖의 결제는 기본으로 체크하고, 직접 고쳐야 할 점(간편결제 이름뿐·날짜를 못 읽음·앞날짜·AI가 알려 준 것)은
  *    needsFix([{ text, fields }])로 붙여 화면이 '수정 필요'로 드러낸다 — fields 중 하나를 고치면 풀린다.
  *      · 같은 묶음에 취소 줄이 있는 결제 — pairedCancel
@@ -17,10 +19,13 @@ import { analyzeWithAI, AIError } from './aiClient';
 import {
   buildDataContext, buildSuggestion, isPaymentGateway, normalizeName, resolveDate, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE,
 } from './receiptAssistant';
-import { getTransactions } from './dbManager';
+import { getTransactions, hasForeignAmount } from './dbManager';
 import { namesMatch } from './cardSms';
 import { cleanFollowUps } from './textEntry';
-import { todayStr } from './dateUtils';
+import { todayStr, addDays, parseDateStr } from './dateUtils';
+import {
+  merchantInfo, merchantLevel, findCombination, GENERIC_HEADS, SAME,
+} from './paymentMatch';
 
 const ENTRY = {
   type: 'object',
@@ -30,6 +35,7 @@ const ENTRY = {
     total: { type: 'number', description: '이 결제의 최종 금액(할인 후, 부가세 포함). 사용자 설명이 다른 금액(내 몫 등)을 말하면 그 금액. 숫자만, 취소도 양수' },
     currency: { type: 'string', description: 'ISO 4217 통화 코드. 한국 원화는 KRW' },
     is_cancel: { type: 'boolean', description: '취소·환불 건이면 true' },
+    installment: { type: 'string', description: '할부 표시가 보이면 그대로 (예: 3개월). 일시불이거나 안 보이면 빈 문자열' },
     payment_hint: { type: 'string', description: '이 결제에 보이는 카드·결제 수단 그대로 (예: 현대카드 EV, 신한카드 1234, 현금, 카카오페이 신한카드 — 간편결제와 카드가 함께 보이면 둘 다). 없으면 빈 문자열' },
     payment_method: { type: 'string', description: '결제수단 목록 중 하나, 판단이 어려우면 "모름"' },
     category: { type: 'string', description: '"카테고리 > 세부카테고리" 목록 중 하나, 판단이 어려우면 "모름"' },
@@ -57,7 +63,7 @@ const ENTRY = {
       description: '무엇을 샀는지 알 수 없어 사용자가 고쳐야 할 때만, 무엇을 고칠지 한 줄 (예: 결제대행 이름만 있고 상품도 안 보임 — 세부내역·카테고리). 가게나 산 상품이 분명하면 빈 문자열',
     },
   },
-  required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'payment_hint', 'payment_method',
+  required: ['date', 'merchant', 'total', 'currency', 'is_cancel', 'installment', 'payment_hint', 'payment_method',
     'category', 'category_alt', 'detail', 'items', 'confidence', 'note', 'needs_fix'],
 };
 
@@ -111,7 +117,7 @@ export function buildPhotoPrompt(db, { photos = 1, today = todayStr(), notes = [
     '- 간편결제·쇼핑 앱의 주문·결제 완료 화면(상품명·수량·결제 금액이 보임)은 영수증처럼 주문 한 건이 entries 한 건이고 상품을 items에 넣는다. 판매처(스토어 이름)가 보이면 merchant는 그 판매처, 없으면 간편결제 이름 그대로.',
     '- 주문·결제 완료 화면에 결제 날짜가 없고 주문번호가 날짜로 시작하면(예: 20261116…) 그 날짜를 쓰고, note에 주문번호로 짐작했다고 적는다.',
     '- 취소·환불 건은 is_cancel=true, total은 취소 금액(양수).',
-    '- total은 실제로 낸 최종 금액. 할부는 결제한 총액. 쉼표·통화 기호 없이 숫자만.',
+    '- total은 실제로 낸 최종 금액. 할부는 결제한 총액(installment에 할부 표시). 쉼표·통화 기호 없이 숫자만.',
     '- 해외결제는 원화 청구 금액이 보이면 그 금액을 KRW로, 현지 금액만 보이면 그 통화와 금액으로.',
     '- 날짜가 안 보이면 빈 문자열(위의 주문번호 경우 말고 다른 숫자로 짐작하지 않는다). 연도가 없으면 오늘 기준 가장 가까운 과거 날짜.',
     '- 목록 위에 카드 이름이 한 번만 보이면 그 카드를 모든 결제의 payment_hint로.',
@@ -237,6 +243,8 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr(), promptText 
   const suggestions = approvals.map(e => {
     const entryNote = String(e.note || '').trim();
     const s = buildSuggestion(db, { ...e, note: '' }, { today, promptText });
+    // 할부 결제 — 가계부에 달마다 나눠 적었을 수 있어 금액이 달라도 고치기를 미리 고르지 않는다 (I-065)
+    s.installment = String(e.installment || '').trim();
     const fixes = fixesFor(e, s, today);
     if (single) {
       // 한 건이면 고칠 점·알릴 점(사진 전체·이 결제)을 그 건의 경고로 — 같은 말은 한 번만
@@ -267,12 +275,14 @@ export function buildPhotoSuggestions(db, raw, { today = todayStr(), promptText 
  *    결제수단이나 가게 이름이 같은 것. 한 거래는 한 줄하고만 짝짓는다(같은 날 같은 금액 결제가 둘인데 하나만 넣었으면 하나는 새 것).
  *    짝은 목록 전체에서 결제수단·이름이 다 맞는 것부터, 다음은 결제수단만, 마지막에 이름만 맞는 것으로 짓는다
  *    (앞 줄이 결제수단만 맞는 거래를 먼저 가져가 정작 같은 결제가 '새 것'으로 남지 않게).
+ *    금액은 할인 전 금액이나 할인 뒤 금액(영수증은 할인 뒤) 중 하나가 같으면 같은 금액이다.
  *  - claimed: 이 화면에서 바로 넣은 추천 — 그 거래는 먼저 제 짝으로 가져가 목록의 다른 줄과 짝짓지 않는다
  *  - batchDuplicate: 같은 목록 앞에 같은 결제가 있음(겹쳐 찍음) — 가게 이름이 같거나, 맞춘 세부내역·결제수단이 같으면 같은 결제
+ *  - nearOf: 똑같지는 않지만 가계부에 이미 적은 같은 결제 — markNear 참고 (I-065)
  */
 export function markDuplicates(db, suggestions, { claimed = [] } = {}) {
   const usable = s => s.amount !== null && s.amount !== undefined && Number(s.amount) > 0 && !!s.date;
-  const out = suggestions.map(orig => ({ ...orig, batchDuplicate: false, duplicateOf: null }));
+  const out = suggestions.map(orig => ({ ...orig, batchDuplicate: false, duplicateOf: null, nearOf: null }));
 
   const seen = new Set();
   out.forEach(s => {
@@ -306,7 +316,7 @@ export function markDuplicates(db, suggestions, { claimed = [] } = {}) {
   rules.forEach(rule => {
     [...claimants, ...rows].forEach(r => {
       if (r.done) return;
-      const hit = dayTxs(r.s.date).find(tx => !used.has(tx.id) && Number(tx.amount) === r.s.amount && rule(r.s, tx));
+      const hit = dayTxs(r.s.date).find(tx => !used.has(tx.id) && paidAs(r.s.amount, tx) && rule(r.s, tx));
       if (!hit) return;
       used.add(hit.id);
       r.done = true;
@@ -318,5 +328,199 @@ export function markDuplicates(db, suggestions, { claimed = [] } = {}) {
       }
     });
   });
+  markNear(db, out.filter(usable), used);
   return out;
+}
+
+// ── 수정 권장 (I-065) ─────────────────────────────────────────────
+
+/** 금액이 같은데 날짜만 다른 기록을 찾는 범위 — 카드 대조의 짝짓기(±3일)와 같게 */
+export const NEAR_DATE_DAYS = 3;
+/** 금액이 다른 기록·나눠(합쳐) 적은 기록을 찾는 범위 — 카드 대조의 금액 차이(±1일)와 같게 */
+export const NEAR_AMOUNT_DAYS = 1;
+/** 같은 곳·같은 금액 결제가 이 날짜 안에 또 있으면 늘 하는 결제(버스·커피)라 어느 기록인지 장담하지 않는다 */
+const REPEAT_DAYS = 7;
+/** 잘못 적은 금액으로 볼 차이 — 카드 대조의 오타 범위와 같게(1,000원과 20% 중 큰 것). 넘으면 다른 결제·내 몫일 수 있다 */
+const typoGap = (amount, other) => Math.abs(amount - other) <= Math.max(1000, Math.abs(amount) * 0.2);
+
+/**
+ * 고치기를 미리 고르지 않는 이유(nearOf.cautions) — 화면이 이 글로 알린다.
+ * 고칠 수 없는 이유(nearOf.blocked)가 있으면 고치기를 보이지 않고 거래내역에서 고치게 한다.
+ */
+export const NEAR_CAUTION = {
+  many: '근처에 같은 곳 결제가 더 있어 어느 기록인지 확실하지 않아요',
+  edge: '사진의 첫날·끝날이거나 사진 밖 날짜의 기록이에요 — 사진에서 잘린 다른 결제일 수 있어요',
+  far: '금액 차이가 커요 — 다른 결제이거나 내 몫만 적은 것일 수 있어요',
+  repeat: '같은 곳에서 같은 금액을 자주 결제했어요 — 다른 날의 결제일 수 있어요',
+  rest: '근처에 차액만큼의 기록이 있어요 — 한 결제를 나눠 적었다면 고치면 이중으로 계산돼요',
+  installment: '할부 결제예요 — 달마다 나눠 적고 있다면 고치지 마세요',
+};
+export const NEAR_BLOCKED = {
+  split: '나눠 결제한 거래의 한 몫이에요 — 거래내역에서 묶음 전체를 고쳐 주세요',
+  discount: '할인이 사진 금액보다 커요 — 거래내역에서 고쳐 주세요',
+};
+
+const gross = tx => Number(tx.amount) || 0;
+const net = tx => gross(tx) - (Number(tx.discount_amount) || 0);
+/** 사진 금액이 이 기록의 금액인지 — 할인 전이나 할인 뒤 (영수증은 할인 뒤, 카드 이용내역은 대개 할인 전) */
+const paidAs = (amount, tx) => amount === gross(tx) || (net(tx) !== gross(tx) && amount === net(tx));
+const dayGap = (a, b) => Math.round(Math.abs(parseDateStr(a) - parseDateStr(b)) / 86400000);
+const brief = tx => ({
+  id: tx.id, date: tx.date, detail: tx.detail || tx.sub_category || '', payment_method: tx.payment_method,
+  amount: gross(tx), discount: Number(tx.discount_amount) || 0, split: !!tx.split_group_id,
+});
+
+/**
+ * 똑같지는 않지만 가계부에 이미 적은 같은 결제를 찾는다 (사진 목록의 '수정 권장', I-065).
+ * 같은 결제로 보는 것은 가게 이름이 같은 곳(카드 대조와 같은 규칙, 간편결제 이름·일반어는 빼고)이고
+ * 결제수단이 같은(사진 줄에 결제수단이 없으면 아무것이나) 기록뿐이다. 확실한 것부터 짝짓는다:
+ *   ① date   : 금액이 같고 날짜만 1~3일 다름 → 날짜를 사진대로 고치기 권장
+ *   ② split  : ±1일의 기록 2~4건의 합이 사진 금액 — 나눠 적음, 이미 있는 거래로 본다
+ *   ③ merged : ±1일의 사진 줄 2~4건의 합이 기록 한 건 — 합쳐 적음, 이미 있는 거래로 본다
+ *   ④ amount : ±1일, 금액이 다름 → 금액(날짜가 다르면 날짜도)을 사진대로 고치기 권장
+ * nearOf: { kind, txs: [기록], rows(merged — 합친 줄 수), blocked, cautions }
+ *   blocked: 여기서 고칠 수 없음(NEAR_BLOCKED) — 나눠 결제한 한 몫 등. 고치기를 보이지 않는다
+ *   cautions: 고치기를 미리 고르지 않는 이유(NEAR_CAUTION) — 고를지는 사람이 정한다
+ * 외화 결제·외화 기록은 원화 환산이 달라 짝짓지 않는다. used: 이미 짝지은 기록(넘겨받아 더 채운다)
+ */
+function markNear(db, rows, used) {
+  // 날짜를 읽지 못해 오늘로 둔 줄·앞날짜는 날짜를 믿을 수 없다 — 그 날짜로 기록을 고치지 않게 짝짓지 않는다
+  const today = todayStr();
+  const open = rows.filter(s => !s.duplicateOf && !s.batchDuplicate && !s.pairedCancel
+    && (s.foreignAmount === null || s.foreignAmount === undefined)
+    && s.sources?.date !== 'today' && s.date <= today);
+  if (!open.length) return;
+  // 사진이 보여 주는 날짜 — 믿을 수 있는 날짜만으로 (오늘로 둔 줄이 범위를 넓히지 않게).
+  // 사진은 카드 내역의 일부라 첫날·끝날은 그날 결제가 잘렸을 수 있다 — 그 날짜의 기록도 '사진 가장자리'로 본다
+  const dates = rows.filter(s => s.sources?.date !== 'today' && s.date <= today).map(s => s.date).sort();
+  const inside = d => d > dates[0] && d < dates[dates.length - 1];
+
+  // 가까운 날의 기록 — 늘 하는 결제인지(REPEAT_DAYS)까지 보게 넓게 읽는다. 현금 잔액 맞춤은 결제가 아니다.
+  // 줄을 고칠 때마다 다시 따지므로 날짜가 두 달 안에 모여 있으면 한 번에 읽는다
+  const ledger = new Map();
+  const keep = (tx) => { if (!tx.is_cash_adjustment) ledger.set(tx.id, tx); };
+  const openDates = [...new Set(open.map(s => s.date))].sort();
+  const first = openDates[0];
+  const last = openDates[openDates.length - 1];
+  if (dayGap(first, last) <= 62) {
+    getTransactions(db, { dateFrom: addDays(first, -REPEAT_DAYS), dateTo: addDays(last, REPEAT_DAYS) }).forEach(keep);
+  } else {
+    openDates.forEach((date) => {
+      getTransactions(db, { dateFrom: addDays(date, -REPEAT_DAYS), dateTo: addDays(date, REPEAT_DAYS) }).forEach(keep);
+    });
+  }
+  const taken = used;
+  const free = [...ledger.values()].filter(tx => !taken.has(tx.id) && !hasForeignAmount(tx.foreign_amounts));
+  const isFree = tx => !taken.has(tx.id);
+
+  // 가게로 볼 수 있는 이름만 — 간편결제 이름뿐이거나 일반어(점심·장보기)면 어느 가게인지 모른다 (B-099)
+  const infos = new Map();
+  const placeName = (name) => {
+    const text = String(name || '').trim();
+    if (!infos.has(text)) {
+      const n = text && !isPaymentGateway(text) ? merchantInfo(text) : null;
+      infos.set(text, n && n.raw.length >= 2 && !GENERIC_HEADS.has(n.raw) && !GENERIC_HEADS.has(n.head) ? n : null);
+    }
+    return infos.get(text);
+  };
+  const namesOf = s => [placeName(s.merchant), placeName(s.detail)].filter(Boolean);
+  const sameName = (s, tx) => {
+    const t = placeName(tx.detail);
+    return !!t && namesOf(s).some(n => merchantLevel(n, t) === SAME);
+  };
+  const sameRowName = (a, b) => namesOf(a).some(n => namesOf(b).some(m => merchantLevel(n, m) === SAME));
+  const methodOk = (s, tx) => !s.payment_method || tx.payment_method === s.payment_method;
+  const fits = (s, tx, days) => dayGap(s.date, tx.date) <= days && methodOk(s, tx) && sameName(s, tx);
+  /**
+   * 고칠 수 없는 이유 — 나눠 결제한 한 몫은 그 몫만 고치면 묶음이 틀어진다,
+   * 금액을 할인보다 작게 고치면 순지출이 음수가 된다(날짜만 고칠 때는 금액을 바꾸지 않으니 상관없다)
+   */
+  const blockedOf = (s, tx, kind) => {
+    if (tx.split_group_id) return 'split';
+    if (kind === 'amount' && s.amount < (Number(tx.discount_amount) || 0)) return 'discount';
+    return '';
+  };
+
+  // ① 금액이 같고 날짜만 다름 — 가까운 날부터
+  const byDate = [];
+  open.forEach(s => free.forEach((tx) => {
+    const dd = dayGap(s.date, tx.date);
+    if (dd >= 1 && paidAs(s.amount, tx) && fits(s, tx, NEAR_DATE_DAYS)) byDate.push({ s, tx, dd });
+  }));
+  byDate.sort((a, b) => a.dd - b.dd);
+  byDate.forEach(({ s, tx }) => {
+    if (s.nearOf || !isFree(tx)) return;
+    taken.add(tx.id);
+    const cautions = [];
+    if (!inside(tx.date)) cautions.push('edge');
+    // 같은 곳·같은 금액이 가까운 날 또 있으면(가계부든 사진이든) 늘 하는 결제 — 어느 날 것인지 모른다
+    const again = [...ledger.values()].some(o => o.id !== tx.id && paidAs(s.amount, o) && fits(s, o, REPEAT_DAYS))
+      || rows.some(o => o !== s && o.amount === s.amount && dayGap(o.date, s.date) <= REPEAT_DAYS && sameRowName(o, s));
+    if (again) cautions.push('repeat');
+    s.nearOf = { kind: 'date', txs: [brief(tx)], blocked: blockedOf(s, tx, 'date'), cautions };
+  });
+
+  // ② 나눠 적음 — 사진 한 줄 = 기록 여러 건
+  open.forEach((s) => {
+    if (s.nearOf) return;
+    const pool = free.filter(tx => isFree(tx) && fits(s, tx, NEAR_AMOUNT_DAYS));
+    if (pool.length < 2) return;
+    const parts = findCombination(pool, gross, s.amount) || findCombination(pool, net, s.amount);
+    if (!parts) return;
+    parts.forEach(tx => taken.add(tx.id));
+    s.nearOf = { kind: 'split', txs: parts.map(brief), blocked: '', cautions: [] };
+  });
+
+  // ③ 합쳐 적음 — 사진 여러 줄 = 기록 한 건
+  free.forEach((tx) => {
+    if (!isFree(tx)) return;
+    const pool = open.filter(s => !s.nearOf && fits(s, tx, NEAR_AMOUNT_DAYS));
+    if (pool.length < 2) return;
+    const parts = findCombination(pool, s => s.amount, gross(tx))
+      || (net(tx) !== gross(tx) ? findCombination(pool, s => s.amount, net(tx)) : null);
+    if (!parts) return;
+    taken.add(tx.id);
+    parts.forEach((s) => { s.nearOf = { kind: 'merged', txs: [brief(tx)], rows: parts.length, blocked: '', cautions: [] }; });
+  });
+
+  // ④ 금액이 다름 — 가까운 날, 금액 차이가 작은 것부터
+  const cands = new Map(open.filter(s => !s.nearOf).map(s => [s, free.filter(tx => isFree(tx)
+    && !paidAs(s.amount, tx) && fits(s, tx, NEAR_AMOUNT_DAYS))]));
+  const byAmount = [];
+  cands.forEach((list, s) => list.forEach(tx => byAmount.push({
+    s, tx, dd: dayGap(s.date, tx.date), gap: Math.abs(s.amount - gross(tx)) / Math.max(s.amount, gross(tx)),
+  })));
+  byAmount.sort((a, b) => a.dd - b.dd || a.gap - b.gap);
+  byAmount.forEach(({ s, tx }) => {
+    if (s.nearOf || !isFree(tx)) return;
+    taken.add(tx.id);
+    const cautions = [];
+    // 이 줄의 후보가 여럿이거나, 이 기록을 후보로 둔 다른 줄이 있으면 어느 짝인지 모른다
+    if (cands.get(s).length > 1 || byAmount.some(p => p.tx === tx && p.s !== s)) cautions.push('many');
+    if (!inside(tx.date)) cautions.push('edge');
+    if (!typoGap(s.amount, gross(tx))) cautions.push('far');
+    // 차액만큼의 기록이 근처에 있으면 한 결제를 다른 이름으로 나눠 적은 나머지일 수 있다
+    const rest = s.amount - gross(tx);
+    if (rest > 0 && free.some(o => o.id !== tx.id && isFree(o) && gross(o) === rest
+      && dayGap(o.date, tx.date) <= NEAR_AMOUNT_DAYS && methodOk(s, o))) cautions.push('rest');
+    if (s.installment) cautions.push('installment');
+    s.nearOf = { kind: 'amount', txs: [brief(tx)], blocked: blockedOf(s, tx, 'amount'), cautions };
+  });
+}
+
+/** 가계부 기록을 사진대로 고칠 수 있는 줄인지 — 날짜·금액이 다른 같은 결제이고 막는 이유가 없음 */
+export const canFixNear = s => !!s?.nearOf && (s.nearOf.kind === 'date' || s.nearOf.kind === 'amount') && !s.nearOf.blocked;
+/** 고치기를 미리 골라 둘 만한지 — 고칠 수 있고 망설일 이유(cautions)가 없음 */
+export const suggestFixNear = s => canFixNear(s) && !s.nearOf.cautions.length;
+
+/**
+ * 고칠 내용 — { id, amount, date } (사진 줄의 지금 값으로, 가계부 기록의 다른 칸·할인은 그대로).
+ * 날짜만 다른 기록(date)은 날짜만 — 금액은 할인 뒤 금액으로 같았을 수 있어 그대로 둔다. 바뀌는 것이 없으면 null
+ */
+export function nearFix(s) {
+  if (!canFixNear(s)) return null;
+  const [tx] = s.nearOf.txs;
+  const amount = s.nearOf.kind === 'date' ? tx.amount : s.amount;
+  if (amount === tx.amount && tx.date === s.date) return null;
+  return { id: tx.id, amount, date: s.date };
 }

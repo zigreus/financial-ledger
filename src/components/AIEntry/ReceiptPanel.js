@@ -3,7 +3,9 @@ import { activeAI, PROVIDERS } from '../../services/aiClient';
 import {
   suggestionToTransaction, isSuggestionComplete, applyAlternative, normalizeName,
 } from '../../services/receiptAssistant';
-import { analyzePhotos, markDuplicates, cleanPhotoNotes } from '../../services/photoEntry';
+import {
+  analyzePhotos, markDuplicates, cleanPhotoNotes, suggestFixNear, nearFix, NEAR_CAUTION, NEAR_BLOCKED,
+} from '../../services/photoEntry';
 import { familiarity, splitFamiliar, isCategoryReason, QUICK_REASONS } from '../../services/quickEntry';
 import { preparePhotos } from '../../services/imageUtils';
 import { getMemberNames, getPaymentMethods } from '../../services/dbManager';
@@ -85,6 +87,12 @@ const addable = s => isSuggestionComplete(s) && isValidDateStr(s.date) && Number
  */
 const preChecked = s => addable(s) && !flagReason(s);
 
+const won = n => `${formatAmount(n)}원`;
+const txText = t => `${t.detail || '내용 없음'} ${won(t.amount)}`;
+
+/** 가계부에 금액·날짜를 다르게 적은 같은 결제가 있는 줄 — '수정 권장' (I-065) */
+const isNearRow = s => !!s.nearOf && (s.nearOf.kind === 'amount' || s.nearOf.kind === 'date');
+
 /** 겹친 결제의 이유 — 목록을 고칠 때마다 다시 따진다(markDuplicates) */
 function flagReason(s) {
   if (s.pairedCancel) return '같은 사진에 이 결제의 취소가 있어요 — 넣을 때만 고르세요';
@@ -93,22 +101,57 @@ function flagReason(s) {
     return `이미 넣은 거래가 있어요(${d.detail || '내용 없음'} ${formatAmount(d.amount)}원 · ${d.payment_method}) — 또 넣을 때만 고르세요`;
   }
   if (s.batchDuplicate) return '앞 줄과 같은 결제예요 — 따로 결제한 것일 때만 고르세요';
+  if (s.nearOf) {
+    const { kind, txs } = s.nearOf;
+    if (kind === 'split') return `나눠 적은 거래 ${txs.length}건이 이미 있어요(${txs.map(txText).join(' + ')}) — 또 넣을 때만 고르세요`;
+    if (kind === 'merged') return `가계부에 이 결제까지 합쳐 적은 거래가 있어요(${txText(txs[0])}) — 또 넣을 때만 고르세요`;
+    return `가계부에 ${kind === 'date' ? '날짜만' : '금액이'} 다르게 적힌 같은 결제가 있어요 — 따로 결제한 것일 때만 고르세요`;
+  }
   return '';
 }
 
-/** 어떤 겹침인지 — 같은 겹침에 대해 사용자가 정한 체크는 지킨다 */
-const flagKey = s => (s.pairedCancel ? 'cancel' : s.duplicateOf ? `tx${s.duplicateOf.id}` : s.batchDuplicate ? 'batch' : '');
+/** 어떤 겹침인지 — 같은 겹침에 대해 사용자가 정한 체크(넣기·고치기)는 지킨다 */
+const flagKey = s => (s.pairedCancel ? 'cancel' : s.duplicateOf ? `tx${s.duplicateOf.id}` : s.batchDuplicate ? 'batch'
+  : s.nearOf ? `near:${s.nearOf.kind}:${s.nearOf.txs.map(t => t.id).join(',')}` : '');
 
 /**
  * 목록 한 줄 — checked는 사용자의 뜻(넣을 수 없는 동안에는 빠진다), decided는 그 체크를 정할 때의 겹침,
+ * fix는 가계부 기록을 사진대로 고칠지('수정 권장', I-065 — 넣기와 함께 고르지 않는다),
  * ever는 넣을 수 있던 적이 있는지, original·originalReason은 되돌리기용 처음 읽은 값, rev는 되돌린 횟수
  */
-const listItem = (s, checked, reason = '') => ({
-  s, checked, reason, decided: flagKey(s), ever: addable(s), original: s, originalReason: reason, rev: 0,
+const listItem = (s, checked, reason = '', fix = false) => ({
+  s, checked, fix, fixDecided: flagKey(s), reason, decided: flagKey(s), ever: addable(s), original: s, originalReason: reason, rev: 0,
 });
+
+/**
+ * 줄에 보일 이유 — 겹침이 먼저. 다만 체크 없이 둔 이유(바로 넣은 결제와 같은 곳 등)가 있는 '수정 권장' 줄은 그 이유를 —
+ * 고칠 기록이 이 화면에서 바로 넣은 결제일 수 있다 (고치기 칸은 따로 보인다)
+ */
+const rowReason = it => ((isNearRow(it.s) && held(it)) ? it.reason : (flagReason(it.s) || it.reason));
 
 /** 실제로 넣을 줄 */
 const isSelected = it => it.checked && addable(it.s);
+/** 기록을 고칠 값이 갖춰졌는지 — 올바른 날짜와 0보다 큰 금액 (고치기는 분류·결제수단이 없어도 된다 — 기록의 것을 쓴다) */
+const fixReady = s => isValidDateStr(s.date) && Number(s.amount) > 0;
+/** 실제로 가계부 기록을 고칠 줄 — 고칠 값이 갖춰졌고 고칠 것이 있을 때만 */
+const isFixing = it => it.fix && fixReady(it.s) && !!nearFix(it.s);
+/** 고치기를 미리 골라 둘지 — 권할 만하고, 체크 없이 둔 이유(되돌린 거래·바로 넣은 결제와 같은 곳)가 없을 때 */
+const fixByDefault = (s, it) => suggestFixNear(s) && !held(it);
+
+/**
+ * 고치기 체크를 겹침에 맞춘다 — 넣기 체크와 따로(fixDecided), 고칠 값이 갖춰졌을 때만.
+ *  - 고칠 기록이 그대로면 사용자의 뜻대로
+ *  - 새로 고칠 기록이 생겼으면 권할 만할 때만 미리 고른다
+ *  - 고칠 기록이 다른 기록으로 바뀌었으면 고르지 않는다 — 사용자가 앞의 기록에 대해 정한 것이 엉뚱한 기록에 옮지 않게
+ * confirming: 넣기 직전 — 끄기만 한다
+ */
+function fixFor(it, s, confirming) {
+  if (!fixReady(s)) return { fix: it.fix, fixDecided: it.fixDecided };   // 입력 중 — 그대로
+  const key = flagKey(s);
+  if (key === it.fixDecided) return { fix: it.fix, fixDecided: key };
+  const wasNear = String(it.fixDecided || '').startsWith('near:');
+  return { fix: !confirming && !wasNear && fixByDefault(s, it), fixDecided: key };
+}
 
 /**
  * 목록을 고친 뒤(또는 넣기 직전에) 겹친 결제를 다시 따지고 체크를 맞춘다. 체크는 겹침이 달라질 때만 건드린다.
@@ -117,23 +160,57 @@ const isSelected = it => it.checked && addable(it.s);
  *  - 새로 겹치면(이미 있는 거래·앞 줄과 같아짐) 끈다
  *  - 겹침이 풀리면 고친 그 줄(edited)만 미리 체크할 만한지 다시 본다. 다른 줄은 저절로 켜지 않는다
  *    (한 줄을 고쳐 겹친 짝이 풀려도 그 짝이 켜져 같은 결제가 두 번 들어가지 않게)
+ *  - 고치기('수정 권장')도 같다 — 고칠 기록이 그대로면 사용자의 뜻대로, 새로 생기면 권할 만할 때만 미리 고르고, 없어지면 끈다
  * confirming: 넣기 직전 — 끄기만 한다. claimed: 이 화면에서 바로 넣은 추천 — 그 거래는 목록과 짝짓지 않는다
  */
 function refresh(db, list, { edited = -1, confirming = false, claimed = [] } = {}) {
   const marked = markDuplicates(db, list.map(it => it.s), { claimed });
   return list.map((it, i) => {
     const s = marked[i];
-    if (!addable(s)) return { ...it, s };
+    const fix = fixFor(it, s, confirming);
+    if (!addable(s)) return { ...it, s, ...fix };
     const key = flagKey(s);
     if (!it.ever) {
       const checked = !confirming && preChecked(s) && !held(it);
-      return { ...it, s, ever: true, decided: key, checked };
+      return { ...it, s, ...fix, ever: true, decided: key, checked };
     }
-    if (key === it.decided) return { ...it, s };
-    if (key) return { ...it, s, decided: key, checked: false };
-    const recheck = !confirming && i === edited && preChecked(s) && !held(it);
-    return { ...it, s, decided: '', checked: recheck || it.checked };
+    if (key === it.decided) return { ...it, s, ...fix };
+    // 넣기와 고치기는 함께 고르지 않는다 — 고치기를 골라 둔 줄은 저절로 넣기를 켜지 않는다
+    if (key) return { ...it, s, ...fix, decided: key, checked: false };
+    const recheck = !confirming && i === edited && preChecked(s) && !held(it) && !fix.fix;
+    return { ...it, s, ...fix, decided: '', checked: (recheck || it.checked) && !fix.fix };
   });
+}
+
+/**
+ * '수정 권장' 칸 — 가계부에 적힌 같은 결제와 무엇이 다른지, 사진대로 고칠지 (I-065).
+ * onToggle이 있으면(목록) 고치기 체크, onFix가 있으면(한 건 화면) 바로 고치는 버튼. 고칠 수 없으면 이유만 보인다
+ */
+function NearFix({ s, fix = false, disabled = false, onToggle, onFix }) {
+  const { kind, txs: [tx], blocked, cautions } = s.nearOf;
+  const changes = [];
+  if (kind === 'amount') changes.push(`금액 ${won(tx.amount)} → ${s.amount === null || s.amount === undefined ? '?' : won(s.amount)}`);
+  if (tx.date !== s.date) changes.push(`날짜 ${tx.date} → ${s.date || '?'}`);
+  const label = `가계부 기록을 사진대로 고치기 — ${changes.join(', ')}`;
+  return (
+    <div className="rs-near">
+      <div className="rs-near-tx">가계부: {tx.date} · {txText(tx)} · {tx.payment_method}</div>
+      {blocked && <div className="rs-near-note">{NEAR_BLOCKED[blocked]}</div>}
+      {!blocked && onToggle && (
+        <label className="rs-near-fix">
+          <input type="checkbox" checked={fix} disabled={disabled} onChange={e => onToggle(e.target.checked)} />
+          <span>{label}</span>
+        </label>
+      )}
+      {!blocked && onFix && <div className="rs-near-change">{changes.join(', ')}</div>}
+      {!blocked && cautions.map(c => <div key={c} className="rs-near-note">{NEAR_CAUTION[c]}</div>)}
+      {!blocked && onFix && (
+        <div className="rs-actions">
+          <button type="button" className="rs-btn-secondary" disabled={disabled} onClick={onFix}>가계부 기록 고치기</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Thumbs({ previews, count }) {
@@ -205,7 +282,7 @@ export default function ReceiptPanel({
       const mine = s => suggestions.some(old => samePlace(s, old));
       setItems(list => refresh(dbRef.current, list, { claimed: claimedNow(id) }).map((it, i) => {
         if (list[i].s.duplicateOf && !it.s.duplicateOf && mine(it.s)) {
-          return { ...it, checked: false, decided: '', reason: QUICK_REASONS.undone, originalReason: QUICK_REASONS.undone };
+          return { ...it, checked: false, fix: false, decided: '', fixDecided: '', reason: QUICK_REASONS.undone, originalReason: QUICK_REASONS.undone };
         }
         if (it.reason === SIMILAR_REASON && mine(it.s)) return { ...it, checked: false, reason: FIXED_REASON, originalReason: FIXED_REASON };
         return it;
@@ -322,7 +399,7 @@ export default function ReceiptPanel({
           setReviewReason(f.reason);
         } else {
           // 바로 넣기를 따지지 않아도 이미 넣은 거래·앞서 바로 넣은 결제와 겹치는 것은 알린다
-          setReviewReason(marks.get(s) || (s.duplicateOf ? flagReason(s) : ''));
+          setReviewReason(marks.get(s) || (s.duplicateOf || s.nearOf ? flagReason(s) : ''));
         }
         setSuggestion(s);
         setPhase('review');
@@ -351,7 +428,8 @@ export default function ReceiptPanel({
         if (!remaining) return; // 모두 넣었다 — 입력 창이 닫힌다
         addBatch(familiar, handle);
       }
-      setItems(rest.map(s => listItem(s, preChecked(s) && !marks.has(s), marks.get(s) || reasons.get(s) || '')));
+      setItems(rest.map(s => listItem(s, preChecked(s) && !marks.has(s), marks.get(s) || reasons.get(s) || '',
+        suggestFixNear(s) && !marks.has(s))));
       setCancels(cancelList);
       setNote(aiNote);
       setPhase('list');
@@ -432,6 +510,22 @@ export default function ReceiptPanel({
     backRef.current = null;
     setProgress('');
     setPhase(back);
+  };
+
+  /**
+   * 한 건 화면의 '가계부 기록 고치기' (I-065) — 누른 순간 다시 대조해, 고칠 기록이 그대로일 때만 고친다
+   * (그사이 다른 기기에서 고쳤거나 지웠으면 바뀐 대조를 보여 주고 멈춘다)
+   */
+  const fixSingle = () => {
+    const before = nearFix(suggestion);
+    const [again] = markDuplicates(dbRef.current, [suggestion], { claimed: claimedNow() });
+    const fix = nearFix(again);
+    if (!before || !fix || fix.id !== before.id) {
+      setSuggestion(again);
+      setReviewReason(again.duplicateOf || again.nearOf ? flagReason(again) : '그사이 가계부가 바뀌었어요 — 다시 확인해 주세요');
+      return;
+    }
+    onBulkAdd([], { updates: [fix] });
   };
 
   const ai = activeAI();
@@ -537,6 +631,7 @@ export default function ReceiptPanel({
             if (isCategoryReason(reviewReason)) setReviewReason('');
           }}
         />
+        {isNearRow(s) && <NearFix s={s} disabled={pending} onFix={onBulkAdd ? fixSingle : undefined} />}
         {followArea}
         <div className="rs-actions">
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
@@ -554,6 +649,8 @@ export default function ReceiptPanel({
   const fixCount = items.filter(needsFixOf).length;
   const unfixedSelected = selected.filter(needsFixOf).length;
   const selectedTotal = selected.reduce((sum, it) => sum + (it.s.amount || 0), 0);
+  const fixing = items.filter(isFixing);                     // 가계부 기록을 사진대로 고칠 줄 (I-065)
+  const nearCount = items.filter(it => isNearRow(it.s)).length;
   const unpaired = cancels.filter(c => !c.paired);
   /** 고친 값을 반영한다 — idx가 null이면 모든 줄에 (결제수단 모두 바꾸기). 한 줄을 고치면 그 줄의 예전 이유는 지운다 */
   const edit = (idx, p) => {
@@ -579,7 +676,7 @@ export default function ReceiptPanel({
     setItems(list => refresh(dbRef.current,
       list.map((x, i) => (i === idx ? { ...x, s: x.original, reason: x.originalReason, rev: x.rev + 1 } : x)),
       { claimed }).map((x, i) => (i === idx
-      ? { ...x, decided: flagKey(x.s), checked: preChecked(x.s) && !held(x) }
+      ? { ...x, decided: flagKey(x.s), checked: preChecked(x.s) && !held(x), fix: fixByDefault(x.s, x), fixDecided: flagKey(x.s) }
       : x)));
   };
   const checkable = items.filter(it => addable(it.s));
@@ -598,18 +695,30 @@ export default function ReceiptPanel({
     // 누른 순간 다시 대조한다 — 그사이 다른 기기에서 같은 거래가 들어왔을 수 있다. 이때는 끄기만 한다
     const now = refresh(cur, items, { confirming: true, claimed: claimedNow() });
     const dropped = items.filter((it, i) => isSelected(it) && !isSelected(now[i])).length;
-    if (dropped) {
+    // 고칠 기록이 그사이 바뀌었거나(다른 기기에서 고침·지움) 같은 거래가 새로 들어왔으면 고치기도 멈춘다 (I-065)
+    const droppedFix = items.filter((it, i) => isFixing(it) && !isFixing(now[i])).length;
+    if (dropped || droppedFix) {
       setItems(now);
-      setListNote(`그사이 가계부에 같은 거래가 들어와 ${dropped}건을 뺐어요 — 확인하고 다시 눌러 주세요`);
+      const why = [];
+      if (dropped) why.push(`그사이 가계부에 같은 거래가 들어와 ${dropped}건을 뺐어요`);
+      if (droppedFix) why.push(`그사이 가계부가 바뀌어 고칠 거래 ${droppedFix}건을 뺐어요`);
+      setListNote(`${why.join(' · ')} — 확인하고 다시 눌러 주세요`);
       return;
     }
-    onBulkAdd(now.filter(isSelected).map(it => {
+    const rows = now.filter(isSelected).map(it => {
       const row = suggestionToTransaction(cur, it.s);
       return member === DEVICE_MEMBER ? row : { ...row, member };
-    }));
+    });
+    const updates = now.filter(isFixing).map(it => nearFix(it.s));
+    if (updates.length) onBulkAdd(rows, { updates });
+    else onBulkAdd(rows);
   };
-  // 사용자가 직접 고른 체크는 지금의 겹침에 대해 정한 것 — 같은 겹침이면 고쳐도 그대로 둔다
-  const toggle = (idx, checked) => setItems(list => list.map((x, i) => (i === idx ? { ...x, checked, decided: flagKey(x.s) } : x)));
+  // 사용자가 직접 고른 체크는 지금의 겹침에 대해 정한 것 — 같은 겹침이면 고쳐도 그대로 둔다.
+  // 넣기와 고치기는 함께 고르지 않는다 — 같은 결제를 고치고 또 넣으면 두 번이 된다
+  const toggle = (idx, checked) => setItems(list => list.map((x, i) => (i === idx
+    ? { ...x, checked, fix: checked ? false : x.fix, decided: flagKey(x.s), fixDecided: flagKey(x.s) } : x)));
+  const toggleFix = (idx, fix) => setItems(list => list.map((x, i) => (i === idx
+    ? { ...x, fix, checked: fix ? false : x.checked, decided: flagKey(x.s), fixDecided: flagKey(x.s) } : x)));
 
   return (
     <div className="rs-box rs-review">
@@ -623,6 +732,9 @@ export default function ReceiptPanel({
           {notesLine}
           <QuickAutoNote batches={batches} onUndo={undoAll} />
           {fixCount > 0 && <strong className="rs-fix-count">수정 필요 {fixCount}건 — 노란 줄을 고쳐 주세요</strong>}
+          {nearCount > 0 && (
+            <strong className="rs-near-count">수정 권장 {nearCount}건 — 가계부에 금액·날짜가 다르게 적힌 같은 결제가 있어요</strong>
+          )}
           {items.length > 0 && <span>줄마다 '고치기'로 날짜·내용·금액을 고친 뒤 추가하세요</span>}
         </div>
       </div>
@@ -659,7 +771,7 @@ export default function ReceiptPanel({
             db={db}
             item={{ ...it, checked: isSelected(it) }}
             methods={methods}
-            subtitle={[it.s.date, it.s.paymentHint, it.s.eventTitle, flagReason(it.s) || it.reason].filter(Boolean).join(' · ')}
+            subtitle={[it.s.date, it.s.paymentHint, it.s.eventTitle, rowReason(it)].filter(Boolean).join(' · ')}
             onToggle={checked => toggle(idx, checked)}
             onPatch={p => edit(idx, p)}
             onRevert={() => revert(idx)}
@@ -667,7 +779,12 @@ export default function ReceiptPanel({
             onFillForm={onApply}
             editable
             canCheck={addable(it.s)}
-          />
+            badge={isNearRow(it.s) ? '수정 권장' : ''}
+          >
+            {isNearRow(it.s) && (
+              <NearFix s={it.s} fix={isFixing(it)} disabled={!fixReady(it.s)} onToggle={on => toggleFix(idx, on)} />
+            )}
+          </SuggestionItem>
         ))}
       </div>
 
@@ -692,8 +809,11 @@ export default function ReceiptPanel({
       <div className="rs-actions">
         <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
         <button type="button" className="rs-btn-secondary" onClick={() => onRepick()}>다른 사진</button>
-        <button type="button" className="rs-btn-primary" disabled={!selected.length || pending} onClick={confirm}>
-          {selected.length ? `${selected.length}건 추가 (${selectedTotal.toLocaleString()}원)` : '추가할 건 선택'}
+        <button type="button" className="rs-btn-primary" disabled={(!selected.length && !fixing.length) || pending} onClick={confirm}>
+          {[
+            selected.length ? `${selected.length}건 추가 (${selectedTotal.toLocaleString()}원)` : '',
+            fixing.length ? `${fixing.length}건 고치기` : '',
+          ].filter(Boolean).join(' · ') || '추가할 건 선택'}
         </button>
       </div>
     </div>

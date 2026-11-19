@@ -415,6 +415,41 @@
   line-height: 1.45;
 }
 
+/* 수정 권장 (I-065) — 가계부에 금액·날짜가 다르게 적힌 같은 결제, 사진대로 고치기 */
+.tp-item.near-fix { border-color: var(--primary); }
+.tp-near-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--primary); /* 흰 글씨를 얹는 채움 색 */
+  color: #fff;
+  font-size: calc(11px * var(--fs));
+  font-weight: 800;
+}
+.rs-review-title .rs-near-count {
+  font-size: calc(13px * var(--fs));
+  font-weight: 800;
+  color: var(--primary-text);
+  white-space: normal;
+}
+.rs-near {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--c-blue-50);
+  font-size: calc(12px * var(--fs));
+  line-height: 1.45;
+}
+.rs-near-tx { color: var(--text-muted); word-break: break-all; }
+.rs-near-fix { display: flex; align-items: flex-start; gap: 6px; font-weight: 700; color: var(--primary-text); cursor: pointer; }
+.rs-near-fix input { margin-top: 2px; flex-shrink: 0; }
+.rs-near-change { font-weight: 700; color: var(--primary-text); }
+.rs-near-note { color: var(--c-amber-800); }
+.rs-near .rs-actions { margin-top: 2px; }
+
 /* 사진 목록 — AI가 그 결제에서 확실하지 않다고 남긴 메모 */
 .tp-item-ai-note {
   font-size: calc(11px * var(--fs));

@@ -14,7 +14,7 @@ import {
 } from './screens';
 import { runPlan, undoPlan, describeRun } from '../../services/aiCommand';
 import { ModalLoading } from '../common/lazyScreen';
-import { addTransaction, updateTransaction, deleteTransaction, deleteTransactionsForUndo, restoreDeletedTransactions, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
+import { addTransaction, updateTransaction, correctTransaction, deleteTransaction, deleteTransactionsForUndo, restoreDeletedTransactions, getSplitGroupTransactions, runAccountAutoRegister, withTransaction, isBlankLedger, addedSnapshot, removeAddedTransactions } from '../../services/dbManager';
 import { getAIConfig, clearAIKeys, activeAI } from '../../services/aiClient';
 import { setAISyncAccount, syncAISettings } from '../../services/aiSettingsSync';
 import useLedgerSync from '../../hooks/useLedgerSync';
@@ -713,20 +713,25 @@ function App() {
     showToast(`✓ ${label} 추가됨`);
   }, [db, showToast, withMember]);
 
-  // 말로 입력·카드 문자로 여러 건을 한 번에 반영 — 카드 문자의 승인 취소는 지울 거래(deleteIds)로 함께 온다 (I-012)
-  const handleBulkAdd = useCallback((inputRows, { deleteIds = [] } = {}) => {
+  // 말로 입력·카드 문자·사진으로 여러 건을 한 번에 반영 — 카드 문자의 승인 취소는 지울 거래(deleteIds)로 (I-012),
+  // 사진 목록의 '수정 권장'은 금액·날짜를 사진대로 고칠 거래(updates: [{ id, amount, date }])로 함께 온다 (I-065)
+  const handleBulkAdd = useCallback((inputRows, { deleteIds = [], updates = [] } = {}) => {
     const rows = inputRows.map(withMember);
-    if (!rows.length && !deleteIds.length) return;
+    if (!rows.length && !deleteIds.length && !updates.length) return;
+    let fixed = 0;
     withTransaction(db, () => {
       rows.forEach(row => addTransaction(db, row));
       deleteIds.forEach(id => deleteTransaction(db, id));
+      updates.forEach((u) => { if (correctTransaction(db, u.id, u)) fixed += 1; });
     });
     closeEntry();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
     const parts = [];
     if (rows.length) parts.push(`${rows.length}건 ${total.toLocaleString()}원 추가`);
+    if (fixed) parts.push(`${fixed}건 수정`);
     if (deleteIds.length) parts.push(`취소된 거래 ${deleteIds.length}건 삭제`);
-    showToast(`✓ ${parts.join(', ')}됨`);
+    // 고칠 거래만 왔는데 그사이 모두 지워졌으면 — 바뀐 것이 없다
+    showToast(parts.length ? `✓ ${parts.join(', ')}됨` : '고칠 거래가 그사이 지워져 바꾸지 않았습니다');
   }, [db, showToast, withMember, closeEntry]);
 
   const handleUpdate = useCallback((txData) => {

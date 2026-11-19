@@ -91,16 +91,18 @@ function EditFields({ s, onPatch }) {
  * item.rev가 바뀌면(되돌림) 고치기 칸을 새로 그려 금액 칸의 글도 되돌린 값으로 맞춘다.
  * s.aiNote가 있으면(사진 목록) AI가 그 결제에서 확실하지 않다고 남긴 메모를 보인다.
  * needsFix(이유 글)가 있으면 '수정 필요'를 굵게 드러내고, 바로 고치기를 열 수 있게 한다.
+ * badge가 있으면(사진 목록의 '수정 권장', I-065) 제목 앞에 붙이고, children은 분류 후보 아래에 보인다.
  */
 export default function SuggestionItem({
   db, item, methods, subtitle, onToggle, onPatch, onFillForm, onRevert, editable = false, canCheck, needsFix = '',
+  badge = '', children = null,
 }) {
   const [editing, setEditing] = useState(false);
   const s = item.s;
   const complete = isSuggestionComplete(s);
   const checkable = canCheck === undefined ? complete : canCheck;
   return (
-    <div className={`tp-item${item.checked ? ' checked' : ''}${needsFix ? ' needs-fix' : ''}`}>
+    <div className={`tp-item${item.checked ? ' checked' : ''}${needsFix ? ' needs-fix' : ''}${badge ? ' near-fix' : ''}`}>
       <label className="tp-item-head">
         <input
           type="checkbox"
@@ -111,6 +113,7 @@ export default function SuggestionItem({
         <span className="tp-item-main">
           <b>
             {needsFix && <strong className="tp-fix-badge">수정 필요</strong>}
+            {badge && <strong className="tp-near-badge">{badge}</strong>}
             {s.detail || s.sub_category || '(내용 없음)'}
           </b>
           <small>{subtitle ?? `${s.date}${s.eventTitle ? ` · ${s.eventTitle}` : ''}`}</small>
@@ -147,6 +150,8 @@ export default function SuggestionItem({
       </div>
 
       <Alternatives s={s} onUse={o => onPatch(alternativePatch(s, o))} />
+
+      {children}
 
       {needsFix && (
         <div className="tp-fix-note">

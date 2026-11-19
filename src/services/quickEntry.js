@@ -197,6 +197,11 @@ export function familiarity(db, s, kind, { said, others } = {}) {
   if (s.currency && s.currency !== 'KRW') return no('외화 결제예요');
   if (s.event_id) return no('여행 일정에 넣는 거래예요');
   if (s.duplicateOf) return no('이미 넣은 거래 같아요');
+  // 사진: 가계부에 금액·날짜를 다르게 적은 같은 결제가 있거나 나눠·합쳐 적었다 (I-065)
+  if (s.nearOf) {
+    return no(s.nearOf.kind === 'amount' || s.nearOf.kind === 'date'
+      ? '가계부에 금액·날짜가 다르게 적힌 같은 결제가 있어요' : '이미 넣은 거래 같아요');
+  }
   if (s.warnings && s.warnings.length) return no(s.warnings[0]);
   if (s.date > todayStr()) return no('앞날짜 거래예요');
   if (kind === 'receipt' && (s.confidence === 'low' || s.sources?.date !== 'receipt')) return no('영수증의 날짜·금액을 확인해 주세요');

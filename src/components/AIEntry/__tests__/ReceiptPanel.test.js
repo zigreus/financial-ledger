@@ -14,7 +14,7 @@ import { familiarity, splitFamiliar } from '../../../services/quickEntry';
 // 겹친 결제 다시 따지기는 보통 지금 표시를 그대로 둔다 — 줄 사이가 얽히는 경우는 실제 규칙(realMarkDuplicates)과 가짜 가계부(ledger)로
 vi.mock('../../../services/photoEntry', async (importOriginal) => {
   const real = await importOriginal();
-  return { analyzePhotos: vi.fn(), markDuplicates: vi.fn(), realMarkDuplicates: real.markDuplicates, cleanPhotoNotes: real.cleanPhotoNotes };
+  return { ...real, analyzePhotos: vi.fn(), markDuplicates: vi.fn(), realMarkDuplicates: real.markDuplicates };
 });
 vi.mock('../../../services/receiptAssistant', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -34,6 +34,7 @@ vi.mock('../../../services/dbManager', () => ({
   getPaymentMethods: () => ['현대EV', '신한카드'],
   getMemberNames: () => memberNames,
   getTransactions: (db, { dateFrom, dateTo }) => ledger.filter(t => t.date >= dateFrom && t.date <= dateTo),
+  hasForeignAmount: () => false,
 }));
 vi.mock('../SuggestionCard', () => ({
   default: () => null,
@@ -184,11 +185,16 @@ const row = (merchant, amount, extra = {}) => ({
   merchant, detail: merchant, amount, date: '2025-01-01', payment_method: '현대EV', paymentHint: '현대카드',
   sources: { date: 'receipt' }, warnings: [], ...extra,
 });
+// 사진이 2024-12-30 ~ 2025-01-03을 보여 주게 하는 앞뒤 결제 — 사진의 첫날·끝날 기록은 고치기를 미리 고르지 않으므로 (I-065)
+const FRAME = [row('교보문고', 12000, { date: '2024-12-30' }), row('올리브영', 5000, { date: '2025-01-03' })];
 const renderList = (props = {}) => act(async () => {
   root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }, { name: 'b.jpg' }]} onApply={() => {}} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} {...props} />);
 });
 const addButton = () => [...container.querySelectorAll('.rs-btn-primary')].at(-1);
 const boxes = () => [...container.querySelectorAll('.tp-item input[type=checkbox]')];
+// 줄마다 넣기 체크와 '수정 권장'의 고치기 체크 (I-065)
+const addBox = i => [...container.querySelectorAll('.tp-item')][i].querySelector('.tp-item-head input[type=checkbox]');
+const fixBox = i => [...container.querySelectorAll('.tp-item')][i].querySelector('.rs-near-fix input[type=checkbox]');
 const select = (label, value) => act(async () => {
   const el = container.querySelector(`select[aria-label="${label}"]`);
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, value);
@@ -539,14 +545,16 @@ test('되돌리면 처음의 겹침도 돌아온다 — 이미 넣은 거래와 
   useRealRules();
   ledger = [{ id: 1, date: '2025-01-01', detail: '편의점', amount: 3000, payment_method: '현대EV' }];
   preparePhotos.mockResolvedValue(IMAGE);
-  analyzePhotos.mockResolvedValue({ suggestions: [row('편의점', 3000), row('마트', 7000)], cancels: [], note: '' });
+  analyzePhotos.mockResolvedValue({ suggestions: [row('편의점', 3000), row('마트', 7000), ...FRAME], cancels: [], note: '' });
   await renderList({ onBulkAdd: vi.fn() });
   await flush();
   await openEdit(0);
-  await typeInto(amountField(0), '3500');             // 고쳐서 다른 결제가 됐다
-  expect(boxes()[0].checked).toBe(true);
+  await typeInto(amountField(0), '3500');             // 고쳐서 금액이 다른 같은 결제가 됐다 — 넣지 않고 고치기를 권한다 (I-065)
+  expect(addBox(0).checked).toBe(false);
+  expect(fixBox(0).checked).toBe(true);
   await act(async () => { revertButton(0).click(); });
-  expect(boxes()[0].checked).toBe(false);
+  expect(addBox(0).checked).toBe(false);
+  expect(fixBox(0)).toBeNull();
   expect(items()[0].textContent).toContain('이미 넣은 거래가 있어요');
 });
 
@@ -1092,4 +1100,161 @@ test("'모두 고르기'는 체크 없이 둔 줄(바로 넣은 결제와 같은
   expect(boxes().map(b => b.checked)).toEqual([false, false, false]);
   await act(async () => { allButton().click(); });
   expect(boxes().map(b => b.checked)).toEqual([false, true, true]);
+});
+
+// ── 수정 권장 (I-065) — 가계부에 금액·날짜를 다르게 적은 같은 결제는 넣지 않고 그 기록을 사진대로 고치게 권한다 ──
+const STARBUCKS_TX = { id: 4, date: '2025-01-01', detail: '스타벅스', amount: 6000, payment_method: '현대EV' };
+/** 사진을 읽은 결과 — 실제 규칙으로 가계부(ledger)와 대조해 둔다 (analyzePhotos가 하는 것처럼) */
+const readWithRealRules = (suggestions) => {
+  useRealRules();
+  preparePhotos.mockResolvedValue(IMAGE);
+  analyzePhotos.mockImplementation(async () => ({ suggestions: realMarkDuplicates({}, suggestions), cancels: [], note: '' }));
+};
+
+test('금액이 다르게 적힌 같은 결제는 넣지 않고 고치기를 미리 골라 두며, 추가 버튼이 고치기도 함께 반영한다', async () => {
+  ledger = [STARBUCKS_TX];
+  readWithRealRules([row('스타벅스', 6500), row('마트', 7000), ...FRAME]);
+  const onBulkAdd = vi.fn();
+  await renderList({ onBulkAdd });
+  await flush();
+  expect(container.querySelector('.rs-near-count').textContent).toContain('수정 권장 1건');
+  expect(items()[0].querySelector('.tp-near-badge').textContent).toBe('수정 권장');
+  expect(items()[0].textContent).toContain('가계부: 2025-01-01 · 스타벅스 6,000원 · 현대EV');
+  expect(items()[0].textContent).toContain('가계부 기록을 사진대로 고치기 — 금액 6,000원 → 6,500원');
+  expect(items()[0].textContent).toContain('가계부에 금액이 다르게 적힌 같은 결제가 있어요');
+  expect([addBox(0).checked, fixBox(0).checked, addBox(1).checked]).toEqual([false, true, true]);
+  expect(addButton().textContent).toBe('3건 추가 (24,000원) · 1건 고치기');
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd).toHaveBeenCalledWith(
+    [
+      { detail: '마트', amount: 7000, payment_method: '현대EV' },
+      { detail: '교보문고', amount: 12000, payment_method: '현대EV' },
+      { detail: '올리브영', amount: 5000, payment_method: '현대EV' },
+    ],
+    { updates: [{ id: 4, amount: 6500, date: '2025-01-01' }] },
+  );
+});
+
+test('넣기와 고치기는 함께 고르지 않는다 — 하나를 고르면 다른 하나가 풀리고, 고치기만 골라도 반영할 수 있다', async () => {
+  ledger = [STARBUCKS_TX];
+  readWithRealRules([row('스타벅스', 6500), row('마트', 7000), ...FRAME]);
+  const onBulkAdd = vi.fn();
+  await renderList({ onBulkAdd });
+  await flush();
+  await act(async () => { addBox(0).click(); });          // 따로 결제한 것 — 새로 넣는다
+  expect([addBox(0).checked, fixBox(0).checked]).toEqual([true, false]);
+  await act(async () => { fixBox(0).click(); });          // 다시 고치기로
+  expect([addBox(0).checked, fixBox(0).checked]).toEqual([false, true]);
+  // '모두 빼기'는 넣기 체크만 — 고치기는 그대로 남는다
+  const allButton = [...container.querySelectorAll('button')].find(b => b.textContent === '모두 빼기');
+  await act(async () => { allButton.click(); });
+  expect(fixBox(0).checked).toBe(true);
+  expect(addButton().textContent).toBe('1건 고치기');
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd).toHaveBeenCalledWith([], { updates: [{ id: 4, amount: 6500, date: '2025-01-01' }] });
+});
+
+test('결제수단을 정하지 않아 넣을 수 없는 줄도 가계부 기록은 고칠 수 있다 — 고치기는 기록의 분류·결제수단을 쓴다', async () => {
+  ledger = [STARBUCKS_TX];
+  readWithRealRules([row('스타벅스', 6500, { payment_method: '' }), row('마트', 7000), ...FRAME]);
+  const onBulkAdd = vi.fn();
+  await renderList({ onBulkAdd });
+  await flush();
+  expect(addBox(0).disabled).toBe(true);
+  expect([fixBox(0).disabled, fixBox(0).checked]).toEqual([false, true]);
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd).toHaveBeenCalledWith(expect.any(Array), { updates: [{ id: 4, amount: 6500, date: '2025-01-01' }] });
+});
+
+test('사진의 첫날·끝날 기록이면(잘린 다른 결제일 수 있음) 고치기를 미리 고르지 않는다', async () => {
+  ledger = [STARBUCKS_TX];
+  readWithRealRules([row('스타벅스', 6500), row('마트', 7000)]);   // 사진은 2025-01-01 하루
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect([addBox(0).checked, fixBox(0).checked]).toEqual([false, false]);
+  expect(items()[0].textContent).toContain('사진의 첫날·끝날이거나');
+  expect(addButton().textContent).toBe('1건 추가 (7,000원)');
+});
+
+test('망설일 이유(할부 등)가 있으면 고치기를 미리 고르지 않고 그 이유를 보인다', async () => {
+  ledger = [{ ...STARBUCKS_TX, amount: 100000 }];
+  readWithRealRules([row('스타벅스', 300000, { installment: '3개월' }), row('마트', 7000)]);
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect([addBox(0).checked, fixBox(0).checked]).toEqual([false, false]);
+  expect(items()[0].textContent).toContain('할부 결제예요');
+  expect(addButton().textContent).toBe('1건 추가 (7,000원)');
+});
+
+test('나눠 결제한 한 몫이면 고치기를 보이지 않고 거래내역에서 고치라고 알린다', async () => {
+  ledger = [{ ...STARBUCKS_TX, split_group_id: 'g1' }];
+  readWithRealRules([row('스타벅스', 6500), row('마트', 7000)]);
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(fixBox(0)).toBeNull();
+  expect(items()[0].textContent).toContain('나눠 결제한 거래의 한 몫이에요');
+  expect(addBox(0).checked).toBe(false);
+});
+
+test('가계부에 나눠 적은 결제는 이미 있는 거래로 — 고치기 없이 체크도 하지 않는다', async () => {
+  ledger = [
+    { id: 5, date: '2025-01-01', detail: '이마트 장보기', amount: 20000, payment_method: '현대EV' },
+    { id: 6, date: '2025-01-01', detail: '이마트 세제', amount: 10000, payment_method: '현대EV' },
+  ];
+  readWithRealRules([row('이마트', 30000), row('마트', 7000)]);
+  await renderList({ onBulkAdd: vi.fn() });
+  await flush();
+  expect(items()[0].textContent).toContain('나눠 적은 거래 2건이 이미 있어요');
+  expect(items()[0].querySelector('.tp-near-badge')).toBeNull();
+  expect(fixBox(0)).toBeNull();
+  expect(addBox(0).checked).toBe(false);
+});
+
+test('추가를 누를 때 고칠 기록이 그사이 바뀌었으면 고치지 않고 이유를 알린다', async () => {
+  ledger = [STARBUCKS_TX];
+  readWithRealRules([row('스타벅스', 6500), row('마트', 7000), ...FRAME]);
+  const onBulkAdd = vi.fn();
+  await renderList({ onBulkAdd });
+  await flush();
+  ledger = [{ ...STARBUCKS_TX, amount: 6500 }];           // 다른 기기에서 이미 고쳤다
+  await act(async () => { addButton().click(); });
+  expect(onBulkAdd).not.toHaveBeenCalled();
+  expect(container.querySelector('[role=alert]').textContent).toContain('고칠 거래 1건을 뺐어요');
+  expect(items()[0].textContent).toContain('이미 넣은 거래가 있어요');
+  expect(fixBox(0)).toBeNull();
+});
+
+test('한 건 화면에서도 금액이 다르게 적힌 같은 결제면 그 기록을 바로 고칠 수 있다', async () => {
+  ledger = [STARBUCKS_TX];
+  preparePhotos.mockResolvedValue(IMAGE);
+  useRealRules();
+  analyzePhotos.mockImplementation(async () => one(realMarkDuplicates({}, [row('스타벅스', 6500, { confidence: 'high' })])[0]));
+  const onBulkAdd = vi.fn();
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={() => {}} onBulkAdd={onBulkAdd} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+  expect(container.textContent).toContain('가계부에 금액이 다르게 적힌 같은 결제가 있어요');
+  const fixButton = [...container.querySelectorAll('button')].find(b => b.textContent === '가계부 기록 고치기');
+  await act(async () => { fixButton.click(); });
+  expect(onBulkAdd).toHaveBeenCalledWith([], { updates: [{ id: 4, amount: 6500, date: '2025-01-01' }] });
+});
+
+test('한 건 화면의 고치기도 누른 순간 다시 대조한다 — 그사이 기록이 이미 고쳐졌으면 고치지 않고 알린다', async () => {
+  ledger = [STARBUCKS_TX];
+  preparePhotos.mockResolvedValue(IMAGE);
+  useRealRules();
+  analyzePhotos.mockImplementation(async () => one(realMarkDuplicates({}, [row('스타벅스', 6500, { confidence: 'high' })])[0]));
+  const onBulkAdd = vi.fn();
+  await act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={() => {}} onBulkAdd={onBulkAdd} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+  });
+  await flush();
+  ledger = [{ ...STARBUCKS_TX, amount: 6500 }];           // 다른 기기에서 이미 고쳤다
+  const fixButton = [...container.querySelectorAll('button')].find(b => b.textContent === '가계부 기록 고치기');
+  await act(async () => { fixButton.click(); });
+  expect(onBulkAdd).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('이미 넣은 거래가 있어요');
+  expect([...container.querySelectorAll('button')].some(b => b.textContent === '가계부 기록 고치기')).toBe(false);
 });

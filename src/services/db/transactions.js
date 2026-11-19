@@ -1,6 +1,7 @@
 // 가계부 거래(transactions) 조회·추가·수정·삭제와 분할 결제 묶음 조회.
 
 import { dbRowsToObjects, reinsert, withTransaction } from './common';
+import { isValidDateStr } from '../dateUtils';
 
 /** 거래 목록 필터에서 '누가'를 지정하지 않은 거래만 고를 때 쓰는 값 */
 export const MEMBER_NONE = '__none__';
@@ -123,6 +124,22 @@ export function updateTransaction(db, id, tx) {
       id,
     ]
   );
+}
+
+/**
+ * 금액·날짜만 고친다 — 사진 목록의 '수정 권장'(I-065)으로 가계부 기록을 카드 내역대로 맞출 때.
+ * 분류·세부내역·할인·'누가'·외화 기록은 그대로 둔다. 거래가 없으면(그사이 지워짐) 고치지 않고 false
+ */
+export function correctTransaction(db, id, { amount, date }) {
+  if (!Number.isInteger(amount) || amount <= 0 || !isValidDateStr(date)) {
+    throw new Error('고칠 금액·날짜가 올바르지 않습니다');
+  }
+  if (!db.exec('SELECT 1 FROM transactions WHERE id = ?', [id]).length) return false;
+  db.run(
+    "UPDATE transactions SET amount = ?, date = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+    [amount, date, id]
+  );
+  return true;
 }
 
 export function deleteTransaction(db, id) {
