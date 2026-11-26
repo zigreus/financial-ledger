@@ -2,6 +2,7 @@
 import {
   suggestionGaps, describeGaps, gapQuestion, gapPlaceholder, recordPick, carryChoices,
 } from '../TextFollowUp';
+import { patchListItem } from '../SuggestionItem';
 
 const sug = o => ({
   date: '2026-11-08', merchant: '', detail: '', amount: null, currency: 'KRW', foreignAmount: null,
@@ -52,6 +53,16 @@ describe('빠진 정보', () => {
     expect(gapQuestion(list, 3)).toBe('빠진 정보를 알려 주세요 — 스타벅스: 결제수단, 3번째 건: 무엇에 썼는지·결제수단·카테고리');
     expect(gapPlaceholder(list)).toBe('예) 현금으로 냈어요, 점심 김치찌개였어요');
     expect(gapQuestion([], 3)).toBe('');
+  });
+
+  test('이름이 같은 건이 여럿이면 금액을, 금액도 같거나 모르면 목록에서 몇 번째인지 붙인다 (B-101 — 앞에 말한 대상을 이은 건들)', () => {
+    const dad = o => ({ s: full({ detail: '', budget_category: '용돈', sub_category: '아버지', payment_method: '', ...o }) });
+    const list = describeGaps([
+      { s: full({ detail: '점심', payment_method: '' }) }, dad({ amount: 5000, payment_method: '현금' }), dad({ amount: 7000 }), dad({ amount: 8000 }),
+    ]);
+    expect(gapQuestion(list, 4)).toBe('빠진 정보를 알려 주세요 — 점심: 결제수단, 아버지 7,000원: 결제수단, 아버지 8,000원: 결제수단');
+    const same = describeGaps([dad({ amount: 7000 }), dad({ amount: 7000 }), dad({ amount: null })]);
+    expect(same.map(g => g.name)).toEqual(['아버지(목록의 1번째)', '아버지(목록의 2번째)', '아버지(목록의 3번째)']);
   });
 });
 
@@ -158,5 +169,38 @@ describe('목록에서 고른 값 남기기', () => {
     const { items } = carryChoices(old, [full({ detail: '점심 김밥', payment_method: '' }), full({ detail: '커피', amount: 4500, budget_category: '' })]);
     expect(items[0].s.payment_method).toBe('신한카드');        // "점심 김밥"은 "점심"을 품는다
     expect(items[1].s.budget_category).toBe('');
+  });
+});
+
+describe('다른 건에서 이은 대상 알림 (B-101)', () => {
+  test('이름이 같은 줄이 여럿이면 금액도 같은 줄의 고른 값을 이어받는다 — AI가 순서를 바꿔도', () => {
+    const dad = o => full({ detail: '', budget_category: '용돈', sub_category: '아버지', ...o });
+    const old = [
+      { s: dad({ amount: 5000 }), checked: true },
+      { s: { ...dad({ amount: 7000 }), payment_method: '신한카드' }, checked: true, picks: recordPick({ s: dad({ amount: 7000 }) }, { payment_method: '신한카드' }) },
+    ];
+    const { items } = carryChoices(old, [dad({ amount: 7000 }), dad({ amount: 5000 })]);
+    expect(items.map(it => [it.s.amount, it.s.payment_method])).toEqual([[7000, '신한카드'], [5000, '현금']]);
+  });
+
+  const DAD = "앞에 말한 '아버지' 추천 — 이 건도 맞는지 확인해 주세요";
+  const carried = () => full({
+    detail: '생신', budget_category: '용돈', sub_category: '아버지', warnings: [DAD], sources: { category: 'carried' },
+  });
+
+  test('목록에서 분류를 고르면 알림을 지운다 — 결제수단만 고르면 남는다', () => {
+    const it = { s: carried(), checked: true };
+    expect(patchListItem(it, { payment_method: '신한카드' }).s.warnings).toEqual([DAD]);
+    const picked = patchListItem(it, { budget_category: '식비', sub_category: '점심' });
+    expect(picked.s.warnings).toEqual([]);
+    expect(picked.s.sources.category).toBeUndefined();
+  });
+
+  test('다시 정리해도 앞서 고른 분류를 얹으면 알림도 지운다', () => {
+    const s = carried();
+    const old = [{ s: { ...s, budget_category: '용돈', sub_category: '어머니' }, checked: true,
+      picks: recordPick({ s }, { budget_category: '용돈', sub_category: '어머니' }) }];
+    const { items } = carryChoices(old, [carried()]);
+    expect(items[0].s).toMatchObject({ sub_category: '어머니', warnings: [] });
   });
 });

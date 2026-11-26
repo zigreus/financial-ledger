@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import {
   isSpokenPaymentWarning, isSuggestionComplete, normalizeName, samePaymentPhrase, suggestionName,
 } from '../../services/receiptAssistant';
+import { isCarriedSubjectWarning } from '../../services/textEntry';
+import { formatAmount } from '../../services/formulaEvaluator';
 import './AIEntry.css';
 
 /**
@@ -48,10 +50,25 @@ export function suggestionGaps(s) {
 
 const itemName = (s, index) => suggestionName(s) || `${index + 1}번째 건`;
 
-/** 빠진 정보가 있는 건 목록 — [{ index, name, gaps }] */
+const hasAmount = s => s.amount !== null && s.amount !== undefined;
+
+/**
+ * 빠진 정보가 있는 건 목록 — [{ index, name, gaps }].
+ * 이름이 같은 건이 여럿이면('아버지' 세 건, B-101) 금액을 붙여 어느 건을 묻는지 알게 한다 ('아버지 7,000원').
+ * 금액을 모르거나 금액까지 같으면 목록에서 몇 번째인지
+ */
 export function describeGaps(items) {
+  const names = items.map((it, index) => itemName(it.s, index));
+  const withAmount = items.map((it, index) => (hasAmount(it.s) ? `${names[index]} ${formatAmount(it.s.amount)}원` : ''));
+  const count = (list, v) => list.filter(x => x === v).length;
   return items
-    .map((it, index) => ({ index, name: itemName(it.s, index), gaps: suggestionGaps(it.s) }))
+    .map((it, index) => {
+      let name = names[index];
+      if (count(names, name) > 1) {
+        name = withAmount[index] && count(withAmount, withAmount[index]) === 1 ? withAmount[index] : `${name}(목록의 ${index + 1}번째)`;
+      }
+      return { index, name, gaps: suggestionGaps(it.s) };
+    })
     .filter(g => g.gaps.length);
 }
 
@@ -130,6 +147,7 @@ function applyPicks(s, picks) {
     out.budget_category = budget;
     out.sub_category = sub;
     delete out.sources.category;
+    if (out.warnings) out.warnings = out.warnings.filter(w => !isCarriedSubjectWarning(w));
   }
   const detail = picks.detail;
   if (detail && (s.detail || '') === detail.from) {
@@ -162,8 +180,10 @@ export function carryChoices(oldItems, suggestions) {
     suggestions.forEach((s, i) => {
       const name = normalizeName(nameOf(s));
       if (match[i] >= 0 || !name) return;
-      const k = oldItems.findIndex((it, j) => !used.has(j) && oldNamesOf(it).some(oldName => same(oldName, name)));
-      if (k >= 0) { match[i] = k; used.add(k); }
+      const fits = oldItems.map((_, j) => j).filter(j => !used.has(j) && oldNamesOf(oldItems[j]).some(oldName => same(oldName, name)));
+      // 이름이 같은 줄이 여럿이면('아버지' 세 건, B-101) 금액도 같은 줄이 먼저 — 고른 값이 다른 줄로 옮겨 가지 않게
+      const k = fits.find(j => s.amount !== null && s.amount !== undefined && oldItems[j].s.amount === s.amount) ?? fits[0];
+      if (k !== undefined) { match[i] = k; used.add(k); }
     });
   };
   pair((a, b) => a === b);

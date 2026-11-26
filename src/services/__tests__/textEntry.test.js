@@ -2,7 +2,7 @@
 import initSqlJs from 'sql.js';
 import { createDatabase, addCalendarEvent, addEventCountry } from '../dbManager';
 import { analyzeWithAI, AIError } from '../aiClient';
-import { parseTextEntry, buildTextPrompt, cleanFollowUps, UNCLEAR } from '../textEntry';
+import { parseTextEntry, buildTextPrompt, cleanFollowUps, isCarriedSubjectWarning, UNCLEAR } from '../textEntry';
 import {
   applyAlternative, isSpokenPaymentWarning, otherAlternatives, paymentMatch, CATEGORY_ALT_RULE, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
 } from '../receiptAssistant';
@@ -630,5 +630,173 @@ describe('말한 결제수단이 예전 습관보다 먼저 (B-096)', () => {
     const none = await parse(db, '삼성페이로 김밥천국 9000원, 붕어빵 3000원');
     expect(none.map(s => s.payment_method)).toEqual(['', '하나카드']);
     expect(none[1].sources.payment_method).toBe('history');
+  });
+});
+
+describe('한 번 말한 대상은 뒤의 건에도 이어진다 (B-101)', () => {
+  // '용돈 > 아버지'처럼 대상이 세부카테고리인 가계부
+  const familyDb = () => {
+    const db = makeDb();
+    db.run("INSERT INTO budget_categories (name) VALUES ('용돈')");
+    db.run("INSERT INTO sub_categories (budget_category, name) VALUES ('용돈','아버지'),('용돈','어머니')");
+    return db;
+  };
+  const TEXT = '아버지 3일 5000, 5일 7000, 8000 2건';
+  const DAD = "앞에 말한 '아버지' 추천 — 이 건도 맞는지 확인해 주세요";
+
+  test('지시문이 앞에서 말한 대상·날짜를 뒤의 건에도 잇고, "N건"을 늘어놓은 금액의 수로 읽게 한다', () => {
+    const p = buildTextPrompt(familyDb(), TEXT, TODAY);
+    expect(p).toContain('뒤에 금액만 말한 건에도 이어진다');
+    expect(p).toContain('"아버지 23일 5000, 25일 7000, 8000" → 세 건 모두 아버지');
+    // 금액만 늘어놓은 끝의 "N건"만 — '점심 9천원, 커피 4500 2건'의 커피 두 잔을 한 건으로 줄이지 않게
+    expect(p).toContain('금액만 늘어놓은 끝에 "N건"이라고 했고');
+    expect(p).toContain('"25일 7000, 8000 2건" → 7000 한 건과 8000 한 건');
+    expect(p).toContain('금액 하나에 붙은 "5000원 2건"은 같은 금액 두 건이다');
+  });
+
+  test("AI가 '아버지'를 첫 건에만 붙였으면 뒤의 두 건에도 — 추천으로 채우고 바로 넣지 않는다", async () => {
+    const db = familyDb();
+    analyzeWithAI.mockResolvedValue({
+      entries: [
+        entry({ date: '2026-11-03', amount: 5000, category: '용돈 > 아버지', payment_method: '현금' }),
+        entry({ date: '2026-11-05', amount: 7000, payment_method: '현금' }),
+        entry({ date: '2026-11-05', amount: 8000, payment_method: '현금' }),
+      ],
+      question: '',
+    });
+    const list = await parse(db, TEXT);
+    expect(list.map(s => [s.date, s.amount, s.budget_category, s.sub_category])).toEqual([
+      ['2026-11-03', 5000, '용돈', '아버지'], ['2026-11-05', 7000, '용돈', '아버지'], ['2026-11-05', 8000, '용돈', '아버지'],
+    ]);
+    expect(list[0].warnings).toEqual([]);
+    expect(list[0].sources.category).toBe('ai');
+    expect(list.slice(1).map(s => [s.sources.category, s.warnings])).toEqual([['carried', [DAD]], ['carried', [DAD]]]);
+    expect(isCarriedSubjectWarning(DAD)).toBe(true);
+    expect(isSpokenPaymentWarning(DAD)).toBe(false);
+    expect(splitFamiliar(db, list, 'text', { said: TEXT }).review.slice(1).map(r => r.reason)).toEqual([DAD, DAD]);
+  });
+
+  test('세부내역으로 말한 대상도 잇는다 — 예전 기록이 있으면 그 분류로', async () => {
+    const db = familyDb();
+    for (let i = 1; i <= 3; i++) {
+      db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '현금', '용돈', '아버지', '아버지 약값', 5000)", [addDays(TODAY, -i)]);
+    }
+    analyzeWithAI.mockResolvedValue({
+      entries: [entry({ detail: '아버지 약값', amount: 5000 }), entry({ amount: 7000 })],
+      question: '',
+    });
+    const list = await parse(db, '아버지 약값 5000, 7000');
+    expect(list.map(s => [s.detail, s.sub_category])).toEqual([['아버지 약값', '아버지'], ['아버지 약값', '아버지']]);
+    expect(list[1].sources).toMatchObject({ detail: 'carried', category: 'carried' });
+    expect(list[1].warnings).toEqual(["앞에 말한 '아버지 약값' 추천 — 이 건도 맞는지 확인해 주세요"]);
+  });
+
+  test('이름은 같은데 분류만 못 한 건은 같은 이름의 건이 받은 분류를 잇는다', async () => {
+    analyzeWithAI.mockResolvedValue({
+      entries: [entry({ detail: '아빠 생신', amount: 50000, category: '용돈 > 아버지' }), entry({ detail: '아빠 생신', amount: 30000 })],
+      question: '',
+    });
+    const list = await parse(familyDb(), '아빠 생신 5만원, 아빠 생신 3만원');
+    expect(list.map(s => s.sub_category)).toEqual(['아버지', '아버지']);
+    expect(list[1].warnings).toEqual(["앞에 말한 '아빠 생신' 추천 — 이 건도 맞는지 확인해 주세요"]);
+  });
+
+  test("이름이 다르면('편의점 커피' ↔ '편의점') 같은 가게라도 분류를 잇지 않는다", async () => {
+    const db = familyDb();
+    analyzeWithAI.mockResolvedValue({
+      entries: [entry({ merchant: '편의점', detail: '편의점 커피', amount: 2000, category: '식비 > 커피' }), entry({ merchant: '편의점', amount: 3000 })],
+      question: '',
+    });
+    const list = await parse(db, '편의점 커피 2000, 편의점 3000');
+    expect(list.map(s => [s.sub_category, s.warnings])).toEqual([['커피', []], ['', []]]);
+  });
+
+  test('이어 준 건이 이은 분류도 함께 — 이름·분류가 형제 건과 같다', async () => {
+    analyzeWithAI.mockResolvedValue({
+      entries: [
+        entry({ detail: '아빠 생신', amount: 50000, category: '용돈 > 아버지' }),
+        entry({ detail: '아빠 생신', amount: 30000 }),
+        entry({ amount: 20000 }),
+      ],
+      question: '',
+    });
+    const list = await parse(familyDb(), '아빠 생신 5만원, 아빠 생신 3만원, 2만원');
+    expect(list.map(s => [s.detail, s.sub_category])).toEqual([['아빠 생신', '아버지'], ['아빠 생신', '아버지'], ['아빠 생신', '아버지']]);
+    expect(list[2].warnings).toEqual(["앞에 말한 '아빠 생신' 추천 — 이 건도 맞는지 확인해 주세요"]);
+  });
+
+  test('이름에 줄바꿈이 있어도 알림은 한 줄이고, 이은 알림으로 알아본다', async () => {
+    analyzeWithAI.mockResolvedValue({
+      entries: [entry({ detail: '아버지\n약값', amount: 5000, category: '용돈 > 아버지' }), entry({ amount: 7000 })],
+      question: '',
+    });
+    const [, s] = await parse(familyDb(), '아버지\n약값 5000, 7000');
+    expect(s.warnings).toEqual(["앞에 말한 '아버지 약값' 추천 — 이 건도 맞는지 확인해 주세요"]);
+    expect(isCarriedSubjectWarning("앞에 말한 '아버지\n약값' 추천 — 이 건도 맞는지 확인해 주세요")).toBe(true);
+  });
+
+  test("바로 넣기: 이은 건도 함께 세어 이름을 말한 늘 가던 곳도 확인받는다 ('스타벅스 4500, 3000' — AI가 둘 다 이름을 붙였을 때와 같게)", async () => {
+    const db = familyDb();
+    for (let i = 1; i <= 3; i++) {
+      db.run("INSERT INTO transactions (date, payment_method, budget_category, sub_category, detail, amount) VALUES (?, '신한카드', '식비', '커피', '스타벅스', 4500)", [addDays(TODAY, -i)]);
+    }
+    const starbucks = { merchant: '스타벅스', detail: '스타벅스', category: '식비 > 커피', payment_method: '신한카드', payment_mentioned: true, payment_said: '신한카드' };
+    for (const second of [3000, 4500]) {
+      analyzeWithAI.mockResolvedValueOnce({ entries: [entry({ ...starbucks, amount: 4500 }), entry({ amount: second })], question: '' });
+      const said = `스타벅스 4500 신한카드, ${second}`;
+      const list = await parse(db, said);
+      expect(list[1]).toMatchObject({ detail: '스타벅스', sub_category: '커피', historyDetail: '스타벅스' });
+      const { familiar, review } = splitFamiliar(db, list, 'text', { said });
+      expect(familiar).toEqual([]);
+      // 이름을 말한 건은 같은 거래·같은 예전 기록이 여럿이라, 이은 건은 이었다는 알림으로(앞에 말한 결제수단도 이어 그 알림이 먼저)
+      expect(review.map(r => r.reason)).toEqual([
+        second === 4500 ? '같은 거래가 두 번 있어요 — 한 번만 넣을지 확인해 주세요' : "'스타벅스' 거래가 여럿이에요 — 각각 맞는지 확인해 주세요",
+        "말한 결제수단 '신한카드' 추천 — 이 건도 맞는지 확인해 주세요",
+      ]);
+      expect(list[1].warnings).toEqual(["말한 결제수단 '신한카드' 추천 — 이 건도 맞는지 확인해 주세요", "앞에 말한 '스타벅스' 추천 — 이 건도 맞는지 확인해 주세요"]);
+    }
+  });
+
+  test('대상을 뒤에 말했으면 앞의 건에도 — 뒤에 말한 것', async () => {
+    analyzeWithAI.mockResolvedValue({
+      entries: [entry({ amount: 5000 }), entry({ amount: 7000, category: '용돈 > 아버지' })],
+      question: '',
+    });
+    const list = await parse(familyDb(), '5000, 7000 아버지');
+    expect(list.map(s => s.sub_category)).toEqual(['아버지', '아버지']);
+    expect(list[0].warnings).toEqual(["뒤에 말한 '아버지' 추천 — 이 건도 맞는지 확인해 주세요"]);
+  });
+
+  test('AI가 분류한 건, 다른 이름의 건, 한 건뿐인 것은 건드리지 않는다', async () => {
+    const db = familyDb();
+    analyzeWithAI.mockResolvedValueOnce({
+      entries: [
+        entry({ amount: 5000, category: '용돈 > 아버지' }),
+        entry({ amount: 9000, category: '식비 > 점심' }),
+        entry({ detail: '붕어빵', amount: 3000 }),
+      ],
+      question: '',
+    });
+    const list = await parse(db, '아버지 5000, 점심 9000, 붕어빵 3000');
+    expect(list.map(s => [s.sub_category, s.warnings])).toEqual([['아버지', []], ['점심', []], ['', []]]);
+
+    analyzeWithAI.mockResolvedValueOnce({ entries: [entry({ amount: 5000 })], question: '' });
+    const [lone] = await parse(db, '5000');
+    expect([lone.budget_category, lone.warnings]).toEqual(['', []]);
+  });
+
+  test('다른 건에 말한 결제수단도 함께 이어도 대상 알림은 남는다', async () => {
+    const db = familyDb();
+    analyzeWithAI.mockResolvedValue({
+      entries: [
+        entry({ amount: 5000, category: '용돈 > 아버지', payment_method: '현금', payment_mentioned: true, payment_said: '현금' }),
+        entry({ amount: 7000 }),
+      ],
+      question: '',
+    });
+    const list = await parse(db, '아버지 현금 5000, 7000');
+    expect(list[1]).toMatchObject({ payment_method: '현금', sub_category: '아버지' });
+    expect(list[1].sources).toMatchObject({ payment_method: 'carried', category: 'carried' });
+    expect(list[1].warnings).toEqual(["말한 결제수단 '현금' 추천 — 이 건도 맞는지 확인해 주세요", DAD]);
   });
 });

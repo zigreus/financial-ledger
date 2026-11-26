@@ -10,7 +10,7 @@ import { AIError } from '../../../services/aiClient';
 import TextPanel from '../TextPanel';
 import { parseTextEntry } from '../../../services/textEntry';
 
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+vi.mock('../../../services/textEntry', async (importOriginal) => ({ ...(await importOriginal()), parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 

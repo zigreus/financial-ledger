@@ -583,3 +583,72 @@ test('AI 키가 없으면 설정부터 — 취소하면 쓰던 글로, 저장하
   expect(parseTextEntry.mock.calls[0][0].text).toBe('점심 김치찌개 9천원');
   expect(container.textContent).toContain('얼마였나요?');
 });
+
+test('다른 건에서 말한 대상을 이은 건은 바로 넣지 않고, 분류를 고르면 확인이 필요한 이유가 풀린다 (B-101)', async () => {
+  const DAD = "앞에 말한 '스타벅스' 추천 — 이 건도 맞는지 확인해 주세요";
+  const PAY = "말한 결제수단 '신한' 추천 — 이 건도 맞는지 확인해 주세요";
+  const carried = (o) => ({
+    ...spokenStarbucks(), warnings: [DAD], sources: { date: 'text', detail: 'carried', category: 'carried', payment_method: 'text' }, ...o,
+  });
+  parseTextEntry.mockResolvedValueOnce([
+    spokenStarbucks(),
+    carried({ amount: 3000 }),
+    { ...spokenNewPlace(), warnings: [PAY], sources: { ...spokenNewPlace().sources, payment_method: 'carried' } },
+  ]);
+  await render();
+  await submit('스타벅스 5천원 신한카드, 3000, 처음가본식당 2만원');
+  // 이은 건도 함께 세어 늘 가던 스타벅스도 바로 넣지 않는다 — AI가 두 건 모두 이름을 붙였을 때와 같게
+  expect(onQuickAdd).not.toHaveBeenCalled();
+  const rows = () => [...container.querySelectorAll('.tp-item')];
+  const carriedRow = () => rows().find(r => r.textContent.includes('3,000'));
+  const newRow = () => rows().find(r => r.textContent.includes('처음가본식당'));
+  expect(rows().find(r => r.textContent.includes('5,000')).querySelector('small').textContent).toContain("'스타벅스' 거래가 여럿이에요");
+  expect(carriedRow().querySelector('small').textContent).toContain(DAD);
+  expect(newRow().querySelector('small').textContent).toContain(PAY);
+
+  const choose = (select, value) => act(() => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await choose(carriedRow().querySelectorAll('select')[1], '식비 > 외식');
+  expect(carriedRow().textContent).not.toContain(DAD);
+  await choose(newRow().querySelectorAll('select')[0], '신한카드');
+  expect(newRow().textContent).not.toContain(PAY);
+});
+
+test('바로 넣은 건의 이름을 이은 줄은 덧붙여 정리해도 고쳐 말한 건으로 보지 않는다 — 체크·고른 값이 그 줄에 남는다 (B-101)', async () => {
+  parseTextEntry.mockResolvedValueOnce([spokenStarbucks(), spokenNewPlace()]);
+  await render();
+  await submit('스타벅스 5천원 신한카드, 처음가본식당 2만원 현금');
+  expect(onQuickAdd).toHaveBeenCalledTimes(1);
+
+  // "스타벅스에서 3000원도" — AI가 3000원을 이름 없이 돌려줘 앱이 스타벅스를 이었다
+  const DAD = "앞에 말한 '스타벅스' 추천 — 이 건도 맞는지 확인해 주세요";
+  const carried = {
+    ...spokenStarbucks(), amount: 3000, warnings: [DAD], sources: { date: 'text', detail: 'carried', category: 'carried', payment_method: 'text' },
+  };
+  parseTextEntry.mockResolvedValueOnce([spokenStarbucks(), carried, spokenNewPlace()]);
+  await click(container.querySelector('.tp-followup-open'));
+  await setValue(container.querySelector('.tp-followup textarea'), '3000원도 있었어');
+  await click(button('덧붙여 정리하기'));
+  const rowOf = amount => [...container.querySelectorAll('.tp-item')].find(r => r.textContent.includes(amount));
+  expect(rowOf('5,000').textContent).toContain('앞에서 바로 넣은 거래예요');
+  expect(rowOf('5,000').querySelector('input[type="checkbox"]').checked).toBe(false);
+  expect(rowOf('3,000').textContent).not.toContain('바로 넣은 거래와 비슷해요');
+  expect(rowOf('3,000').querySelector('input[type="checkbox"]').checked).toBe(true);
+  expect(rowOf('3,000').textContent).toContain(DAD);
+
+  // 이 줄에서 고른 결제수단은 다시 정리해도 같은 금액의 줄에 남는다 (AI가 순서를 바꿔도)
+  const choose = (select, value) => act(() => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await choose(rowOf('3,000').querySelectorAll('select')[0], '현금');
+  parseTextEntry.mockResolvedValueOnce([carried, spokenStarbucks(), spokenNewPlace()]);
+  await click(container.querySelector('.tp-followup-open'));
+  await setValue(container.querySelector('.tp-followup textarea'), '식당도 맞아');
+  await click(button('덧붙여 정리하기'));
+  expect(rowOf('3,000').querySelectorAll('select')[0].value).toBe('현금');
+  expect(rowOf('5,000').querySelectorAll('select')[0].value).toBe('신한카드');
+  expect(rowOf('3,000').querySelector('input[type="checkbox"]').checked).toBe(true);
+});

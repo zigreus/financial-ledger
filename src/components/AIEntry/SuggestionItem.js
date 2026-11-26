@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { isSuggestionComplete, isSpokenPaymentWarning, alternativePatch } from '../../services/receiptAssistant';
+import { isCarriedSubjectWarning } from '../../services/textEntry';
 import { evaluateFormula, isIncompleteFormula } from '../../services/formulaEvaluator';
 import { isValidDateStr } from '../../services/dateUtils';
 import AmountInput from '../common/AmountInput';
@@ -18,6 +19,8 @@ export function patchListItem(it, patch) {
   // 말한 결제수단을 못 맞췄다는 알림은 결제수단을 고르면 지운다
   if (patch.payment_method && s.warnings) s.warnings = s.warnings.filter(w => !isSpokenPaymentWarning(w));
   if ('budget_category' in patch) delete s.sources.category;
+  // 다른 건에서 말한 대상을 이었다는 알림은 분류를 고르면 지운다 (B-101)
+  if ('budget_category' in patch && s.warnings) s.warnings = s.warnings.filter(w => !isCarriedSubjectWarning(w));
   if ('date' in patch) delete s.sources.date;
   if ('detail' in patch) delete s.sources.detail;
   return { ...it, s, checked: isSuggestionComplete(s) ? (it.checked || !isSuggestionComplete(it.s)) : false };

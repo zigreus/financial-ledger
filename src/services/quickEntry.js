@@ -12,6 +12,7 @@ import {
   isSuggestionComplete, normalizeName, paymentMatch, suggestionName,
 } from './receiptAssistant';
 import { findExistingTransaction } from './cardSms';
+import { isCarriedSubject } from './textEntry';
 import { getDetailPatterns, getPaymentMethods } from './dbManager';
 import { todayStr } from './dateUtils';
 
@@ -235,6 +236,9 @@ export function splitFamiliar(db, suggestions, kind, opts) {
     suggestions.forEach(s => { const k = keyOf(s); if (k) counts.set(k, (counts.get(k) || 0) + 1); });
     return s => counts.get(keyOf(s)) || 0;
   };
+  // 말로 입력에서 앱이 다른 건에서 말한 대상을 이은 건(B-101) — 함께 세어 이름을 말한 건('스타벅스 4500, 3000'의 스타벅스)도
+  // 확인받게 하고(AI가 두 건 모두 이름을 붙였을 때와 같게), 이은 건 자신은 이었다는 알림을 이유로 보인다
+  const borrowed = kind === 'text' ? isCarriedSubject : () => false;
   const sameTx = tally(batchKey);
   const samePast = tally(s => (kind === 'text' ? normalizeName(s.historyDetail) : ''));
   // 말로 입력: 다른 건의 이름 속 글자('하나로마트')는 결제수단 이야기가 아니다. 다른 건에 붙은 결제수단 말은 지우지 않는다 —
@@ -244,7 +248,8 @@ export function splitFamiliar(db, suggestions, kind, opts) {
   const review = [];
   suggestions.forEach(s => {
     let f;
-    if (sameTx(s) > 1) f = { familiar: false, reason: '같은 거래가 두 번 있어요 — 한 번만 넣을지 확인해 주세요' };
+    if (borrowed(s)) f = familiarity(db, s, kind, { ...opts, others: othersOf(s) });
+    else if (sameTx(s) > 1) f = { familiar: false, reason: '같은 거래가 두 번 있어요 — 한 번만 넣을지 확인해 주세요' };
     else if (samePast(s) > 1) f = { familiar: false, reason: `'${s.historyDetail}' 거래가 여럿이에요 — 각각 맞는지 확인해 주세요` };
     else f = familiarity(db, s, kind, { ...opts, others: othersOf(s) });
     if (f.familiar) familiar.push(s);

@@ -10,9 +10,9 @@
 import { analyzeWithAI, AIError } from './aiClient';
 import {
   buildDataContext, classify, normalizeName, paymentMatch, pickPaymentMethod, pickSpokenPayment, resolveAmount, resolveDate,
-  saidInText, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
+  saidInText, suggestionName, CATEGORY_ALT_DESCRIPTION, CATEGORY_ALT_RULE, DETAIL_SAID_DESCRIPTION, PAYMENT_SAID_DESCRIPTION, PAYMENT_SAID_RULE,
 } from './receiptAssistant';
-import { getPaymentMethods } from './dbManager';
+import { getBudgetCategories, getPaymentMethods } from './dbManager';
 import { today as todayStr } from './formulaEvaluator';
 
 const SCHEMA = {
@@ -83,6 +83,8 @@ export function buildTextPrompt(db, text, today = todayStr(), followUps = []) {
     '',
     '[규칙]',
     '- 한 문장에 여러 건이 있으면 각각 나눈다. "둘 다 현금"처럼 묶어 말한 건 각 건에 적용한다.',
+    '- 앞에서 한 번 말한 대상·용도·가게와 날짜는 다른 것을 말하기 전까지 뒤에 금액만 말한 건에도 이어진다. 그 건들의 merchant·detail·category도 똑같이 채운다 (예: "아버지 23일 5000, 25일 7000, 8000" → 세 건 모두 아버지, 7000·8000은 25일).',
+    '- 금액만 늘어놓은 끝에 "N건"이라고 했고 N이 늘어놓은 금액의 수와 같으면 그 금액들이 N건이다 ("25일 7000, 8000 2건" → 7000 한 건과 8000 한 건). 금액 하나에 붙은 "5000원 2건"은 같은 금액 두 건이다.',
     '- 날짜는 오늘 기준으로 계산한다: 어제, 그저께, 지난주 금요일, 3일 전, 11/3 등. 날짜 말이 없으면 빈 문자열.',
     '- 금액: 9천원=9000, 1만2천원=12000, 만오천=15000, 4.5만=45000.',
     '- 금액을 말하지 않은 건도 빼지 말고 amount=0으로 넣는다. 빠진 정보는 앱이 사용자에게 다시 묻는다.',
@@ -161,15 +163,93 @@ export async function parseTextEntry({ db, ai, text, followUps = [], signal, onP
   // 한 건인데 AI가 결제수단을 말하지 않았다고 보면 — 글에 목록의 결제수단이 또렷이 있는지 앱이 한 번 더 본다 (B-096)
   const lone = list.length === 1 && !list[0].payment_mentioned && !String(list[0].payment_said || '').trim();
   const foundPayment = lone ? paymentWordIn(db, spokenText, list[0]) : '';
-  const out = list.map(e => buildTextSuggestion(db, e, today, { spokenText, foundPayment }));
+  const build = (e, more) => buildTextSuggestion(db, e, today, { spokenText, foundPayment, ...more });
+  const first = list.map(e => build(e));
+  // 여러 건 중 무엇인지 말하지 않은 건 — 다른 건에서 말한 대상을 잇는다('아버지 23일 5000, 25일 7000, 8000'의 뒤 두 건, B-101)
+  const carried = carriedSubjects(db, list, first);
+  const raws = list.map((e, i) => (carried[i] ? carried[i].raw : e));
+  const out = raws.map((e, i) => (carried[i] ? build(e) : first[i]));
   // 여러 건 중 결제수단을 말하지 않은 건 — 다른 건에 말한 결제수단을 추천한다('현대카드로 병원 9천원, 약국 5천원'의 약국).
   // 앞 건에 말한 것이 먼저, 없으면 뒤 건. 짐작이라 바로 넣지 않고 확인받는다
   const told = out.map((s, i) => (s.paymentMentioned && s.paymentSaid && s.payment_method ? i : -1)).filter(i => i >= 0);
   return out.map((s, i) => {
-    if (s.paymentMentioned || !told.length) return s;
-    const from = [...told].reverse().find(j => j < i) ?? told.find(j => j > i);
-    return buildTextSuggestion(db, list[i], today, { spokenText, carriedPayment: out[from].paymentSaid });
+    let next = s;
+    if (!s.paymentMentioned && told.length) {
+      const from = [...told].reverse().find(j => j < i) ?? told.find(j => j > i);
+      next = build(raws[i], { carriedPayment: out[from].paymentSaid });
+    }
+    return carried[i] ? markCarriedSubject(next, out[carried[i].from], carried[i].from < i, carried[i].detail) : next;
   });
+}
+
+// ── 다른 건에서 말한 대상 잇기 (B-101) ──────────────────────────
+
+/** 건을 부르는 이름 — 세부내역, 없으면 가게 (정규화) */
+const nameOf = e => normalizeName(e.detail) || normalizeName(e.merchant);
+/** AI가 목록의 카테고리를 골랐는지 ('모름'·목록에 없는 것은 못 고른 것) */
+const pickedCategory = (cats, e) => cats.includes(String(e.category || '').split('>')[0].trim());
+
+/**
+ * 여러 건 중 무엇인지 분류하지 못한 건에 다른 건에서 말한 대상을 잇는다 — 한 번 말한 대상은 뒤의 건에도 이어진다.
+ * '아버지 23일 5000, 25일 7000, 8000 2건'에서 AI가 '아버지'를 첫 건에만 붙였으면 뒤의 두 건에도.
+ *  1) 이름은 있는데 분류만 못 한 건(예전 기록도 없음): 이름(세부내역, 없으면 가게)이 똑같은 다른 건을 AI가 분류했으면 그 분류.
+ *     '편의점 커피'와 '편의점'처럼 이름이 다르면 잇지 않는다
+ *  2) 무엇인지 아무것도 말하지 않은 건(가게·세부내역 없음, AI도 분류 못 함): 앞(없으면 뒤)의 가장 가까운,
+ *     무엇인지 말한 건의 가게·세부내역·분류 — 그 건이 1)에서 이은 분류까지
+ * AI가 분류한 건과 예전 기록으로 분류한 건은 건드리지 않는다.
+ * 반환: 건마다 { raw: 이은 AI 결과, from: 이어 준 건, detail: 가게·세부내역도 이었는지 } 또는 null
+ */
+function carriedSubjects(db, list, built) {
+  const out = list.map(() => null);
+  if (list.length < 2) return out;
+  const cats = getBudgetCategories(db);
+  const picked = e => pickedCategory(cats, e);
+  const open = list.map((e, i) => !picked(e) && built[i].sources.category !== 'history');
+  const nearest = (i, fits) => {
+    const others = list.map((_, j) => j).filter(j => j !== i && fits(j));
+    return [...others].reverse().find(j => j < i) ?? others.find(j => j > i);
+  };
+  list.forEach((e, i) => {
+    const name = nameOf(e);
+    if (!open[i] || !name) return;
+    const from = nearest(i, j => picked(list[j]) && nameOf(list[j]) === name);
+    if (from !== undefined) {
+      out[i] = { raw: { ...e, category: list[from].category, category_alt: list[from].category_alt }, from, detail: false };
+    }
+  });
+  const raws = list.map((e, i) => (out[i] ? out[i].raw : e));
+  list.forEach((e, i) => {
+    if (!open[i] || nameOf(e)) return;
+    const from = nearest(i, j => !!nameOf(raws[j]) || picked(raws[j]));
+    if (from === undefined) return;
+    const d = raws[from];
+    out[i] = {
+      raw: { ...e, merchant: d.merchant, detail: d.detail, category: d.category, category_alt: d.category_alt }, from, detail: true,
+    };
+  });
+  return out;
+}
+
+/**
+ * 앱이 다른 건에서 말한 대상을 이은 추천인지 — 이름을 빌렸을 뿐이라, 같은 이름의 다른 건(바로 넣은 것 등)과
+ * 같은 거래라는 근거가 아니다. 따로 확인받는다
+ */
+export const isCarriedSubject = s => s?.sources?.detail === 'carried' || s?.sources?.category === 'carried';
+
+/** 다른 건에서 말한 대상을 이었다는 알림인지 — 분류를 직접 고르면 지운다 (앞머리만 본다 — 이름에 무엇이 있든) */
+export const isCarriedSubjectWarning = w => /^(앞|뒤)에 말한 '/.test(String(w || ''));
+
+/** 이은 건에 근거 '추천'과 확인 알림을 붙인다 — 짐작이라 바로 넣지 않는다. donor: 이어 준 건의 추천 */
+function markCarriedSubject(s, donor, before, detail) {
+  const name = (suggestionName(donor) || donor.budget_category || '').replace(/\s+/g, ' ');
+  const sources = { ...s.sources };
+  if (s.budget_category && sources.category !== 'trip') sources.category = 'carried';
+  if (detail && s.detail) sources.detail = 'carried';
+  return {
+    ...s,
+    sources,
+    warnings: [...s.warnings, `${before ? '앞' : '뒤'}에 말한 '${name}' 추천 — 이 건도 맞는지 확인해 주세요`],
+  };
 }
 
 // 결제수단 낱말 끝에 붙는 말 — '현대카드로', '현금으로', '신한카드 결제'

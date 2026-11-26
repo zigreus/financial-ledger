@@ -10,7 +10,7 @@
   - `상태`, `심각도`(치명/높음/중간/낮음), `영역`, `문제`, `원인`, `해결`, `파일`
 - **갱신:** 상태가 바뀌면 요약표와 상세 항목을 둘 다 고친다.
 
-다음 번호: B-101, I-066
+다음 번호: B-102, I-066
 
 ## 요약표
 
@@ -116,6 +116,7 @@
 | B-098 | ✅ | 중간 | AI 입력 | AI 입력 상자에 설명을 쓰고 📷 사진을 고르면 그 글이 조용히 버려짐(공유받은 사진의 글도 AI에 가지 않음) |
 | B-099 | ✅ | 중간 | AI 입력 | 네이버페이 주문 화면 사진이 다른 가게('네이버페이 taptap')의 세부내역·카테고리로 채워지고, 상품이 보여도 '무엇을 샀는지 알 수 없어요'라고 함 |
 | B-100 | ✅ | 중간 | 화면 | 휴대폰에서 ✨ AI 창을 열면 창이 화면 위로 크게 밀려 올라가 입력 칸이 잘 안 보일 때가 있음 |
+| B-101 | ✅ | 중간 | AI 입력 | 말로 입력에 '아버지 23일 5000, 25일 7000, 8000 2건'이라고 쓰면 25일 두 건에는 아버지(분류)가 빠짐 |
 | I-001 | ✅ | - | 테스트 | 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가 |
 | I-002 | ✅ | - | 정리 | 죽은 코드(trips 테이블·함수, holidays 테이블, 미사용 함수) 정리 |
 | I-003 | ✅ | - | 구조 | 요약 SQL 함수 9개 복붙 → 공통 함수 |
@@ -1084,6 +1085,15 @@
 - 원인: 휴대폰 브라우저는 키보드가 화면 아래를 덮어도 고정 위치 창을 줄이지 않고 가려진 칸을 보이려고 화면 전체를 끌어올리는데, AI 창은 아래에 붙은 짧은 창이라 상자가 키보드 자리에 있고 열자마자(올라오는 애니메이션 중에) 상자에 키보드를 띄워 더 많이 끌어올렸으며, 창 높이가 vh라 키보드로 줄어든 화면에서는 창이 위로 넘쳤다.
 - 해결: ModalOverlay에 fitKeyboard를 두어 키보드가 열리면 바깥 판의 안쪽 여백으로 보이는 곳(visualViewport의 위치·높이를 판 자신의 사각형에 견줌, 확대는 제외) 바깥을 비워 창을 보이는 곳에 두고(뒤 화면은 늘 어둡게 덮음) 창 높이를 그 안에 견주며, 창이 작아져 입력 칸이 밀리면 창 안에서만 스크롤한다 — AI 창에 쓴다. 금액 칸(AmountInput)은 보이는 곳 아래 끝·키보드에 가린 높이를 끌어올린 만큼(offsetTop) 바로 계산하고, 스크롤 안 하는 칸을 잡지 않게 .ai-assistant-body의 overflow를 뺐다.
 - 파일: src/components/common/ModalOverlay.js(fitKeyboard·revealInPanel), AmountInput.js(scrollIntoVisibleArea·여백), src/components/TransactionForm/TransactionForm.css(.modal-fit-keyboard), src/components/AIEntry/AIAssistant.js, AIEntry.css, 테스트(ModalOverlay·AmountInput.keyboard)
+
+### B-101 말로 입력에 '아버지 23일 5000, 25일 7000, 8000 2건'이라고 쓰면 25일 두 건에는 아버지(분류)가 빠짐
+- 상태: ✅ 해결 (2026-11-26)
+- 심각도: 중간
+- 영역: AI 입력
+- 문제: 앞에 한 번 말한 대상('아버지')을 뒤에 금액만 말한 건에도 붙여야 하는데, 첫 건만 아버지로 분류되고 뒤의 두 건은 카테고리가 비어 나왔다(사용자 제보).
+- 원인: 지시문에 '한 번 말한 대상·날짜는 뒤의 건에도 이어진다'는 규칙이 없어 AI가 대상을 그 말이 붙은 건에만 달았고, 앱은 결제수단(B-096)과 달리 다른 건에서 말한 대상을 잇지 않았다.
+- 해결: 지시문에 한 번 말한 대상·용도·가게와 날짜는 다른 것을 말하기 전까지 뒤의 건에도 잇고 '7000, 8000 2건'은 그 두 금액이라는 규칙을 더하고, AI가 분류하지 못한 건은 앱이 다른 건에서 말한 대상(무엇인지 말하지 않은 건은 앞—없으면 뒤—의 가장 가까운 건의 이름·분류, 이름만 있는 건은 이름이 똑같은 건이 받은 분류)을 '추천'으로 채우고 확인받는다(바로 넣지 않고, 이은 건도 같은 거래·같은 예전 기록으로 함께 세어 AI가 모두 이름을 붙였을 때와 같게 하며, 바로 넣은 건과 같은 거래로 표시하지 않고, 분류를 직접 고르면 알림·확인 이유를 지움).
+- 파일: src/services/textEntry.js(buildTextPrompt·carriedSubjects·markCarriedSubject·isCarriedSubjectWarning), quickEntry.js(splitFamiliar — 이은 건은 자기 알림을 이유로), src/components/AIEntry/SuggestionItem.js(patchListItem)·TextFollowUp.js(applyPicks·carryChoices — 같은 이름이면 같은 금액 먼저·describeGaps — 같은 이름이면 금액)·TextPanel.js(이은 건은 바로 넣은 건과 짝짓지 않음, 확인이 필요한 이유 지우기 — 결제수단 알림도), 테스트(textEntry·TextFollowUp·AIEntry.quick·TextPanel 목)
 
 ### I-001 자동 테스트 0개 → dbManager 핵심 로직 테스트 추가
 - 상태: ✅ 해결 (2026-11-07)

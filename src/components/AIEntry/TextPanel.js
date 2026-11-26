@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
-import { parseTextEntry, UNCLEAR } from '../../services/textEntry';
+import { isCarriedSubject, isCarriedSubjectWarning, parseTextEntry, UNCLEAR } from '../../services/textEntry';
 import {
-  alternativePatch, applyAlternative, isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction,
+  alternativePatch, applyAlternative, isSpokenPaymentWarning, isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction,
 } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
 import { QUICK_REASONS, isCategoryReason, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
@@ -156,6 +156,9 @@ export default function TextPanel({
       };
       const near = (pool, sug) => pool.some(a => a.date === sug.date && a.name === nameKey(sug));
       list = list.map(sug => {
+        // 다른 건에서 대상을 이은 건(B-101)은 이름을 빌렸을 뿐 — 바로 넣은·되돌린 건과 같은 거래로 보지 않는다
+        // (늘 확인받으므로 바로 넣은 적도 없다)
+        if (isCarriedSubject(sug)) return checkExisting && findExistingTransaction(curDb, sug) ? mark(sug, 'existing') : sug;
         if (take(added, sug)) return mark(sug, 'again');
         if (near(autoAddedRef.current, sug)) return mark(sug, 'similar');
         if (take(undone, sug)) return mark(sug, 'undone');
@@ -280,10 +283,14 @@ export default function TextPanel({
     setRestore(null);
   };
 
-  // 분류를 골랐으면 '분류를 확인해 달라'던 이유는 풀렸다
-  const withoutCategoryReason = (s, patch) => ('budget_category' in patch && isCategoryReason(s.reviewReason)
-    ? { ...s, reviewReason: '' }
-    : s);
+  // 분류를 골랐으면 '분류를 확인해 달라'·'앞에 말한 대상 추천'(B-101)이던 이유는 풀렸다.
+  // 결제수단을 골랐으면 '말한 결제수단 …'이던 이유도 (목록의 알림은 patchListItem이 지운다, B-096)
+  const withoutCategoryReason = (s, patch) => {
+    const r = s.reviewReason;
+    const settled = ('budget_category' in patch && (isCategoryReason(r) || isCarriedSubjectWarning(r)))
+      || (!!patch.payment_method && isSpokenPaymentWarning(r));
+    return settled ? { ...s, reviewReason: '' } : s;
+  };
 
   const updateItem = (idx, patch) => {
     setItems(list => list.map((it, i) => {

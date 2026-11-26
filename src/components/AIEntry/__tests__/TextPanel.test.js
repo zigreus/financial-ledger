@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import TextPanel from '../TextPanel';
 import { parseTextEntry } from '../../../services/textEntry';
 
-vi.mock('../../../services/textEntry', () => ({ parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
+vi.mock('../../../services/textEntry', async (importOriginal) => ({ ...(await importOriginal()), parseTextEntry: vi.fn(), UNCLEAR: 'unclear' }));
 vi.mock('../../../services/receiptAssistant', async importOriginal => ({
   ...(await importOriginal()), isSuggestionComplete: () => true, suggestionToTransaction: (db, s) => s,
 }));
