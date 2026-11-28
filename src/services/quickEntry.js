@@ -20,7 +20,7 @@ export const FAMILIAR_MIN_COUNT = 2;
 
 /**
  * 바로 넣은(되돌린) 거래를 다시 만났을 때 확인 목록에 붙이는 이유 — 체크를 끈 채 보인다.
- * 한 건 화면('이대로 채우기')에도 맞게 '고르세요'라고 쓴다
+ * 한 건 화면에도 맞게 '고르세요'라고 쓴다 — 그 화면에서는 '이대로 넣기' 대신 '그래도 넣기'가 보인다 (I-066)
  */
 export const QUICK_REASONS = {
   again: '앞에서 바로 넣은 거래예요 — 또 넣을 때만 고르세요',
@@ -48,6 +48,9 @@ const CATEGORY_REASONS = new Set(Object.values(CATEGORY_REASON));
 
 /** 분류를 확인하라는 이유인지 — 분류를 고르면 화면에서 지운다 */
 export const isCategoryReason = reason => CATEGORY_REASONS.has(reason);
+
+/** 빈 칸 때문에 바로 넣지 않은 이유 — 빈 칸을 다 채우면 화면에서 지운다 (I-066) */
+export const BLANK_REASON = '빈 칸이 있어요';
 
 /** 말로 적은 글로 바로 넣어도 되는지 (취소·예약 같은 말이 없을 때) */
 export function mayAutoAddText(text) {
@@ -193,7 +196,7 @@ function surePayment(db, s, kind, said, others) {
 export function familiarity(db, s, kind, { said, others } = {}) {
   const no = reason => ({ familiar: false, reason });
   if (!s || s.kind === 'cancel') return no('승인 취소는 지울 거래를 확인해야 해요');
-  if (!isSuggestionComplete(s)) return no('빈 칸이 있어요');
+  if (!isSuggestionComplete(s)) return no(BLANK_REASON);
   if (!(Number(s.amount) > 0)) return no('금액을 확인해 주세요');
   if (s.currency && s.currency !== 'KRW') return no('외화 결제예요');
   if (s.event_id) return no('여행 일정에 넣는 거래예요');

@@ -12,7 +12,7 @@ vi.mock('../../../services/textEntry', async (importOriginal) => ({ ...(await im
 vi.mock('../../../services/receiptAssistant', async importOriginal => ({
   ...(await importOriginal()), isSuggestionComplete: () => true, suggestionToTransaction: (db, s) => s,
 }));
-vi.mock('../../../services/dbManager', () => ({ getPaymentMethods: () => [] }));
+vi.mock('../../../services/dbManager', () => ({ getPaymentMethods: () => [], getTransactions: () => [] }));
 vi.mock('../SuggestionCard', () => ({ default: () => null }));
 vi.mock('../SuggestionItem', () => ({ default: () => null, patchListItem: (it, patch) => ({ ...it, ...patch }) }));
 

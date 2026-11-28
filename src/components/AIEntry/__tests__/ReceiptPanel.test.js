@@ -25,11 +25,13 @@ vi.mock('../../../services/quickEntry', () => ({
   familiarity: vi.fn(),
   splitFamiliar: vi.fn(),
   isCategoryReason: () => false,
+  BLANK_REASON: '빈 칸이 있어요',
   QUICK_REASONS: { existing: '같은 날 같은 금액 거래가 이미 있어요', undone: '되돌린 거래예요' },
 }));
 vi.mock('../../../services/imageUtils', () => ({ preparePhotos: vi.fn() }));
 let memberNames = ['나', '아내'];
 let ledger = []; // 가짜 가계부 거래
+let detailsProps = null; // 한 건 화면이 SuggestionDetails에 넘긴 것 — 결제수단·카테고리 고르기(onPatch)를 부른다 (I-066)
 vi.mock('../../../services/dbManager', () => ({
   getPaymentMethods: () => ['현대EV', '신한카드'],
   getMemberNames: () => memberNames,
@@ -37,7 +39,7 @@ vi.mock('../../../services/dbManager', () => ({
   hasForeignAmount: () => false,
 }));
 vi.mock('../SuggestionCard', () => ({
-  default: () => null,
+  default: (props) => { detailsProps = props; return null; },
   amountText: s => `${s.amount}원`,
   SourceBadge: () => null,
   categoryText: () => '',
@@ -1257,4 +1259,143 @@ test('한 건 화면의 고치기도 누른 순간 다시 대조한다 — 그�
   expect(onBulkAdd).not.toHaveBeenCalled();
   expect(container.textContent).toContain('이미 넣은 거래가 있어요');
   expect([...container.querySelectorAll('button')].some(b => b.textContent === '가계부 기록 고치기')).toBe(false);
+});
+
+describe('한 건 화면의 이대로 넣기 — 입력 창 없이 바로 넣는다 (I-066)', () => {
+  const paid = (o = {}) => row('스타벅스', 6500, { budget_category: '식비', sub_category: '커피', confidence: 'high', ...o });
+  const renderOne = (props = {}) => act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={() => {}} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} {...props} />);
+  });
+
+  test('다 읽혔으면 이대로 넣기가 기본 버튼이고, 누르면 그 결제를 바로 넣는다 — 이대로 채우기는 입력 창을 채운다', async () => {
+    readWithRealRules([paid()]);
+    const onBulkAdd = vi.fn();
+    const onApply = vi.fn();
+    await renderOne({ onBulkAdd, onApply });
+    await flush();
+    expect(buttonNamed('이대로 넣기').className).toContain('rs-btn-primary');
+    expect(buttonNamed('이대로 채우기').className).toContain('rs-btn-secondary');
+    await act(async () => { buttonNamed('이대로 넣기').click(); });
+    expect(onBulkAdd).toHaveBeenCalledWith([{ detail: '스타벅스', amount: 6500, payment_method: '현대EV' }]);
+    await act(async () => { buttonNamed('이대로 채우기').click(); });
+    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ amount: 6500, payment_method: '현대EV' }));
+  });
+
+  test('결제수단·금액을 모르면 바로 넣지 않고 이유를 보인다', async () => {
+    readWithRealRules([paid({ payment_method: '' })]);
+    await renderOne({ onBulkAdd: vi.fn() });
+    await flush();
+    expect(buttonNamed('이대로 넣기').disabled).toBe(true);
+    expect(container.querySelector('.rs-add-note').textContent).toBe('결제수단을 고르면 바로 넣을 수 있어요');
+
+    readWithRealRules([paid({ amount: null })]);
+    await act(async () => {
+      root.render(<ReceiptPanel db={{}} files={[{ name: 'b.jpg' }]} onApply={() => {}} onBulkAdd={vi.fn()} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} />);
+    });
+    await flush();
+    expect(buttonNamed('이대로 넣기').disabled).toBe(true);
+    expect(container.querySelector('.rs-add-note').textContent).toContain('금액을 몰라 바로 넣을 수 없어요');
+  });
+
+  test('이미 넣은 거래와 같으면 기본 버튼 없이 그래도 넣기로 — 알고 누르면 넣는다', async () => {
+    ledger = [{ ...STARBUCKS_TX, amount: 6500 }];
+    readWithRealRules([paid()]);
+    const onBulkAdd = vi.fn();
+    await renderOne({ onBulkAdd });
+    await flush();
+    expect(container.textContent).toContain('이미 넣은 거래가 있어요');
+    expect(buttonNamed('이대로 넣기')).toBeUndefined();
+    expect(buttonNamed('그래도 넣기').className).toContain('rs-btn-secondary');
+    await act(async () => { buttonNamed('그래도 넣기').click(); });
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+  });
+
+  test('누른 순간 다시 대조한다 — 그사이 같은 거래가 들어왔으면 넣지 않고 알린다', async () => {
+    readWithRealRules([paid()]);
+    const onBulkAdd = vi.fn();
+    await renderOne({ onBulkAdd });
+    await flush();
+    ledger = [{ ...STARBUCKS_TX, amount: 6500 }];          // 다른 기기에서 같은 결제를 넣었다
+    await act(async () => { buttonNamed('이대로 넣기').click(); });
+    expect(onBulkAdd).not.toHaveBeenCalled();
+    expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요');
+    expect(buttonNamed('그래도 넣기')).toBeDefined();
+  });
+
+  test('바로 넣을 곳이 없으면(onBulkAdd 없음) 전처럼 이대로 채우기만', async () => {
+    readWithRealRules([paid()]);
+    await renderOne();
+    await flush();
+    expect(buttonNamed('이대로 넣기')).toBeUndefined();
+    expect(buttonNamed('이대로 채우기').className).toContain('rs-btn-primary');
+  });
+});
+
+describe('한 건 화면에서 결제수단·카테고리 고르기 (I-066)', () => {
+  const paid = (o = {}) => row('스타벅스', 6500, { budget_category: '식비', sub_category: '커피', confidence: 'high', ...o });
+  const renderOne = (props = {}) => act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={() => {}} onBulkAdd={vi.fn()} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} {...props} />);
+  });
+  const pick = p => act(async () => { detailsProps.onPatch(p); });
+
+  test("결제수단을 고르면 바로 넣을 수 있고, 빈 칸 때문에 확인받던 이유는 지운다", async () => {
+    readWithRealRules([paid({ payment_method: '', sources: { date: 'receipt', payment_method: 'ai' } })]);
+    familiarity.mockReturnValue({ familiar: false, reason: '빈 칸이 있어요' });
+    await renderOne({ onAutoAdd: vi.fn() });
+    await flush();
+    expect(container.querySelector('.quick-reason').textContent).toBe('확인이 필요한 이유: 빈 칸이 있어요');
+    expect(buttonNamed('이대로 넣기').disabled).toBe(true);
+    await pick({ payment_method: '현대EV' });
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    expect(buttonNamed('이대로 넣기').disabled).toBe(false);
+    expect(detailsProps.suggestion.payment_method).toBe('현대EV');
+    expect(detailsProps.suggestion.sources.payment_method).toBeUndefined(); // 직접 고른 것 — 근거 표시를 지운다
+  });
+
+  test('고른 결제수단으로 이미 넣은 거래와 겹치면 그 이유를 보이고 그래도 넣기로 — 다시 바꾸면 풀린다', async () => {
+    ledger = [{ id: 9, date: '2025-01-01', detail: '편의점', amount: 6500, payment_method: '신한카드' }];
+    readWithRealRules([paid()]);
+    await renderOne();
+    await flush();
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    await pick({ payment_method: '신한카드' });
+    expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요(편의점 6,500원 · 신한카드)');
+    expect(buttonNamed('그래도 넣기')).toBeDefined();
+    await pick({ payment_method: '현대EV' });
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    expect(buttonNamed('이대로 넣기').className).toContain('rs-btn-primary');
+  });
+});
+
+describe('한 건 화면의 이유 맞추기 (I-066 리뷰)', () => {
+  const paid = (o = {}) => row('스타벅스', 6500, { budget_category: '식비', sub_category: '커피', confidence: 'high', ...o });
+  const renderOne = (props = {}) => act(async () => {
+    root.render(<ReceiptPanel db={{}} files={[{ name: 'a.jpg' }]} onApply={() => {}} onBulkAdd={vi.fn()} onRepick={() => {}} onClose={() => {}} onSetup={() => {}} {...props} />);
+  });
+
+  test('바로 넣기를 따진 한 건도 겹친 결제면 그 자세한 이유를 보이고, 결제수단을 바꿔 겹침이 풀리면 지운다', async () => {
+    ledger = [{ id: 9, date: '2025-01-01', detail: '편의점', amount: 6500, payment_method: '현대EV' }];
+    readWithRealRules([paid()]);
+    familiarity.mockReturnValue({ familiar: false, reason: '이미 넣은 거래 같아요' });
+    await renderOne({ onAutoAdd: vi.fn() });
+    await flush();
+    expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요(편의점 6,500원 · 현대EV)');
+    expect(buttonNamed('그래도 넣기')).toBeDefined();
+    await act(async () => { detailsProps.onPatch({ payment_method: '신한카드' }); });
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    expect(buttonNamed('이대로 넣기').className).toContain('rs-btn-primary');
+  });
+
+  test('다른 후보를 고르면 겹친 결제를 다시 따진다 — 바뀐 세부내역이 이미 넣은 거래와 같으면 그래도 넣기로', async () => {
+    ledger = [{ id: 9, date: '2025-01-01', detail: '편의점', amount: 6500, payment_method: '신한카드' }];
+    const past = { kind: 'past', budget_category: '식비', sub_category: '간식', detail: '편의점', categorySource: 'history', detailSource: 'history' };
+    readWithRealRules([paid({ merchant: '', detail: '스타벅스', alternatives: [{ kind: 'first', budget_category: '식비', sub_category: '커피', detail: '스타벅스' }, past] })]);
+    await renderOne();
+    await flush();
+    expect(buttonNamed('이대로 넣기')).toBeDefined();
+    await act(async () => { detailsProps.onUseAlternative(past); });
+    expect(detailsProps.suggestion.detail).toBe('편의점');
+    expect(container.querySelector('.quick-reason').textContent).toContain('이미 넣은 거래가 있어요(편의점 6,500원 · 신한카드)');
+    expect(buttonNamed('그래도 넣기')).toBeDefined();
+  });
 });

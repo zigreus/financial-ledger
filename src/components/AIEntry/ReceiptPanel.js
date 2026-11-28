@@ -1,17 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { activeAI, PROVIDERS } from '../../services/aiClient';
 import {
-  suggestionToTransaction, isSuggestionComplete, applyAlternative, normalizeName,
+  suggestionToTransaction, isSuggestionComplete, alternativePatch, applyAlternative, normalizeName,
 } from '../../services/receiptAssistant';
 import {
   analyzePhotos, markDuplicates, cleanPhotoNotes, suggestFixNear, nearFix, NEAR_CAUTION, NEAR_BLOCKED,
 } from '../../services/photoEntry';
-import { familiarity, splitFamiliar, isCategoryReason, QUICK_REASONS } from '../../services/quickEntry';
+import { familiarity, splitFamiliar, isCategoryReason, BLANK_REASON, QUICK_REASONS } from '../../services/quickEntry';
 import { preparePhotos } from '../../services/imageUtils';
 import { getMemberNames, getPaymentMethods } from '../../services/dbManager';
 import SuggestionDetails, { amountText } from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import QuickAutoNote from './QuickAutoNote';
+import SingleActions from './SingleActions';
 import { FollowUpBox, SaidSoFar, SETTINGS_KINDS } from './TextFollowUp';
 import { useQuickBatches } from './useQuickBatches';
 import { isValidDateStr } from '../../services/dateUtils';
@@ -229,7 +230,8 @@ function Thumbs({ previews, count }) {
  * 사진(영수증 여러 장·결제 내역 캡처) → AI 분석 → 확인 → 입력.
  * 사진 선택창은 부모(AIEntry)가 연다 — 모바일 브라우저는 사용자가 누른 순간에만 열어 주기 때문.
  * files가 바뀔 때마다 새로 분석한다.
- *  - 결제가 한 건이면 지금처럼 "이렇게 입력하시겠습니까?" → 폼 채우기(onApply).
+ *  - 결제가 한 건이면 "이렇게 입력하시겠습니까?" → 바로 넣기('이대로 넣기' — onBulkAdd, 결제수단·카테고리는 그 자리에서 고른다, I-066)
+ *    또는 폼 채우기('이대로 채우기' — onApply). 이미 넣은 거래와 겹칠 수 있으면 '그래도 넣기'로.
  *    onAutoAdd가 있으면(AI 입력, I-022) 자주 넣던 가게의 분명한 영수증은 확인 없이 바로 넣는다.
  *  - 여러 건이면(영수증 여러 장, 카드 앱의 이용내역 캡처) 자주 넣던 건은 바로 넣고, 나머지는 목록에서 골라
  *    한 번에 추가한다(onBulkAdd). 이미 가계부에 있는 결제·겹쳐 찍은 결제·취소된 결제는 체크 없이 보인다.
@@ -396,7 +398,8 @@ export default function ReceiptPanel({
             autoAdd([suggestionToTransaction(cur, s)], { remaining: 0 });
             return; // 바로 넣었다 — 입력 창이 닫힌다
           }
-          setReviewReason(f.reason);
+          // 겹친 결제면 그 자세한 이유를 — 고쳐서 겹침이 풀리면 지울 수 있게(patchSingle), 바로 넣지 않은 다른 이유는 그대로
+          setReviewReason(flagReason(s) || f.reason);
         } else {
           // 바로 넣기를 따지지 않아도 이미 넣은 거래·앞서 바로 넣은 결제와 겹치는 것은 알린다
           setReviewReason(marks.get(s) || (s.duplicateOf || s.nearOf ? flagReason(s) : ''));
@@ -513,6 +516,45 @@ export default function ReceiptPanel({
   };
 
   /**
+   * 한 건 화면의 추천을 바꾼 뒤(결제수단·카테고리를 고름, 다른 후보를 고름 — I-066) 겹친 결제를 다시 따진다
+   * (결제수단·세부내역이 같은 기록과 짝짓는다). 이유도 맞춘다: 바로 넣은(되돌린) 결제와 겹칠 수 있다는 이유는 그대로,
+   * 새로 겹치면 그 이유, 겹침이 풀렸으면 그 이유는 지우고, 분류를 골랐으면 분류 확인을, 빈 칸을 다 채웠으면 빈 칸을 지운다.
+   * p: 바꾼 칸
+   */
+  const changeSingle = (prev, changed, p) => {
+    const [again] = markDuplicates(dbRef.current, [changed], { claimed: claimedNow() });
+    const flag = flagReason(again);
+    let reason = reviewReason;
+    if (!HELD_REASONS.has(reason)) {
+      if (flag) reason = flag;
+      else if (reason && reason === flagReason(prev)) reason = '';
+      else if ('budget_category' in p && isCategoryReason(reason)) reason = '';
+      else if (reason === BLANK_REASON && isSuggestionComplete(again)) reason = '';
+    }
+    setSuggestion(again);
+    setReviewReason(reason);
+  };
+  /** 결제수단·카테고리를 고른다 — 직접 고른 칸은 근거 표시를 지운다(patchListItem) */
+  const patchSingle = p => changeSingle(suggestion, patchListItem({ s: suggestion, checked: false }, p).s, p);
+  /** 다른 후보(예전 기록·2순위 등)로 바꾼다 — 근거 표시도 그 후보의 것으로 */
+  const pickSingleAlternative = o => changeSingle(suggestion, applyAlternative(suggestion, o), alternativePatch(suggestion, o));
+
+  /**
+   * 한 건 화면의 '이대로 넣기' (I-066) — 누른 순간 다시 대조해, 그사이 같은 거래가 새로 들어왔으면(다른 기기 등)
+   * 넣지 않고 그 이유를 보인다. 이미 알고 '그래도 넣기'로 누른 겹침은 그대로 넣는다
+   */
+  const addSingle = () => {
+    const [again] = markDuplicates(dbRef.current, [suggestion], { claimed: claimedNow() });
+    const now = flagKey(again);
+    if (now && now !== flagKey(suggestion)) {
+      setSuggestion(again);
+      setReviewReason(flagReason(again));
+      return;
+    }
+    onBulkAdd([suggestionToTransaction(dbRef.current, again)]);
+  };
+
+  /**
    * 한 건 화면의 '가계부 기록 고치기' (I-065) — 누른 순간 다시 대조해, 고칠 기록이 그대로일 때만 고친다
    * (그사이 다른 기기에서 고쳤거나 지웠으면 바뀐 대조를 보여 주고 멈춘다)
    */
@@ -609,6 +651,8 @@ export default function ReceiptPanel({
 
   if (phase === 'review') {
     const s = suggestion;
+    // 이미 있거나 겹친 결제, 앞서 바로 넣은(되돌린) 결제와 같은 곳 — 목록처럼 저절로 넣지 않는다('그래도 넣기', I-066)
+    const heldSingle = !!flagReason(s) || HELD_REASONS.has(reviewReason);
     return (
       <div className="rs-box rs-review">
         <div className="rs-review-head">
@@ -625,19 +669,23 @@ export default function ReceiptPanel({
         <SuggestionDetails
           suggestion={s}
           amountSource="receipt"
-          onUseAlternative={(o) => {
-            setSuggestion(cur => applyAlternative(cur, o));
-            // 분류를 골랐으면 '분류를 확인해 달라'던 이유는 풀렸다
-            if (isCategoryReason(reviewReason)) setReviewReason('');
-          }}
+          onUseAlternative={pickSingleAlternative}
+          db={db}
+          methods={getPaymentMethods(db)}
+          onPatch={patchSingle}
         />
         {isNearRow(s) && <NearFix s={s} disabled={pending} onFix={onBulkAdd ? fixSingle : undefined} />}
         {followArea}
-        <div className="rs-actions">
+        <SingleActions
+          s={s}
+          disabled={pending}
+          held={heldSingle}
+          onApply={onApply}
+          onAdd={onBulkAdd ? addSingle : undefined}
+        >
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
           <button type="button" className="rs-btn-secondary" onClick={() => onRepick()}>다시 찍기</button>
-          <button type="button" className="rs-btn-primary" disabled={pending} onClick={() => onApply(s)}>이대로 채우기</button>
-        </div>
+        </SingleActions>
       </div>
     );
   }

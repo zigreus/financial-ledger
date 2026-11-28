@@ -652,7 +652,8 @@ function App() {
     return { done: result.done };
   }, [closeEntry, replaceNav, showTopToast, showToast]);
 
-  // AI 창에서 한 건을 '이대로 채우기' — 입력 창을 열어 채운다(AI 창 기록을 입력 창으로 바꾼다)
+  // AI 창에서 한 건을 '이대로 채우기' — 입력 창을 열어 채운다(AI 창 기록을 입력 창으로 바꾼다).
+  // '이대로 넣기'(I-066)는 입력 창 없이 handleBulkAdd로 넣는다
   const applyFromAssistant = useCallback((s) => {
     setAiStart({ apply: s });
     replaceNav({ showAssistant: false, showForm: true, editingTx: null, copyFromTx: null });
@@ -727,7 +728,9 @@ function App() {
     closeEntry();
     const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
     const parts = [];
-    if (rows.length) parts.push(`${rows.length}건 ${total.toLocaleString()}원 추가`);
+    // 한 건이면(AI 입력 한 건 화면의 '이대로 넣기', I-066) 무엇을 넣었는지 보인다
+    if (rows.length === 1) parts.push(`${rows[0].detail || rows[0].budget_category} ${total.toLocaleString()}원 추가`);
+    else if (rows.length) parts.push(`${rows.length}건 ${total.toLocaleString()}원 추가`);
     if (fixed) parts.push(`${fixed}건 수정`);
     if (deleteIds.length) parts.push(`취소된 거래 ${deleteIds.length}건 삭제`);
     // 고칠 거래만 왔는데 그사이 모두 지워졌으면 — 바뀐 것이 없다

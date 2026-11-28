@@ -14,12 +14,13 @@ export function SourceBadge({ source }) {
   return <span className={`rs-src rs-src-${source}`}>{SOURCE_LABEL[source]}</span>;
 }
 
-function Row({ label, value, source, hint, missing }) {
+/** 항목 한 줄 — control이 있으면(고를 수 있는 칸) 값 대신 그것을 보인다 */
+function Row({ label, value, source, hint, missing, control }) {
   return (
     <div className="rs-row">
       <span className="rs-row-label">{label}</span>
-      <span className={`rs-row-value${missing ? ' missing' : ''}`}>
-        {value}
+      <span className={`rs-row-value${missing && !control ? ' missing' : ''}`}>
+        {control || value}
         {hint && <small>{hint}</small>}
       </span>
       <SourceBadge source={source} />
@@ -75,10 +76,36 @@ export function Alternatives({ s, onUse }) {
  * 추천 한 건의 항목별 내용과 근거.
  * amountSource: 금액 근거 (영수증/입력한 말/카드 내역)
  * onUseAlternative(후보): 다른 후보로 바꾸기 — 주면 '이걸로' 버튼이 보인다
+ * onPatch(고친 값)·db·methods(결제수단 목록)를 주면 결제수단·카테고리를 그 자리에서 고른다 —
+ * 한 건 화면의 '이대로 넣기'가 입력 창 없이 넣을 수 있게 (I-066)
  */
-export default function SuggestionDetails({ suggestion: s, amountSource = 'receipt', onUseAlternative }) {
+export default function SuggestionDetails({ suggestion: s, amountSource = 'receipt', onUseAlternative, onPatch, db, methods }) {
   const [showItems, setShowItems] = useState(false);
   const sources = s.sources || {};
+  const editable = !!onPatch && !!db;
+  // 목록에 없는 결제수단이 들어 있으면(그사이 이름을 바꿈 등) 그것도 보여 '결제수단 선택'으로 잘못 보이지 않게
+  const methodList = methods || [];
+  const methodOptions = s.payment_method && !methodList.includes(s.payment_method) ? [s.payment_method, ...methodList] : methodList;
+  const paymentSelect = editable && (
+    <select
+      className={`rs-row-select${s.payment_method ? '' : ' empty'}`}
+      aria-label="결제수단"
+      value={s.payment_method || ''}
+      onChange={e => onPatch({ payment_method: e.target.value })}
+    >
+      <option value="">결제수단 선택</option>
+      {methodOptions.map(m => <option key={m} value={m}>{m}</option>)}
+    </select>
+  );
+  const categorySelect = editable && (
+    <CategoryPathSelect
+      db={db}
+      className={`rs-row-select${s.budget_category ? '' : ' empty'}`}
+      ariaLabel="카테고리"
+      value={categoryText(s)}
+      onChange={v => onPatch(splitCategoryPath(v))}
+    />
+  );
   return (
     <>
       <div className="rs-rows">
@@ -103,10 +130,17 @@ export default function SuggestionDetails({ suggestion: s, amountSource = 'recei
           label="결제수단"
           value={s.payment_method || '직접 선택'}
           missing={!s.payment_method}
+          control={paymentSelect}
           source={sources.payment_method}
           hint={s.paymentHint ? `영수증: ${s.paymentHint}` : saidPaymentHint(s)}
         />
-        <Row label="카테고리" value={categoryText(s) || '직접 선택'} missing={!s.budget_category} source={sources.category} />
+        <Row
+          label="카테고리"
+          value={categoryText(s) || '직접 선택'}
+          missing={!s.budget_category}
+          control={categorySelect}
+          source={sources.category}
+        />
       </div>
 
       <Alternatives s={s} onUse={onUseAlternative} />
@@ -139,10 +173,12 @@ export default function SuggestionDetails({ suggestion: s, amountSource = 'recei
 }
 
 /** "카테고리 > 세부카테고리" 하나로 고르는 선택 상자 (목록에서 빠르게 바꿀 때) */
-export function CategoryPathSelect({ db, value, onChange, className }) {
-  const paths = categoryPaths(db);
+export function CategoryPathSelect({ db, value, onChange, className, ariaLabel }) {
+  // 목록에 없는 분류가 들어 있으면(숨긴 여행 기본 카테고리 등) 그것도 보여 '카테고리 선택'으로 잘못 보이지 않게
+  const listed = categoryPaths(db);
+  const paths = value && !listed.includes(value) ? [value, ...listed] : listed;
   return (
-    <select className={className} value={value} onChange={e => onChange(e.target.value)}>
+    <select className={className} aria-label={ariaLabel} value={value} onChange={e => onChange(e.target.value)}>
       <option value="">카테고리 선택</option>
       {paths.map(p => <option key={p} value={p}>{p}</option>)}
     </select>

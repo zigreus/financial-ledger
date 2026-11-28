@@ -5,7 +5,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import initSqlJs from 'sql.js';
-import { createDatabase } from '../../../services/dbManager';
+import { addTransaction, createDatabase } from '../../../services/dbManager';
 import { AIError } from '../../../services/aiClient';
 import TextPanel from '../TextPanel';
 import { parseTextEntry } from '../../../services/textEntry';
@@ -192,6 +192,11 @@ describe('다른 후보 — 예전 기록·2순위를 덮지 않고 보여 주�
     ],
   });
   const row = label => [...container.querySelectorAll('.rs-row')].find(r => r.textContent.startsWith(label));
+  // 카테고리는 한 건 화면에서 고르는 칸이다 (I-066) — 고른 값과 근거 표시
+  const categoryShown = () => {
+    const r = row('카테고리');
+    return [r.querySelector('select').value, r.querySelector('.rs-src')?.textContent || ''].join(' / ');
+  };
 
   test('한 건: 예전 기록을 고르면 그 표기·분류·근거로 바뀌고 처음 추천으로 되돌릴 수 있으며, 덧붙여 다시 정리해도 고른 것이 남는다', async () => {
     parseTextEntry.mockResolvedValueOnce([withAlts()]);
@@ -199,7 +204,7 @@ describe('다른 후보 — 예전 기록·2순위를 덮지 않고 보여 주�
     expect(container.querySelector('.rs-alts').textContent).toBe('예전 기록메가커피 · 식비 > 커피 (3번)이걸로');
 
     await click('이걸로');
-    expect(row('카테고리').textContent).toBe('카테고리식비 > 커피기존 내역');
+    expect(categoryShown()).toBe('식비 > 커피 / 기존 내역');
     expect(row('세부내역').textContent).toContain('메가커피');
     expect(container.querySelector('.rs-alts').textContent).toBe('처음 추천메가 · 식비 > 점심이걸로');
     expect(container.textContent).toContain('예전에 3번 이렇게 적었어요');
@@ -208,11 +213,11 @@ describe('다른 후보 — 예전 기록·2순위를 덮지 않고 보여 주�
     await click('+ 말로 덧붙이거나 고치기');
     await setValue(followText(), '현금이었어');
     await click('덧붙여 정리하기');
-    expect(row('카테고리').textContent).toContain('식비 > 커피');
+    expect(categoryShown().startsWith('식비 > 커피 / ')).toBe(true);
     expect(row('세부내역').textContent).toContain('메가커피');
 
     await click('이걸로');
-    expect(row('카테고리').textContent).toBe('카테고리식비 > 점심AI 추천');
+    expect(categoryShown()).toBe('식비 > 점심 / AI 추천');
     expect(row('세부내역').textContent).toContain('메가');
     expect(row('세부내역').textContent).not.toContain('메가커피');
   });
@@ -303,4 +308,116 @@ test('되묻는 화면에서 실패하면 쓰던 말을 두고 이유를 보여 
     { asked: '점심에 얼마 쓰셨나요?', said: '9천원 현금' },
   ]);
   expect(container.textContent).toContain('이렇게 입력하시겠습니까?');
+});
+
+describe('한 건 화면의 이대로 넣기 — 입력 창 없이 바로 넣는다 (I-066)', () => {
+  const renderWith = (props = {}) => act(async () => {
+    root.render(<TextPanel db={db} onApply={() => {}} onBulkAdd={onBulkAdd} onClose={() => {}} onSetup={onSetup} {...props} />);
+  });
+  const select = label => container.querySelector(`.rs-row select[aria-label="${label}"]`);
+  const addNote = () => container.querySelector('.rs-add-note');
+
+  test('다 채워졌으면 이대로 넣기가 기본 버튼이고, 누르면 그 한 건을 바로 넣는다', async () => {
+    parseTextEntry.mockResolvedValueOnce([full({})]);
+    await say('점심 김치찌개 9천원 현금');
+    expect(button('이대로 넣기').className).toContain('rs-btn-primary');
+    expect(button('이대로 채우기').className).toContain('rs-btn-secondary');
+    expect(addNote()).toBeNull();
+    await click('이대로 넣기');
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+    const [rows] = onBulkAdd.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      date: '2026-11-08', detail: '김치찌개', amount: 9000, payment_method: '현금', budget_category: '식비', sub_category: '점심',
+    });
+  });
+
+  test('결제수단·카테고리는 그 자리에서 고르고, 고른 값으로 넣거나 입력 창을 채운다', async () => {
+    const onApply = vi.fn();
+    parseTextEntry.mockResolvedValueOnce([full({ payment_method: '', budget_category: '', sub_category: '' })]);
+    await renderWith({ onApply });
+    await setValue(firstText(), '점심 김치찌개 9천원');
+    await click('정리하기');
+    expect(button('이대로 넣기').disabled).toBe(true);
+    expect(addNote().textContent).toBe('결제수단·카테고리를 고르면 바로 넣을 수 있어요');
+
+    await setValue(select('결제수단'), '신한카드');
+    expect(addNote().textContent).toBe('카테고리를 고르면 바로 넣을 수 있어요');
+    await setValue(select('카테고리'), '식비 > 커피');
+    expect(addNote()).toBeNull();
+    expect(button('이대로 넣기').disabled).toBe(false);
+
+    await click('이대로 채우기');
+    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ payment_method: '신한카드', budget_category: '식비', sub_category: '커피' }));
+    await click('이대로 넣기');
+    expect(onBulkAdd.mock.calls[0][0][0]).toMatchObject({ payment_method: '신한카드', budget_category: '식비', sub_category: '커피' });
+  });
+
+  test('금액을 모르면 바로 넣지 않고 이유를 보인다 — 이대로 채우기는 된다', async () => {
+    parseTextEntry.mockResolvedValueOnce([full({ amount: null })]);
+    await say('점심 김치찌개 현금');
+    expect(button('이대로 넣기').disabled).toBe(true);
+    expect(button('이대로 채우기').disabled).toBe(false);
+    expect(addNote().textContent).toContain('금액을 몰라 바로 넣을 수 없어요');
+  });
+
+  test("바로 넣으려다 빈 칸 때문에 확인받은 건은 빈 칸을 채우면 '빈 칸이 있어요'를 지운다", async () => {
+    parseTextEntry.mockResolvedValueOnce([full({ payment_method: '' })]);
+    await renderWith({ initialText: '점심 김치찌개 9천원', autoRun: true, onAutoAdd: vi.fn() });
+    await act(async () => {});
+    expect(container.querySelector('.quick-reason').textContent).toBe('확인이 필요한 이유: 빈 칸이 있어요');
+    await setValue(select('결제수단'), '현금');
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    expect(button('이대로 넣기').disabled).toBe(false);
+  });
+
+  test('이미 같은 거래가 있으면(이어서 정리) 기본 버튼 없이 그래도 넣기로 — 습관처럼 눌러 또 넣지 않게', async () => {
+    addTransaction(db, { payment_method: '현금', date: '2026-11-08', budget_category: '식비', sub_category: '점심', detail: '김치찌개', amount: 9000 });
+    parseTextEntry.mockResolvedValueOnce([full({})]);
+    await renderWith({ checkExisting: true });
+    await setValue(firstText(), '점심 김치찌개 9천원 현금');
+    await click('정리하기');
+    expect(container.textContent).toContain('같은 날 같은 금액 거래가 이미 있어요');
+    expect(button('이대로 넣기')).toBeUndefined();
+    expect(button('그래도 넣기').className).toContain('rs-btn-secondary');
+    await click('그래도 넣기');
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('한 건 화면 — 가계부에 같은 거래가 있으면 그래도 넣기로 (I-066 리뷰)', () => {
+  const KIMCHI = { payment_method: '현금', date: '2026-11-08', budget_category: '식비', sub_category: '점심', detail: '김치찌개', amount: 9000 };
+
+  test('처음 정리에서도 같은 날 같은 금액 거래가 있으면 그 이유를 보이고 기본 버튼 없이 그래도 넣기로', async () => {
+    addTransaction(db, KIMCHI);
+    parseTextEntry.mockResolvedValueOnce([full({})]);
+    await act(async () => {
+      root.render(<TextPanel db={db} initialText="점심 김치찌개 9천원 현금" autoRun onAutoAdd={vi.fn()} onApply={() => {}} onBulkAdd={onBulkAdd} onClose={() => {}} onSetup={onSetup} />);
+    });
+    await act(async () => {});
+    expect(container.querySelector('.quick-reason').textContent).toContain('같은 날 같은 금액 거래가 이미 있어요 — 또 넣을 때만 고르세요');
+    expect(button('이대로 넣기')).toBeUndefined();
+    expect(button('그래도 넣기')).toBeDefined();
+  });
+
+  test('결제수단을 바꿔 같은 거래가 아니게 되면 다시 이대로 넣기로', async () => {
+    addTransaction(db, { ...KIMCHI, detail: '편의점' });
+    parseTextEntry.mockResolvedValueOnce([full({})]);
+    await say('점심 김치찌개 9천원 현금');
+    expect(button('그래도 넣기')).toBeDefined();
+    await setValue(container.querySelector('.rs-row select[aria-label="결제수단"]'), '신한카드');
+    expect(container.querySelector('.quick-reason')).toBeNull();
+    expect(button('이대로 넣기').className).toContain('rs-btn-primary');
+  });
+
+  test('누른 순간 다시 대조한다 — 그사이 같은 거래가 들어왔으면 넣지 않고 그래도 넣기로', async () => {
+    parseTextEntry.mockResolvedValueOnce([full({})]);
+    await say('점심 김치찌개 9천원 현금');
+    addTransaction(db, KIMCHI);                                   // 다른 기기에서 같은 거래를 넣었다
+    await click('이대로 넣기');
+    expect(onBulkAdd).not.toHaveBeenCalled();
+    expect(container.querySelector('.quick-reason').textContent).toContain('같은 날 같은 금액 거래가 이미 있어요');
+    await click('그래도 넣기');
+    expect(onBulkAdd).toHaveBeenCalledTimes(1);
+  });
 });

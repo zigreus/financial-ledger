@@ -318,6 +318,23 @@
   word-break: break-word;
 }
 .rs-btn-primary:disabled { background: var(--c-slate-300); cursor: not-allowed; }
+.rs-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 한 건 화면 (I-066) — '이대로 넣기'는 한 줄을 다 쓰는 기본 버튼, 결제수단·카테고리는 그 자리에서 고른다 */
+.rs-single-actions .rs-add-btn { flex: 1 1 100%; padding: 11px 14px; font-size: calc(14px * var(--fs)); }
+.rs-add-note { font-size: calc(11px * var(--fs)); color: var(--text-muted); text-align: right; }
+.rs-row-select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: calc(14px * var(--fs));
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text);
+}
+.rs-row-select.empty { font-weight: 400; color: var(--text-muted); border-color: var(--c-amber-300); }
 
 .tp-list { display: flex; flex-direction: column; gap: 8px; }
 .tp-item {

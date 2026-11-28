@@ -5,14 +5,16 @@ import {
   alternativePatch, applyAlternative, isSpokenPaymentWarning, isSuggestionComplete, normalizeName, suggestionName, suggestionToTransaction,
 } from '../../services/receiptAssistant';
 import { getPaymentMethods } from '../../services/dbManager';
-import { QUICK_REASONS, isCategoryReason, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
+import { BLANK_REASON, QUICK_REASONS, isCategoryReason, mayAutoAddText, splitFamiliar } from '../../services/quickEntry';
 import { findExistingTransaction } from '../../services/cardSms';
+import { isValidDateStr } from '../../services/dateUtils';
 import SuggestionDetails from './SuggestionCard';
 import SuggestionItem, { patchListItem } from './SuggestionItem';
 import {
   FollowUpBox, SaidSoFar, describeGaps, gapQuestion, recordPick, carryChoices, SETTINGS_KINDS,
 } from './TextFollowUp';
 import QuickAutoNote from './QuickAutoNote';
+import SingleActions from './SingleActions';
 import { useQuickBatches } from './useQuickBatches';
 import './AIEntry.css';
 
@@ -20,7 +22,7 @@ const EXAMPLE = '예) 어제 점심 김치찌개 9천원 현금, 스타벅스 45
 const PENDING_NOTE = "덧붙여 쓴 말이 있어요 — '덧붙여 정리하기'를 누르거나 지우면 진행할 수 있어요.";
 const MERGE_HINT = '앞에서 말한 것과 합쳐 다시 정리합니다.';
 // 바로 넣은(또는 되돌린) 거래를 알아보는 열쇠 — 다시 정리하면 같은 건·고쳐 말한 건은 바로 넣지 않고,
-// 체크를 끈 채 이유를 붙인다 (I-022). 한 건 화면(이대로 채우기)에도 맞게 '고르세요'라고 쓴다
+// 체크를 끈 채 이유를 붙인다 (I-022). 한 건 화면에도 맞게 '고르세요'라고 쓴다 — 그 화면에서는 '그래도 넣기'로 (I-066)
 // 이름은 세부내역, 없으면 가게·세부카테고리 — 세부내역을 비운 다른 건끼리 같은 건으로 보지 않게 (I-056)
 const nameKey = s => normalizeName(suggestionName(s));
 const keyOf = s => `${s.date}|${s.amount}|${nameKey(s)}|${s.payment_method}`;
@@ -29,7 +31,8 @@ const mark = (s, kind) => ({ ...s, quickMark: kind, reviewReason: QUICK_REASONS[
 
 /**
  * 말로 입력 — 문장을 거래로.
- * 한 건이면 확인 후 폼을 채우고, 여러 건이면 목록에서 고쳐 한 번에 추가한다.
+ * 한 건이면 확인 후 바로 넣거나('이대로 넣기' — 결제수단·카테고리는 그 자리에서 고른다, I-066) 폼을 채우고('이대로 채우기'),
+ * 여러 건이면 목록에서 고쳐 한 번에 추가한다.
  * 정보가 모자라면 무엇이 빠졌는지 알려 주고, 덧붙여 말하면 처음 말과 합쳐 다시 정리한다 (I-017).
  *
  * AI 입력(I-022): initialText·autoRun이면 열리자마자 정리하고, onAutoAdd가 있으면 처음 정리(덧붙인 말 없이)에서
@@ -61,6 +64,7 @@ export default function TextPanel({
   const [followError, setFollowError] = useState(null); // 덧붙여 정리가 실패했을 때 { message, settings }
   const [progress, setProgress] = useState(''); // 서버가 붐빌 때 "다시 시도하는 중" 등
   const [modelNote, setModelNote] = useState(''); // 고른 모델이 붐벼 다른 모델이 대신 정리했을 때
+  const [, setRecheck] = useState(0); // 한 건 화면 — 넣으려는 순간 같은 거래가 보이면 다시 그려 '그래도 넣기'로 (I-066)
   const abortRef = useRef(null);
   const backRef = useRef('compose'); // 정리를 취소하거나 실패하면 돌아갈 화면
   const textRef = useRef(null);
@@ -284,11 +288,13 @@ export default function TextPanel({
   };
 
   // 분류를 골랐으면 '분류를 확인해 달라'·'앞에 말한 대상 추천'(B-101)이던 이유는 풀렸다.
-  // 결제수단을 골랐으면 '말한 결제수단 …'이던 이유도 (목록의 알림은 patchListItem이 지운다, B-096)
-  const withoutCategoryReason = (s, patch) => {
+  // 결제수단을 골랐으면 '말한 결제수단 …'이던 이유도 (목록의 알림은 patchListItem이 지운다, B-096).
+  // 빈 칸을 다 채웠으면 '빈 칸이 있어요'도 (I-066)
+  const withoutSettledReason = (s, patch) => {
     const r = s.reviewReason;
     const settled = ('budget_category' in patch && (isCategoryReason(r) || isCarriedSubjectWarning(r)))
-      || (!!patch.payment_method && isSpokenPaymentWarning(r));
+      || (!!patch.payment_method && isSpokenPaymentWarning(r))
+      || (r === BLANK_REASON && isSuggestionComplete(s));
     return settled ? { ...s, reviewReason: '' } : s;
   };
 
@@ -299,7 +305,7 @@ export default function TextPanel({
       // 끈 체크(off)는 다 채워진 채로 꺼져 있을 때만 유지한다 — 비웠다가 다시 채워 자동으로 체크되면 지운다
       return {
         ...next,
-        s: withoutCategoryReason(next.s, patch),
+        s: withoutSettledReason(next.s, patch),
         picks: recordPick(it, patch),
         off: !next.checked && !!it.off && isSuggestionComplete(next.s),
       };
@@ -311,7 +317,7 @@ export default function TextPanel({
     setItems(list => list.map((it, i) => {
       if (i !== 0) return it;
       const patch = alternativePatch(it.s, o);
-      return { ...it, s: withoutCategoryReason(applyAlternative(it.s, o), patch), picks: recordPick(it, patch) };
+      return { ...it, s: withoutSettledReason(applyAlternative(it.s, o), patch), picks: recordPick(it, patch) };
     }));
   };
 
@@ -404,7 +410,7 @@ export default function TextPanel({
         onSubmit={() => addMore(gapQuestion(gaps, items.length))}
         {...followErrorProps}
         hint={items.length === 1
-          ? `${MERGE_HINT} '이대로 채우기'로 폼에서 직접 채워도 돼요.`
+          ? `${MERGE_HINT} 결제수단·카테고리는 위에서 바로 고르고, 다른 칸은 '이대로 채우기'로 입력 창에서 채워도 돼요.`
           : `${MERGE_HINT} 결제수단·카테고리는 목록에서 바로 골라도 돼요.`}
         pendingNote={PENDING_NOTE}
         autoFocus={boxOpen}
@@ -427,26 +433,48 @@ export default function TextPanel({
   const autoNote = <QuickAutoNote batches={quick.batches} onUndo={quick.undoAll} />;
   const hasAuto = quick.batches.length > 0;
 
-  // review — 한 건
+  // review — 한 건. 바로 넣은(되돌린) 건과 같거나 비슷한 건(quickMark), 가계부에 같은 날 같은 금액 거래가 있는 건은
+  // '이대로 넣기' 대신 '그래도 넣기'로 — 습관처럼 눌러 또 넣지 않게. 같은 거래가 있다는 이유를 먼저 보인다 (I-066)
   if (items.length === 1) {
     const s = items[0].s;
+    const existing = !s.quickMark && isValidDateStr(s.date) && !!findExistingTransaction(dbRef.current, s);
+    const reason = existing ? QUICK_REASONS.existing : s.reviewReason;
+    const held = !!s.quickMark || existing;
+    /** 누른 순간 다시 대조한다 — 그사이 같은 거래가 들어왔으면(다른 기기 등) 넣지 않고 다시 그려 이유를 보인다 */
+    const addSingle = () => {
+      const cur = dbRef.current;
+      if (!held && findExistingTransaction(cur, s)) { setRecheck(n => n + 1); return; }
+      onBulkAdd([suggestionToTransaction(cur, s)]);
+    };
     return (
       <div className="rs-box rs-review">
         <div className="rs-review-title">
           <b>이렇게 입력하시겠습니까?</b>
           <SaidSoFar text={text} followUps={followUps} />
           {autoNote}
-          {s.reviewReason && <span className="quick-reason">확인이 필요한 이유: {s.reviewReason}</span>}
+          {reason && <span className="quick-reason">확인이 필요한 이유: {reason}</span>}
         </div>
         {modelNote && <div className="rs-model-note">{modelNote}</div>}
         {restoreNote}
-        <SuggestionDetails suggestion={s} amountSource="text" onUseAlternative={pickAlternative} />
+        <SuggestionDetails
+          suggestion={s}
+          amountSource="text"
+          onUseAlternative={pickAlternative}
+          db={db}
+          methods={getPaymentMethods(db)}
+          onPatch={p => updateItem(0, p)}
+        />
         {followArea}
-        <div className="rs-actions">
+        <SingleActions
+          s={s}
+          disabled={pending}
+          held={held}
+          onApply={onApply}
+          onAdd={onBulkAdd ? addSingle : undefined}
+        >
           <button type="button" className="rs-btn-secondary" onClick={onClose}>취소</button>
           <button type="button" className="rs-btn-secondary" onClick={rewrite}>다시 쓰기</button>
-          <button type="button" className="rs-btn-primary" disabled={pending} onClick={() => onApply(s)}>이대로 채우기</button>
-        </div>
+        </SingleActions>
       </div>
     );
   }
